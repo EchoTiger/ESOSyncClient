@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>FissalCogworkCourier</AssemblyName>
+    <RootNamespace>RedfurSync</RootNamespace>
+    <Product>Fissal's Cogwork Courier</Product>
+    <Company>Redfur Guild</Company>
+    <Description>A transmitter to send sale data to Fissal.</Description>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <!-- Single-file publish settings -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+  </PropertyGroup>
+<ItemGroup>
+    <EmbeddedResource Include="Fonts\RetroFontMain.ttf" />
+    <EmbeddedResource Include="fiss.png" />
+  </ItemGroup>
+</Project>
