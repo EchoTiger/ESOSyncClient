@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Headers;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -14,6 +15,70 @@ namespace RedfurSync
 
         public string? LastError { get; private set; }
 
+        // ── Update Hunting ───────────────────────────────────────────────────
+        public async Task<UpdatePayload?> CheckForUpdateAsync(string currentVersion)
+        {
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                var response = await _http.GetAsync(_config.UpdateUrl, cts.Token);
+                
+                if (!response.IsSuccessStatusCode) return null;
+
+                var json = await response.Content.ReadAsStringAsync();
+                
+                // We deeply inhale the JSON scent and map it directly to our payload structure
+                var payload = JsonSerializer.Deserialize<UpdatePayload>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                
+                if (payload != null && !string.IsNullOrWhiteSpace(payload.version) && payload.version != currentVersion)
+                {
+                    return payload;
+                }
+            }
+            catch (Exception ex) 
+            { 
+                Console.WriteLine($"[Fissal Update Hunt Error] ✖ The scent was lost: {ex.Message}"); 
+            }
+            return null;
+        }
+
+        public async Task<bool> DownloadUpdateAsync(UploadJob job)
+        {
+            try
+            {
+                LastError = null;
+                using var response = await _http.GetAsync(job.DownloadUrl, HttpCompletionOption.ResponseHeadersRead, job.Cts.Token);
+                response.EnsureSuccessStatusCode();
+
+                long? totalBytes = response.Content.Headers.ContentLength;
+                await using var contentStream = await response.Content.ReadAsStreamAsync(job.Cts.Token);
+                
+                await using var fileStream = new FileStream(job.FilePath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true);
+
+                var buffer = new byte[8192];
+                long totalRead = 0;
+                int bytesRead;
+
+                while ((bytesRead = await contentStream.ReadAsync(buffer, 0, buffer.Length, job.Cts.Token)) != 0)
+                {
+                    await fileStream.WriteAsync(buffer, 0, bytesRead, job.Cts.Token);
+                    totalRead += bytesRead;
+                    if (totalBytes.HasValue)
+                    {
+                        job.Progress = (float)totalRead / totalBytes.Value;
+                    }
+                }
+
+                job.Progress = 1f;
+                return true;
+            }
+            catch (Exception ex)
+            {
+                LastError = job.ErrorMessage = $"Download failed: {ex.Message}";
+                return false;
+            }
+        }
+
         public UploadService(AppConfig config)
         {
             _config = config;
@@ -22,10 +87,6 @@ namespace RedfurSync
         }
 
         // ── Connection check ─────────────────────────────────────────────────
-        /// <summary>
-        /// Pings the server with a GET request. Returns (reachable, message).
-        /// No server changes required — a 4xx back means it's alive and auth is working.
-        /// </summary>
         public async Task<(bool ok, string message)> PingAsync()
         {
             try
@@ -33,11 +94,9 @@ namespace RedfurSync
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(8));
                 var response = await _http.GetAsync(_config.ServerUrl, cts.Token);
 
-                // 401 = reached server but key is wrong
                 if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized)
                     return (false, "Server reached but API key was rejected (401)");
 
-                // Any other response (404, 405, 200…) means server is up and key was accepted
                 return (true, $"Connected — server responded {(int)response.StatusCode}");
             }
             catch (TaskCanceledException)

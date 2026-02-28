@@ -17,6 +17,16 @@ namespace RedfurSync
             // own scaling factor and re-scales when windows move between them.
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 
+            string? exePath = Environment.ProcessPath;
+            if (!string.IsNullOrEmpty(exePath))
+            {
+                string oldExe = exePath + ".old";
+                if (File.Exists(oldExe))
+                {
+                    try { File.Delete(oldExe); } catch { /* It will be deleted next time */ }
+                }
+            }
+
             _mutex = new Mutex(true, "FissalCogworkCourier_SingleInstance", out bool isNew);
 
             if (!isNew)

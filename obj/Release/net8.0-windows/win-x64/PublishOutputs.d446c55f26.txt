@@ -1,2 +1,0 @@
-E:\Files\Documents\Elder Scrolls Online\redfur-bot-updater\ESOSync\client\ESOSyncClient\bin\Release\net8.0-windows\win-x64\publish\FissalCogworkCourier.pdb
-E:\Files\Documents\Elder Scrolls Online\redfur-bot-updater\ESOSync\client\ESOSyncClient\bin\Release\net8.0-windows\win-x64\publish\FissalCogworkCourier.exe

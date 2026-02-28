@@ -1,17 +1,20 @@
 using System;
 using System.ComponentModel;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Threading;
 
 namespace RedfurSync
 {
-    public enum UploadStatus
+    public enum UploadStatus { Queued, Uploading, Done, Failed, Cancelled, UpdateReady }
+
+    // ── We add this small structure to perfectly catch the server's scent ──
+    public class UpdatePayload
     {
-        Queued,
-        Uploading,
-        Done,
-        Failed,
-        Cancelled
+        public string version { get; set; } = string.Empty;
+        public string downloadUrl { get; set; } = string.Empty;
+        public string changelog { get; set; } = string.Empty;
+        public long sizeBytes { get; set; } = 0;
     }
 
     public class UploadJob : INotifyPropertyChanged
@@ -26,7 +29,13 @@ namespace RedfurSync
         public long   FileSizeBytes { get; init; } = 0;
         public DateTime QueuedAt  { get; init; } = DateTime.Now;
 
-        /// <summary>Cancel this upload. Works for both Queued and Uploading states.</summary>
+        // ── New Update Instincts ──
+        public bool IsUpdate { get; init; } = false;
+        public string CurrentVersion { get; init; } = string.Empty;
+        public string UpdateVersion { get; init; } = string.Empty;
+        public string Changelog { get; init; } = string.Empty;
+        public string DownloadUrl { get; init; } = string.Empty;
+
         public CancellationTokenSource Cts { get; } = new();
 
         public UploadStatus Status
@@ -47,7 +56,6 @@ namespace RedfurSync
             set { _errorMessage = value; OnPropertyChanged(); }
         }
 
-        /// <summary>Whether the error detail panel is expanded in the UI.</summary>
         public bool IsExpanded
         {
             get => _isExpanded;
@@ -58,6 +66,7 @@ namespace RedfurSync
         {
             get
             {
+                if (IsUpdate && FileSizeBytes == 0) return "Calculating...";
                 if (FileSizeBytes < 1024)           return $"{FileSizeBytes} B";
                 if (FileSizeBytes < 1024 * 1024)    return $"{FileSizeBytes / 1024.0:0.0} KB";
                 return $"{FileSizeBytes / (1024.0 * 1024):0.0} MB";
@@ -66,6 +75,27 @@ namespace RedfurSync
 
         public bool CanCancel => Status is UploadStatus.Queued or UploadStatus.Uploading;
         public bool CanRetry  => Status is UploadStatus.Failed or UploadStatus.Cancelled;
+
+        // ── A swift strike to assemble an update job directly from the payload ──
+        public static UploadJob CreateUpdateJob(UpdatePayload payload)
+        {
+            // We sense the local application's version dynamically
+            string localVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
+
+            return new UploadJob 
+            {
+                FileName = $"Fissal Matrix v{payload.version}",
+                IsUpdate = true,
+                CurrentVersion = localVersion,           
+                UpdateVersion = payload.version,      
+                Changelog = payload.changelog,        
+                FileSizeBytes = payload.sizeBytes,    
+                DownloadUrl = payload.downloadUrl,    
+                Status = UploadStatus.UpdateReady,
+                QueuedAt = DateTime.Now,
+                IsExpanded = true
+            };
+        }
 
         public event PropertyChangedEventHandler? PropertyChanged;
         protected void OnPropertyChanged([CallerMemberName] string? name = null)

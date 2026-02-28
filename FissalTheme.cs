@@ -35,6 +35,8 @@ namespace RedfurSync
         public static readonly Color CErrBg     = Color.FromArgb(38,  16, 10);
         public static readonly Color CErrBorder = Color.FromArgb(110,  40, 28);
         public static readonly Color CSep       = Color.FromArgb(55,  44, 22);
+        public static readonly Color CBtnDark  = Color.FromArgb(85, 85, 85); 
+        public static readonly Color CBtnLight  = Color.FromArgb(150, 150, 150);
 
         // ── P/Invoke — the only reliable way to get per-monitor DPI ──────────
         [DllImport("user32.dll")] private static extern int GetDpiForWindow(IntPtr hwnd);
@@ -97,7 +99,7 @@ namespace RedfurSync
                     {
                         // Read the embedded stream into a byte array
                         byte[] fontData = new byte[stream.Length];
-                        stream.Read(fontData, 0, fontData.Length);
+                        stream.ReadExactly(fontData, 0, fontData.Length);
 
                         // Allocate native memory for the font
                         IntPtr dataPtr = Marshal.AllocCoTaskMem(fontData.Length);

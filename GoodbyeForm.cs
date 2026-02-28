@@ -14,23 +14,23 @@ namespace RedfurSync
     public sealed class GoodbyeForm : Form
     {
         private const int BaseW = 380;
-        private const int BaseH = 220;
-
+        
         private readonly float _scale;
         private readonly Button _shutdownBtn;
         private readonly Button _stayBtn;
         
         // Holding the chosen farewell safely so it doesn't shift beneath our paws
         private readonly string _chosenFarewell; 
+        private readonly int _attrY;
 
         // Fissal's farewell lines — one is chosen at random
         private static readonly string[] Farewells =
         {
-            "Safe travels, traveler. May Jone and Jode reflect Fissal's\ngoodbye purr down to warm your path.",
-            "Lunar resonance fading. This one is resting her\nvocal chassis until you return.",
-            "Powering down the tonal matrix... Fissal's vocal coils\nneed to cool. May your coffers overflow.",
-            "Until next time, friend. The moon-bounce grows quiet.\nRemember to log your sales!",
-            "The Lunar Relay closes for the eve. Fissal bows.\nYour data is safely singing in the vault.",
+            "Safe travels! Fissal's ears will be listening for your return!",
+            "Harmonic tunneling prepared to shut down!\nThis one will rest his chassis until you return.",
+            "Powering down the tonal matrix!\nUntil next time friend!\nMay your coffers overflow.",
+            "Until next time, friend! The moons grow quiet.\nRemember to log your sales!",
+            "The Lunar Relay closes for the eve.\nYour sale data is safely stored in the vault!",
         };
 
         public GoodbyeForm()
@@ -47,17 +47,34 @@ namespace RedfurSync
             _scale = GetScale(Handle);
 
             Width  = S(BaseW);
-            Height = S(BaseH);
             
             // Fissal chooses her words once, when the window awakens
             _chosenFarewell = Farewells[Math.Abs(Environment.TickCount % Farewells.Length)];
 
+            // We let our digital senses test the space required for her voice
+            using var dummyG = Graphics.FromHwnd(IntPtr.Zero);
+            using var ff = Body(12f, _scale, FontStyle.Regular);
+            
+            int textMarginX = S(48); // Left and right padding combined
+            var sz = dummyG.MeasureString(_chosenFarewell, ff, Width - textMarginX);
+            
+            // Give her a comfortable minimum height, but stretch if she is feeling talkative
+            int measuredTextH = (int)Math.Ceiling(sz.Height);
+            int textH = Math.Max(S(45), measuredTextH);
+
+            int hh = S(54); // Header height
+            _attrY = hh + S(18) + textH + S(10); // Position the signature just below the text
+            int btnY = _attrY + S(28);           // Position the buttons below the signature
+            
+            // The form dynamically snaps its height to contain everything perfectly
+            Height = btnY + S(54);
+
             // Shutdown button
-            _shutdownBtn = MakeBtn("Stop Sync", CBarFail, new Point(S(20), S(BaseH - 58)));
+            _shutdownBtn = MakeBtn("Stop Sync", CBarFail, new Point(S(20), btnY));
             _shutdownBtn.Click += (_, _) => { DialogResult = DialogResult.OK; Close(); };
 
             // Stay button
-            _stayBtn = MakeBtn("Stay Connected", CGreen, new Point(S(BaseW) - S(20) - S(140), S(BaseH - 58)));
+            _stayBtn = MakeBtn("Stay Connected", CGreen, new Point(Width - S(20) - S(140), btnY));
             _stayBtn.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
 
             Controls.Add(_shutdownBtn);
@@ -110,13 +127,15 @@ namespace RedfurSync
 
             // Title
             using var tf = Title(13f, _scale);
-            var tsz = g.MeasureString("FISSAL'S MOONSONG RELAY", tf);
+            var tsz = g.MeasureString("FISSAL RELAY", tf);
             using var titleBrush = new SolidBrush(CGoldBrt);
-            g.DrawString("FISSAL'S MOONSONG RELAY", tf, titleBrush, new PointF((Width - tsz.Width) / 2f, S(13)));
+            g.DrawString("FISSAL RELAY", tf, titleBrush, new PointF((Width - tsz.Width) / 2f, S(13)));
 
             // ── Farewell message ─────────────────────────────────────────────
-            using var ff = Body(10f, _scale, FontStyle.Italic);
-            var fRect = new RectangleF(S(24), hh + S(18), Width - S(48), S(BaseH) - hh - S(90));
+            using var ff = Body(12f, _scale, FontStyle.Regular);
+            
+            // The bounds organically expand based on the height calculated during awakening
+            var fRect = new RectangleF(S(24), hh + S(18), Width - S(48), _attrY - (hh + S(18)));
             using var sf = new StringFormat
             {
                 Alignment     = StringAlignment.Center,
@@ -131,12 +150,12 @@ namespace RedfurSync
             using var textBrush = new SolidBrush(CText);
             g.DrawString(_chosenFarewell, ff, textBrush, fRect, sf);
 
-            // Small "— Fissal" attribution
-            using var atf = Body(8f, _scale, FontStyle.Italic);
-            var attr = "~ Fissal";
+            // Small "— Fissal" attribution resting softly beneath the text
+            using var atf = Body(10f, _scale, FontStyle.Italic);
+            var attr = "- Fissal";
             var asz  = g.MeasureString(attr, atf);
             using var attrBrush = new SolidBrush(CTextSub);
-            g.DrawString(attr, atf, attrBrush, new PointF((Width - asz.Width) / 2f, hh + S(85)));
+            g.DrawString(attr, atf, attrBrush, new PointF((Width - asz.Width) / 2f, _attrY));
         }
 
         private Button MakeBtn(string label, Color accent, Point loc)

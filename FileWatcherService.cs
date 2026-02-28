@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Timers;
 
@@ -31,12 +32,67 @@ namespace RedfurSync
         private readonly Dictionary<string, System.Timers.Timer> _debounceTimers = new();
         private readonly object _timerLock = new();
         private readonly object _jobLock   = new();
+        private readonly System.Timers.Timer _updateTimer = new();
 
         public FileWatcherService(Action<string> onStatus)
         {
             _onStatus = onStatus;
             _config   = AppConfig.Load();
             _uploader = new UploadService(_config);
+        }
+
+        private async Task CheckForUpdatesAsync()
+        {
+            Console.WriteLine("[Fissal] Sniffing the air for new upgrades...");
+            
+            if (Jobs.Any(j => j.Status == UploadStatus.Uploading)) 
+            {
+                Console.WriteLine("[Fissal] Paws are full with Redfur trade data. Delaying update hunt.");
+                return; 
+            }
+            
+            var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
+            
+            var payload = await _uploader.CheckForUpdateAsync(version);
+            
+            if (payload == null) return;
+
+            lock (_jobLock)
+            {
+                if (Jobs.Any(j => j.IsUpdate && j.UpdateVersion == payload.version)) return;
+            }
+
+            string tmpPath = Path.Combine(AppConfig.ConfigDirectory, "Update.tmp");
+            
+            var job = new UploadJob
+            {
+                IsUpdate       = true,
+                CurrentVersion = version,
+                UpdateVersion  = payload.version,
+                Changelog      = payload.changelog,
+                DownloadUrl    = payload.downloadUrl,
+                FilePath       = tmpPath,
+                FileName       = $"Fissal Matrix v{payload.version}",
+                FileSizeBytes  = payload.sizeBytes, 
+                QueuedAt       = DateTime.Now,
+                Status         = UploadStatus.Queued,
+                IsExpanded     = true
+            };
+
+            lock (_jobLock)
+            {
+                PruneOldJobs();
+                Jobs.Add(job);
+            }
+            NotifyChanged();
+
+            job.Status = UploadStatus.Uploading;
+            NotifyChanged();
+
+            bool success = await _uploader.DownloadUpdateAsync(job);
+            
+            job.Status = success ? UploadStatus.UpdateReady : UploadStatus.Failed;
+            NotifyChanged();
         }
 
         public async Task StartAsync()
@@ -56,6 +112,10 @@ namespace RedfurSync
 
             ConnectionChecked?.Invoke(ok, msg);
             SetupWatchers();
+            _updateTimer.Interval = TimeSpan.FromMinutes(60).TotalMilliseconds;
+            _updateTimer.Elapsed += async (_, _) => await CheckForUpdatesAsync();
+            _updateTimer.Start();
+_ =         Task.Run(async () => { await Task.Delay(8000); await CheckForUpdatesAsync(); });
         }
 
         private void SetupWatchers()
@@ -113,6 +173,8 @@ namespace RedfurSync
         private async Task EnqueueUploadAsync(string filePath, bool isRetry = false)
         {
             UploadJob job;
+            int currentJobCount;
+
             lock (_jobLock)
             {
                 if (!isRetry)
@@ -138,6 +200,7 @@ namespace RedfurSync
 
                 PruneOldJobs();
                 Jobs.Add(job);
+                currentJobCount = Jobs.Count;
             }
 
             NotifyChanged();
@@ -158,7 +221,11 @@ namespace RedfurSync
             if (success)
             {
                 Console.WriteLine($"[Fissal] ✦ {job.FileName} delivered to the vault.");
-                _onStatus($"{job.FileName} delivered!");
+                
+                if (currentJobCount > 1)
+                    _onStatus($"Last Sync: {DateTime.Now:MMM dd, h:mm tt}");
+                else
+                    _onStatus($"{job.FileName} delivered!");
             }
             else if (job.Status == UploadStatus.Cancelled)
             {

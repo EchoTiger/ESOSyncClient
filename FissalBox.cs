@@ -31,7 +31,7 @@ namespace RedfurSync
         // Layout calculations
         private readonly int _headerH;
         private readonly int _pad;
-        private RectangleF _textRect;
+        private Rectangle _crtRect;
 
         /// <summary>
         /// Summons the FissalBox. Use this exactly like MessageBox.Show().
@@ -66,13 +66,19 @@ namespace RedfurSync
             // ── Dynamically measure the height of the text ──
             using var g = Graphics.FromHwnd(IntPtr.Zero);
             using var f = Body(11f, _scale); // The font used for the message
-            int maxTextW = Width - (_pad * 2);
-            var textSize = g.MeasureString(_message, f, maxTextW);
+            
+            int boxX = _pad;
+            int boxY = _headerH + S(15);
+            int boxW = Width - (_pad * 2);
+            int textMaxW = boxW - S(24); // S(12) padding on each side for the text
+            
+            var textSize = g.MeasureString(_message, f, textMaxW);
 
-            _textRect = new RectangleF(_pad, _headerH + S(20), maxTextW, textSize.Height);
+            int boxH = (int)textSize.Height + S(24);
+            _crtRect = new Rectangle(boxX, boxY, boxW, boxH);
 
             // ── Set dynamic form height based on the text ──
-            int btnY = (int)_textRect.Bottom + S(25);
+            int btnY = _crtRect.Bottom + S(20);
             Height = btnY + S(45) + _pad;
 
             BuildButtons(btnY);
@@ -160,15 +166,45 @@ namespace RedfurSync
             g.FillRectangle(hg, 0, 0, Width, _headerH);
             DrawDivider(g, S(10), Width - S(10), _headerH - 1, CGoldDim, CGoldMid);
 
-            // Title
+            // ── The Hazy, Glowing Title ──
             using var tf = Title(12f, _scale, FontStyle.Bold);
+            string titleText = $"> {_title.ToUpper()}";
+            
+            using var glowBrush = new SolidBrush(Color.FromArgb(60, CGoldMid));
+            float tx = _pad;
+            float ty = S(14);
+            
+            for (int hx = -1; hx <= 1; hx++)
+            {
+                for (int hy = -1; hy <= 1; hy++)
+                {
+                    if (hx == 0 && hy == 0) continue;
+                    g.DrawString(titleText, tf, glowBrush, new PointF(tx + (hx * S(1)), ty + (hy * S(1))));
+                }
+            }
+            
             using var titleBrush = new SolidBrush(CGoldBrt);
-            g.DrawString(_title, tf, titleBrush, new PointF(_pad, S(14)));
+            g.DrawString(titleText, tf, titleBrush, new PointF(tx, ty));
 
-            // Message Text
+            // ── The CRT Screen Body ──
+            using var crtBg = new SolidBrush(Color.FromArgb(8, 8, 10)); // Deep screen void
+            g.FillRectangle(crtBg, _crtRect.X, _crtRect.Y, _crtRect.Width, _crtRect.Height);
+
+            using var crtBorder = new Pen(Color.FromArgb(40, CGoldDim), S(1));
+            g.DrawRectangle(crtBorder, _crtRect.X, _crtRect.Y, _crtRect.Width, _crtRect.Height);
+
+            // ── Terminal Scanlines ──
+            using var scanPen = new Pen(Color.FromArgb(15, CGreen), 1);
+            for (int i = _crtRect.Y + 2; i < _crtRect.Y + _crtRect.Height; i += 3)
+            {
+                g.DrawLine(scanPen, _crtRect.X + 1, i, _crtRect.X + _crtRect.Width - 1, i);
+            }
+
+            // ── Message Text ──
             using var ff = Body(11f, _scale);
             using var textBrush = new SolidBrush(CText);
-            g.DrawString(_message, ff, textBrush, _textRect);
+            var textRenderRect = new RectangleF(_crtRect.X + S(12), _crtRect.Y + S(12), _crtRect.Width - S(24), _crtRect.Height - S(24));
+            g.DrawString(_message, ff, textBrush, textRenderRect);
         }
 
         protected override CreateParams CreateParams

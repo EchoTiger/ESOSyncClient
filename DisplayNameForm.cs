@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
@@ -29,6 +30,38 @@ namespace RedfurSync
         private readonly Button  _saveBtn;
         private readonly Button  _cancelBtn;
 
+        // ── Pulse & Tuning Variables ──
+        private readonly System.Windows.Forms.Timer _pulseTimer;
+        private int _glowAlpha = 40;
+        private int _glowStep = 24;
+        private Color _lightColor = Color.FromArgb(60, 180, 220); 
+        
+        private bool _isTuning = true;
+        private int _tuningTicks = 0;
+        private string _lockedFrequency = "0.00";
+
+        // ── Advanced Organic Tuning Dynamics ──
+        private double _currentFreqValue = 100.00;
+        private string _currentFreqString = "100.00";
+        private Color _currentFreqColor = Color.Gold;
+
+        // Controls for the natural stutter and pacing
+        private int _nextScrambleTick = 0;
+        private int _minScrambleDelay = 2; // The fastest jump (frantic)
+        private int _maxScrambleDelay = 8; // The longest pause (listening closely)
+
+        // Controls for the visual static
+        private int _glitchChance = 1; // Percentage chance (0-100) to show visual static (#, ?, %, !)
+        
+        private readonly List<(string Text, Color Color)> _consoleLines = new List<(string, Color)>();
+        
+        // ── The Mechanical Camera Scroll ──
+        private int _cameraY = 0;
+        private int _targetCameraY = 0;
+
+        // ── The Spark of Chaos ──
+        private readonly Random _rnd = new Random();
+
         public string DisplayName => _input.Text.Trim();
 
         public DisplayNameForm(string currentName)
@@ -48,20 +81,22 @@ namespace RedfurSync
 
             Width = S(BaseW);
 
+            // Seed the initial terminal thought 
+            _consoleLines.Add(("# [FIS-DBG] Tuning frequency: ", Color.GreenYellow));
+
             // ── The Mechanical Housing (Clipping Mask) ──
             var inputHousing = new Panel
             {
-                Location  = new Point(_pad, _headerH + S(20)),
-                Width     = S(BaseW) - _pad * 2-8,
-                Height    = S(28), // The exact height you want the box to visually be
-                BackColor = CGoldDark, // Your contrasting background color!
+                Location  = new Point(_pad, _headerH + S(65)), 
+                Width     = S(BaseW) - _pad * 2,
+                Height    = S(28), 
+                BackColor = CGoldDark, 
             };
 
-            // Draw the custom border directly onto the housing
             inputHousing.Paint += (s, e) => 
             {
                 using var p = new Pen(CGoldDim, S(3));
-                e.Graphics.DrawRectangle(p, 0, 0, inputHousing.Width - 3, inputHousing.Height - 1);
+                e.Graphics.DrawRectangle(p, 5, 5, inputHousing.Width - 1, inputHousing.Height - 1);
             };
 
             // ── The Trapped Text ──
@@ -69,21 +104,17 @@ namespace RedfurSync
             {
                 Text            = currentName is "Redfur Trader" or "Unknown" or "" ? "" : currentName,
                 PlaceholderText = "How shall this one address you?",
-                BackColor       = inputHousing.BackColor, // Match the housing perfectly
+                BackColor       = inputHousing.BackColor, 
                 ForeColor       = CText,
                 BorderStyle     = BorderStyle.None,
                 AutoSize        = false,
                 Font            = Body(12.5f, _scale),
                 MaxLength       = 32,
-                
-                // We shove the ghost gap UP into the ceiling of the panel so it is hidden!
-                Location        = new Point(S(4), -S(3)), 
-                
+                Location        = new Point(S(5), -S(3)), 
                 Width           = inputHousing.Width - S(8),
-                Height          = S(44), // Give it plenty of room so the bottom doesn't clip
+                Height          = S(40), 
             };
 
-            // Lock the text box inside the housing
             inputHousing.Controls.Add(_input);
             _input.KeyDown += (_, e) =>
             {
@@ -108,9 +139,107 @@ namespace RedfurSync
                 if (e.Button == MouseButtons.Left)
                 {
                     ReleaseCapture();
-                    SendMessage(Handle, 0xA1, 0x2, 0); // Tricks Windows into dragging the form
+                    SendMessage(Handle, 0xA1, 0x2, 0); 
                 }
             };
+
+            // ── The Waking Sequence ──
+            _pulseTimer = new System.Windows.Forms.Timer { Interval = 40 }; 
+            _pulseTimer.Tick += (_, _) =>
+            {
+                // ── Advance the Camera Motor ──
+                if (_cameraY < _targetCameraY)
+                {
+                    // A heavy, instantaneous shift, like a mechanical CRT buffer
+                    //_cameraY = _targetCameraY; 
+
+                    // A fast, mechanical zip (3 pixels per tick) rather than a smooth float
+                    _cameraY += Math.Max(1, S(3)); 
+                    if (_cameraY > _targetCameraY) _cameraY = _targetCameraY;
+                }
+
+                if (_isTuning)
+                {
+                    _tuningTicks++;
+                    
+                    // Only generate new numbers when we reach the randomized target tick
+                    if (_tuningTicks >= _nextScrambleTick && _tuningTicks < 80)
+                    {
+                        // Calculate the next time the dial should "jump"
+                        _nextScrambleTick = _tuningTicks + _rnd.Next(_minScrambleDelay, _maxScrambleDelay + 1);
+
+                        _currentFreqValue = _rnd.NextDouble() * 899.99 + 100.00;
+                        _currentFreqString = _currentFreqValue.ToString("0.00");
+
+                        // Apply organic glitching based on your adjustable percentage
+                        if (_rnd.Next(100) < _glitchChance) 
+                        {
+                            if (_rnd.Next(2) == 0) _currentFreqString = _currentFreqString.Replace('4', '#').Replace('7', '?');
+                            else _currentFreqString = _currentFreqString.Replace('2', '%').Replace('9', '!');
+                        }
+                        
+                        // Natural Color Shift: Blend the color smoothly based on how high the frequency is
+                        float blendRatio = (float)((_currentFreqValue - 100.0) / 899.99);
+                        _currentFreqColor = BlendColor(Color.Gold, Color.DarkOrange, blendRatio);
+                    }
+
+                    if (_tuningTicks == 80) // ~1.2s
+                    {
+                        _lockedFrequency = (_rnd.NextDouble() * 899.99 + 100.00).ToString("0.00");
+                        _consoleLines[0] = ($"# [FIS-DBG] Frequency Tuned! @ {_lockedFrequency}hz", CGreen);
+                    }
+                    else if (_tuningTicks == 100)
+                    {
+                        AddConsoleLine("# [FIS-DBG] Stabilizing connection...", Color.YellowGreen);
+                    }
+                    else if (_tuningTicks == 120) // ~2.2s
+                    {
+                        AddConsoleLine("# [FIS-DBG] Synchronizing...", Color.YellowGreen);
+                    }
+                    else if (_tuningTicks == 160) // ~3.2s
+                    {
+                        AddConsoleLine("# [FIS-DBG] Connection stabilized!", CGreen);
+                    }
+                    else if (_tuningTicks == 200) // ~4.0s
+                    {
+                        AddConsoleLine("# [FIS-DBG] Data stream ready!", Color.FromArgb(120, 210, 255));
+                        _isTuning = false; 
+                        _lightColor = CGreen; 
+                    }
+                }
+
+                int targetStep = _isTuning ? 24 : 4; 
+                _glowStep = _glowStep > 0 ? targetStep : -targetStep;
+                _glowAlpha += _glowStep;
+
+                if (_glowAlpha >= 240) { _glowAlpha = 240; _glowStep = -targetStep; }
+                if (_glowAlpha <= 40)  { _glowAlpha = 40;  _glowStep = targetStep; }
+
+                Invalidate(); 
+            };
+            _pulseTimer.Start();
+        }
+
+        private void AddConsoleLine(string text, Color color)
+        {
+            _consoleLines.Add((text, color));
+            // If we have more than 2 lines, instruct the camera to instantly slide down by one line height
+            if (_consoleLines.Count > 2)
+            {
+                _targetCameraY += S(12);
+            }
+        }
+
+        private Color BlendColor(Color c1, Color c2, float ratio)
+        {
+            // Ensure the ratio stays strictly between 0 and 1
+            ratio = Math.Max(0f, Math.Min(1f, ratio));
+            
+            int r = (int)(c1.R + (c2.R - c1.R) * ratio);
+            int g = (int)(c1.G + (c2.G - c1.G) * ratio);
+            int b = (int)(c1.B + (c2.B - c1.B) * ratio);
+            
+            return Color.FromArgb(r, g, b);
         }
 
         private int S(int v) => (int)Math.Round(v * _scale);
@@ -154,44 +283,133 @@ namespace RedfurSync
             g.FillRectangle(hg, 0, 0, Width, _headerH);
             DrawDivider(g, S(10), Width - S(10), _headerH - 1, CGoldDim, CGoldMid);
 
-            // Goggle dot
-            int dot = S(14);
-            int dy  = _headerH / 2 - dot - 5;
-            using var goggleBrush = new SolidBrush(CGreen);
-            g.FillEllipse(goggleBrush, _pad, dy, dot, dot);
-            
-            using var gogglePen = new Pen(Color.FromArgb(155, CGreen), S(1));
-            g.DrawEllipse(gogglePen, _pad, dy, dot, dot);
-            
-            using var glintBrush = new SolidBrush(Color.FromArgb(120, Color.White));
-            g.FillEllipse(glintBrush, _pad + dot / 4, dy + dot / 6, dot / 4, dot / 4);
+            // ── The Mechanical Indicator Light ──
+            int rimSize = S(16);
+            int dy = _headerH / 3 - rimSize / 3 - S(5); 
+            int dx = _pad;
 
+            using var glowPen = new Pen(Color.FromArgb(Math.Min(255, _glowAlpha), _lightColor), S(4));
+            g.DrawEllipse(glowPen, dx - S(1), dy - S(1), rimSize + S(2), rimSize + S(2));
+
+            using var rimBrush = new LinearGradientBrush(
+                new Rectangle(dx, dy, rimSize, rimSize),
+                CBtnDark, CBtnLight, LinearGradientMode.ForwardDiagonal);
+            g.FillEllipse(rimBrush, dx, dy, rimSize, rimSize);
+
+            using var rimBorder = new Pen(Color.FromArgb(30, 20, 10), S(1));
+            g.DrawEllipse(rimBorder, dx, dy, rimSize, rimSize);
+
+            int glassPad = S(3);
+            int gSize = rimSize - glassPad * 2;
+            int gx = dx + glassPad;
+            int gy = dy + glassPad;
+
+            using var shadowBrush = new SolidBrush(Color.FromArgb(180, 5, 5, 5));
+            g.FillEllipse(shadowBrush, gx, gy, gSize, gSize);
+
+            int coreAlpha = Math.Max(60, _glowAlpha);
+            using var coreBrush = new SolidBrush(Color.FromArgb(coreAlpha, _lightColor));
+            g.FillEllipse(coreBrush, gx, gy, gSize, gSize);
+
+            using var glintBrush = new SolidBrush(Color.FromArgb(160, Color.White));
+            g.FillEllipse(glintBrush, gx + gSize / 4, gy + gSize / 6, gSize / 3, gSize / 3);
+
+            // ── The Digital Screen Cutout ──
+            int screenX = _pad + rimSize + S(8);
+            int screenY = S(8);
+            int screenW = Width - screenX - S(12);
+            int screenH = _headerH - S(16);
+
+            using var screenBg = new SolidBrush(Color.FromArgb(6, 6, 8));
+            g.FillRectangle(screenBg, screenX, screenY, screenW, screenH);
+
+            using var screenBorder = new Pen(Color.FromArgb(80, 37, 252, 0), S(1));
+            g.DrawRectangle(screenBorder, screenX, screenY, screenW, screenH);
+
+            using var scanlinePen = new Pen(Color.FromArgb(12, CGreen), 2);
+            for (int i = screenY; i < screenY + screenH; i += 3)
+            {
+                g.DrawLine(scanlinePen, screenX, i, screenX + screenW, i);
+            }
+
+            Action<string, Font, Color, PointF> DrawGlowingText = (text, font, color, pt) =>
+            {
+                int dynamicAlpha = Math.Max(10, _glowAlpha / 3); 
+                using var glowBrush = new SolidBrush(Color.FromArgb(dynamicAlpha, color));
+                
+                int spread = 1; 
+                int offset = Math.Max(1, S(1)); 
+                
+                for (int hx = -spread; hx <= spread; hx++)
+                {
+                    for (int hy = -spread; hy <= spread; hy++)
+                    {
+                        if (hx == 0 && hy == 0) continue;
+                        g.DrawString(text, font, glowBrush, new PointF(pt.X + (hx * offset), pt.Y + (hy * offset)));
+                    }
+                }
+                
+                using var coreBrush = new SolidBrush(color);
+                g.DrawString(text, font, coreBrush, pt);
+            };
+
+            // ── Static Header (Drawn ABOVE the scrolling mask) ──
             using var tf = Title(12f, _scale, FontStyle.Bold);
-            using var titleBrush = new SolidBrush(CGoldBrt);
-            g.DrawString("TONAL_RECOGNITION.4md", tf, titleBrush, new PointF(_pad + dot + S(10), S(3)));
+            DrawGlowingText("> TONAL_RECOGNITION.4md", tf, CGoldBrt, new PointF(screenX + S(1), screenY + S(-1)));
 
-            using var sf = Body(8.5f, _scale, FontStyle.Bold);
-            using var subBrush = new SolidBrush(CGreenDim);
-            g.DrawString("[FIS-DBG] Tuning frequency...", sf, subBrush, new PointF(_pad + dot + S(10), S(24)));
+            // ── Apply Clipping Mask so old text slides cleanly under the header ──
+            g.SetClip(new Rectangle(screenX, screenY + S(15), screenW, screenH - S(15)));
 
-            using var sf2 = Body(8.5f, _scale, FontStyle.Bold);
-            using var subBrush2 = new SolidBrush(CGreen);
-            g.DrawString("[FIS-DBG] Data stream ready!", sf2, subBrush2, new PointF(_pad + dot + S(10), S(36)));
+            using var sf = Body(8f, _scale, FontStyle.Regular);
+            
+            // Decouple the blink from the tuner state so it never freezes
+            bool showCursor = (Environment.TickCount / 500) % 2 == 0;
+            
+            for (int i = 0; i < _consoleLines.Count; i++)
+            {
+                var line = _consoleLines[i];
+                string lineText = line.Text;
+                Color lineColor = line.Color;
 
-            using var sf3 = Body(9f, _scale, FontStyle.Bold);
+                if (i == 0 && _tuningTicks < 80)
+                {
+                    // Use the stored, slower-updating values
+                    lineText = $"# [FIS-DBG] Tuning frequency: {_currentFreqString}hz";
+                    lineColor = _currentFreqColor;
+                }
+
+                // Append the blinking block cursor ONLY to the final line
+                if (i == _consoleLines.Count - 1 && showCursor)
+                {
+                    lineText += "_";
+                }
+
+                // ── The Retro Camera Offset Formula ──
+                int yPos = screenY + S(27) + (i * S(12)) - _cameraY; 
+                
+                // Only render if it's currently inside the visible screen bounds
+                if (yPos > screenY - S(12) && yPos < screenY + screenH)
+                {
+                    DrawGlowingText(lineText, sf, lineColor, new PointF(screenX + S(12), yPos));
+                }
+            }
+
+            // Remove the mask so the rest of the form draws normally
+            g.ResetClip();
+
+            // ── Smoothly Spaced Form Text ──
+            using var sf3 = Body(9.5f, _scale, FontStyle.Regular);
             using var subBrush3 = new SolidBrush(CText);
-            g.DrawString("Set a name to be credited for the sync contribution\n", sf3, subBrush3, new PointF(S(10), S(50)));
+            g.DrawString("Set a name to be credited for the sync contribution\n", sf3, subBrush3, new PointF(S(8), _headerH + S(5))); 
 
-            using var lf = Body(9f, _scale, FontStyle.Regular);
-            using var labelBrush = new SolidBrush(CTextSub);
-            g.DrawString("Input Name", lf, labelBrush, new PointF(_pad, _headerH + S(0)));
+            using var lf = Body(10f, _scale, FontStyle.Regular);
+            using var labelBrush = new SolidBrush(Color.Silver);
+            g.DrawString("Input Name", lf, labelBrush, new PointF(_pad-5, _headerH + S(43))); 
         
-            // ── Draw the custom housing for the borderless TextBox ──
-            using var inputBgBrush = new SolidBrush(Color.FromArgb(10, 8, 5));
+            using var inputBgBrush = new SolidBrush(Color.FromArgb(10, 5, 5));
             using var inputBorderPen = new Pen(CGoldDim, S(1));
             
-            // This rectangle acts as our visually perfect text box
-            var inputRect = new Rectangle(_pad, _headerH + S(18), Width - _pad * 2, S(32));
+            var inputRect = new Rectangle(_pad, _headerH + S(63), Width - _pad * 2, S(32)); 
             
             g.FillRectangle(inputBgBrush, inputRect);
             g.DrawRectangle(inputBorderPen, inputRect.X, inputRect.Y, inputRect.Width, inputRect.Height);
@@ -216,6 +434,16 @@ namespace RedfurSync
             b.MouseEnter += (_, _) => { b.BackColor = Color.FromArgb(60, accent); b.ForeColor = Color.White; };
             b.MouseLeave += (_, _) => { b.BackColor = Color.FromArgb(28, accent); b.ForeColor = accent; };
             return b;
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                _pulseTimer?.Stop();
+                _pulseTimer?.Dispose();
+            }
+            base.Dispose(disposing);
         }
 
         protected override CreateParams CreateParams
