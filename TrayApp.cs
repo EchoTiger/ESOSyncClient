@@ -68,7 +68,7 @@ namespace RedfurSync
                 ShowAlert("Fissal needs to tune her vocal coils!",
                     "This one cannot hear without a server address and key.\n" +
                     "Please fill in config.json and restart the matrix.",
-                    FissalAlert.AlertLevel.Low);
+                    FissalAlert.AlertLevel.TotalError);
                 OpenConfigFile();
                 return;
             }
@@ -87,18 +87,19 @@ namespace RedfurSync
                     "This ones chassis hums with harmonic frequency!",
                     Color.FromArgb(60, 180, 220),
                     10,
-                    8000);
+                    7000);
             else
                 ShowAlert("Fissal's meow was lost in the void…",
                     $"The signal to the moons could not be established:\n{msg}\n\n" +
                     "Fissal will clear her mechanical throat. Do not panic.",
-                    FissalAlert.AlertLevel.TotalError, 8000);
+                    FissalAlert.AlertLevel.TotalError, 7000);
         }
 
         private void OnTrayClick(object? sender, MouseEventArgs e)
         {
             if (e.Button != MouseButtons.Left) return;
 
+            // If you click the tray while it's open, it neatly folds away
             if (_progressForm != null && !_progressForm.IsDisposed)
             {
                 _progressForm.Close();
@@ -106,17 +107,8 @@ namespace RedfurSync
                 return;
             }
 
-            _progressForm = new UploadProgressForm(
-                _watcher.Jobs,
-                j => _watcher.RetryJob(j),
-                j => _watcher.CancelJob(j),
-                j => ApplyUpdate(j)); 
-            _progressForm.FormClosed += (_, _) => _progressForm = null;
-            _progressForm.PositionAboveTray();
-            _progressForm.Show();
-            _progressForm.Activate();
+            OpenProgressForm();
         }
-
         private void OnJobsChanged()
         {
             if (_progressForm != null && !_progressForm.IsDisposed)
@@ -167,13 +159,13 @@ namespace RedfurSync
                         ShowCustomAlert("Update Prepared!", 
                             "A new module has been received from Redfur!\nOpen the terminal to apply the upgrade.", 
                             Color.FromArgb(180, 100, 220), 
-                            4, 10000);
+                            4, 10000, OpenProgressForm); // <-- Added callback
                     }
                     else if (hasFailedUpdate)
                     {
                         ShowAlert("Update Interrupted", 
                             "Fissal's claws slipped while pulling the new module.\nCheck diagnostics for details!", 
-                            FissalAlert.AlertLevel.TotalError, 9000);
+                            FissalAlert.AlertLevel.TotalError, 9000, OpenProgressForm); // <-- Added callback
                     }
                     else if (_batchHadSuccess || _batchHadError)
                     {
@@ -193,7 +185,7 @@ namespace RedfurSync
                                 msg += $"\n\n✦ However, {doneNames} transmitted successfully.";
                             }
 
-                            ShowAlert("Sync Encountered Errors", msg, FissalAlert.AlertLevel.TotalError, 9000);
+                            ShowAlert("Sync Encountered Errors", msg, FissalAlert.AlertLevel.TotalError, 9000, OpenProgressForm); // <-- Added callback
                         }
                         else if (doneJobs.Count > 0)
                         {
@@ -203,10 +195,9 @@ namespace RedfurSync
                                 
                             string msg = $"{doneNames} successfully delivered to the matrix.\nAll transmissions verified and sealed.";
 
-                            ShowCustomAlert("Sync Complete!", msg, Color.FromArgb(60, 180, 220), 6, 7000);
+                            ShowCustomAlert("Sync Complete!", msg, Color.FromArgb(60, 180, 220), 6, 7000, OpenProgressForm); // <-- Added callback
                         }
                     }
-
                     _batchHadError   = false;
                     _batchHadSuccess = false;
                 }
@@ -344,18 +335,17 @@ namespace RedfurSync
             _trayIcon.ShowBalloonTip(7000);
         }
 
-        private void ShowAlert(string title, string text, FissalAlert.AlertLevel level = FissalAlert.AlertLevel.Normal, int timeoutMs = 7000)
+        private void ShowAlert(string title, string text, FissalAlert.AlertLevel level = FissalAlert.AlertLevel.Normal, int timeoutMs = 7000, Action? onClick = null)
         {
-            if (_menu.InvokeRequired) { _menu.BeginInvoke(() => ShowAlert(title, text, level, timeoutMs)); return; }
-            FissalAlert.Show(title, text, level, timeoutMs);
+            if (_menu.InvokeRequired) { _menu.BeginInvoke(() => ShowAlert(title, text, level, timeoutMs, onClick)); return; }
+            FissalAlert.Show(title, text, level, timeoutMs, onClick);
         }
 
-        private void ShowCustomAlert(string title, string text, Color lightColor, int flashSpeed, int timeoutMs = 7000)
+        private void ShowCustomAlert(string title, string text, Color lightColor, int flashSpeed, int timeoutMs = 7000, Action? onClick = null)
         {
-            if (_menu.InvokeRequired) { _menu.BeginInvoke(() => ShowCustomAlert(title, text, lightColor, flashSpeed, timeoutMs)); return; }
-            FissalAlert.ShowCustom(title, text, lightColor, flashSpeed, timeoutMs);
+            if (_menu.InvokeRequired) { _menu.BeginInvoke(() => ShowCustomAlert(title, text, lightColor, flashSpeed, timeoutMs, onClick)); return; }
+            FissalAlert.ShowCustom(title, text, lightColor, flashSpeed, timeoutMs, onClick);
         }
-
         private static void OpenConfigFolder() => Process.Start("explorer.exe", AppConfig.ConfigDirectory);
 
         private static void OpenConfigFile()
@@ -388,11 +378,32 @@ namespace RedfurSync
                 }
                 catch (Exception ex) 
                 {
-                    ShowAlert("Shedding Failed", $"Fissal's claws slipped: {ex.Message}", FissalAlert.AlertLevel.TotalError);
+                    ShowAlert("Update Failed!", $"Fissal's claws slipped: {ex.Message}", FissalAlert.AlertLevel.TotalError);
                 }
             }
         }
 
+        private void OpenProgressForm()
+        {
+            if (_menu.InvokeRequired) { _menu.BeginInvoke(OpenProgressForm); return; }
+
+            // If it's already open, just bring it to the front so your eyes can lock onto it
+            if (_progressForm != null && !_progressForm.IsDisposed)
+            {
+                _progressForm.Activate();
+                return;
+            }
+
+            _progressForm = new UploadProgressForm(
+                _watcher.Jobs,
+                j => _watcher.RetryJob(j),
+                j => _watcher.CancelJob(j),
+                j => ApplyUpdate(j)); 
+            _progressForm.FormClosed += (_, _) => _progressForm = null;
+            _progressForm.PositionAboveTray();
+            _progressForm.Show();
+            _progressForm.Activate();
+        }
         private static Icon BuildFissalIcon()
         {
             using var bmp = new Bitmap(64, 64);

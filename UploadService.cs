@@ -28,16 +28,21 @@ namespace RedfurSync
                 var json = await response.Content.ReadAsStringAsync();
                 
                 // We deeply inhale the JSON scent and map it directly to our payload structure
-                var payload = JsonSerializer.Deserialize<UpdatePayload>(json, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                var payload = JsonSerializer.Deserialize<UpdatePayload>(json, new JsonSerializerOptions 
+                { 
+                    PropertyNameCaseInsensitive = true 
+                });
                 
-                if (payload != null && !string.IsNullOrWhiteSpace(payload.version) && payload.version != currentVersion)
-                {
+                // If we caught a scent, and it is a different version than our own coat
+                if (payload != null && !string.IsNullOrWhiteSpace(payload.Version) && payload.Version != currentVersion)
+                {                    
                     return payload;
                 }
             }
             catch (Exception ex) 
             { 
-                Console.WriteLine($"[Fissal Update Hunt Error] ✖ The scent was lost: {ex.Message}"); 
+                // A low growl if the trail goes cold
+                Console.WriteLine($"[Redfur Update Hunt Error] ✖ The scent was lost: {ex.Message}"); 
             }
             return null;
         }

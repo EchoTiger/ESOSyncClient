@@ -34,25 +34,21 @@ namespace RedfurSync
         private int _lightAlpha = 40;
         private int _lightStep;
 
-        /// <summary>
-        /// Option 1: Summon the alert using Fissal's instinctual alert levels.
-        /// </summary>
-        public static void Show(string title, string text, AlertLevel level = AlertLevel.Normal, int timeoutMs = 7000)
+        // Update the static Show method to accept an onClick action
+        public static void Show(string title, string text, AlertLevel level = AlertLevel.Normal, int timeoutMs = 7000, Action? onClick = null)
         {
-            var alert = new FissalAlert(title, text, level, null, null, timeoutMs);
+            var alert = new FissalAlert(title, text, level, null, null, timeoutMs, onClick);
             alert.Show();
         }
 
-        /// <summary>
-        /// Option 2: Manually override the Fissal matrix with a custom color and flash speed.
-        /// </summary>
-        public static void ShowCustom(string title, string text, Color lightColor, int flashSpeed, int timeoutMs = 7000)
+        // Update the static ShowCustom method to accept an onClick action
+        public static void ShowCustom(string title, string text, Color lightColor, int flashSpeed, int timeoutMs = 7000, Action? onClick = null)
         {
-            var alert = new FissalAlert(title, text, null, lightColor, flashSpeed, timeoutMs);
+            var alert = new FissalAlert(title, text, null, lightColor, flashSpeed, timeoutMs, onClick);
             alert.Show();
         }
 
-        private FissalAlert(string title, string text, AlertLevel? level, Color? customColor, int? customSpeed, int timeoutMs)
+        private FissalAlert(string title, string text, AlertLevel? level, Color? customColor, int? customSpeed, int timeoutMs, Action? onClick)
         {
             _alertTitle = title;
             _alertText = text;
@@ -113,8 +109,10 @@ namespace RedfurSync
             _animTimer.Tick += OnTick;
             _animTimer.Start();
 
-            // A gentle tap dismisses the window early
-            MouseClick += (_, _) => BeginFadeOut();
+            MouseClick += (_, _) => {
+                onClick?.Invoke();
+                BeginFadeOut();
+            };
         }
 
         private int S(int v) => (int)Math.Round(v * _scale);

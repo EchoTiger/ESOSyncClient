@@ -43,11 +43,11 @@ namespace RedfurSync
 
         private async Task CheckForUpdatesAsync()
         {
-            Console.WriteLine("[Fissal] Sniffing the air for new upgrades...");
+            Console.WriteLine("[RedfurSync] Sniffing the air for new upgrades...");
             
             if (Jobs.Any(j => j.Status == UploadStatus.Uploading)) 
             {
-                Console.WriteLine("[Fissal] Paws are full with Redfur trade data. Delaying update hunt.");
+                Console.WriteLine("[RedfurSync] Paws are full with trade data. Delaying update hunt.");
                 return; 
             }
             
@@ -59,7 +59,7 @@ namespace RedfurSync
 
             lock (_jobLock)
             {
-                if (Jobs.Any(j => j.IsUpdate && j.UpdateVersion == payload.version)) return;
+                if (Jobs.Any(j => j.IsUpdate && j.UpdateVersion == payload.Version)) return;
             }
 
             string tmpPath = Path.Combine(AppConfig.ConfigDirectory, "Update.tmp");
@@ -68,12 +68,12 @@ namespace RedfurSync
             {
                 IsUpdate       = true,
                 CurrentVersion = version,
-                UpdateVersion  = payload.version,
-                Changelog      = payload.changelog,
-                DownloadUrl    = payload.downloadUrl,
+                UpdateVersion  = payload.Version,
+                Changelog      = payload.Changelog,
+                DownloadUrl    = payload.DownloadUrl,
                 FilePath       = tmpPath,
-                FileName       = $"Fissal Matrix v{payload.version}",
-                FileSizeBytes  = payload.sizeBytes, 
+                FileName       = $"RedfurSync v{payload.Version}",
+                FileSizeBytes  = payload.SizeBytes, 
                 QueuedAt       = DateTime.Now,
                 Status         = UploadStatus.Queued,
                 IsExpanded     = true
@@ -131,7 +131,7 @@ _ =         Task.Run(async () => { await Task.Delay(8000); await CheckForUpdates
             TryWatch(Path.Combine(esoBase, "AddOns", "LibEsoHubPrices"));
 
             _onStatus(count == 0
-                ? "Fissal cannot find your data scrolls!"
+                ? "Fissal cannot find your data!"
                 : $"Fissal is monitoring {count} folder(s)");
         }
 
@@ -204,7 +204,7 @@ _ =         Task.Run(async () => { await Task.Delay(8000); await CheckForUpdates
             }
 
             NotifyChanged();
-            _onStatus($"Dispatching {job.FileName} to the vault…");
+            _onStatus($"Dispatching {job.FileName} to the Redfur database...");
 
             job.Status = UploadStatus.Uploading;
             NotifyChanged();
@@ -220,7 +220,7 @@ _ =         Task.Run(async () => { await Task.Delay(8000); await CheckForUpdates
 
             if (success)
             {
-                Console.WriteLine($"[Fissal] ✦ {job.FileName} delivered to the vault.");
+                Console.WriteLine($"[RedfurSync] ✦ {job.FileName} delivered to the vault.");
                 
                 if (currentJobCount > 1)
                     _onStatus($"Last Sync: {DateTime.Now:MMM dd, h:mm tt}");
@@ -229,12 +229,12 @@ _ =         Task.Run(async () => { await Task.Delay(8000); await CheckForUpdates
             }
             else if (job.Status == UploadStatus.Cancelled)
             {
-                Console.WriteLine($"[Fissal] — Transmission of {job.FileName} aborted.");
+                Console.WriteLine($"[RedfurSync] — Transmission of {job.FileName} aborted.");
                 _onStatus("Transmission aborted.");
             }
             else
             {
-                Console.WriteLine($"[Fissal] ✖ Transmission of {job.FileName} failed: {job.ErrorMessage}");
+                Console.WriteLine($"[RedfurSync] ✖ Transmission of {job.FileName} failed: {job.ErrorMessage}");
                 _onStatus($"Transmission failed: {job.FileName}");
             }
         }

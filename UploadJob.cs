@@ -11,10 +11,10 @@ namespace RedfurSync
     // ── We add this small structure to perfectly catch the server's scent ──
     public class UpdatePayload
     {
-        public string version { get; set; } = string.Empty;
-        public string downloadUrl { get; set; } = string.Empty;
-        public string changelog { get; set; } = string.Empty;
-        public long sizeBytes { get; set; } = 0;
+        public string Version { get; set; } = string.Empty;
+        public string DownloadUrl { get; set; } = string.Empty;
+        public string Changelog { get; set; } = string.Empty;
+        public long SizeBytes { get; set; } = 0;
     }
 
     public class UploadJob : INotifyPropertyChanged
@@ -84,13 +84,13 @@ namespace RedfurSync
 
             return new UploadJob 
             {
-                FileName = $"Fissal Matrix v{payload.version}",
+                FileName = $"Fissal Relay v{payload.Version}",
                 IsUpdate = true,
                 CurrentVersion = localVersion,           
-                UpdateVersion = payload.version,      
-                Changelog = payload.changelog,        
-                FileSizeBytes = payload.sizeBytes,    
-                DownloadUrl = payload.downloadUrl,    
+                UpdateVersion = payload.Version,      
+                Changelog = payload.Changelog,        
+                FileSizeBytes = payload.SizeBytes,    
+                DownloadUrl = payload.DownloadUrl,    
                 Status = UploadStatus.UpdateReady,
                 QueuedAt = DateTime.Now,
                 IsExpanded = true
