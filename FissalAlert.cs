@@ -34,14 +34,18 @@ namespace RedfurSync
         private int _lightAlpha = 40;
         private int _lightStep;
 
-        // Update the static Show method to accept an onClick action
+        /// <summary>
+        /// Option 1: Summon the alert using Fissal's instinctual alert levels.
+        /// </summary>
         public static void Show(string title, string text, AlertLevel level = AlertLevel.Normal, int timeoutMs = 7000, Action? onClick = null)
         {
             var alert = new FissalAlert(title, text, level, null, null, timeoutMs, onClick);
             alert.Show();
         }
 
-        // Update the static ShowCustom method to accept an onClick action
+        /// <summary>
+        /// Option 2: Manually override the Fissal matrix with a custom color and flash speed.
+        /// </summary>
         public static void ShowCustom(string title, string text, Color lightColor, int flashSpeed, int timeoutMs = 7000, Action? onClick = null)
         {
             var alert = new FissalAlert(title, text, null, lightColor, flashSpeed, timeoutMs, onClick);
@@ -95,12 +99,41 @@ namespace RedfurSync
             StartPosition = FormStartPosition.Manual;
             
             _scale = GetScale(Handle);
-            Width = S(340);
-            Height = S(115);
+
+            // ── Instinctual Stretching (Dynamic Resizing) ──
+            using (var bmp = new Bitmap(1, 1))
+            using (var g = Graphics.FromImage(bmp))
+            using (var tf = Title(14f, _scale, FontStyle.Bold))
+            using (var bf = Body(10.5f, _scale))
+            {
+                // Feel the uncoiled length of the raw text
+                string titleDisplay = $"> {_alertTitle.ToUpper()}";
+                float titleW = g.MeasureString(titleDisplay, tf).Width;
+                float textRawW = g.MeasureString(_alertText, bf).Width;
+
+                // Set boundaries so she doesn't stretch too far across your territory
+                int minWidth = S(100);
+                int maxWidth = S(300); 
+                
+                // Calculate horizontal space needed (accounting for her mechanical padding)
+                int desiredWidth = (int)Math.Max(titleW + S(35), textRawW + S(15));
+                Width = Math.Max(minWidth, Math.Min(desiredWidth, maxWidth));
+
+                // Now that her width is locked, measure how tall she must stand to hold wrapped text
+                float wrapWidth = Width - S(10); // S(20) padding on each side
+                float wrappedTextH = g.MeasureString(_alertText, bf, new SizeF(wrapWidth, 9999)).Height;
+
+                int minHeight = S(100);
+                
+                // Total height equals the text height plus the top CRT bezel and bottom padding.
+                // I've added a tiny bit of extra breathing room so the tails of letters don't clip.
+                int desiredHeight = (int)Math.Ceiling(wrappedTextH + S(50));
+                Height = Math.Max(minHeight, desiredHeight);
+            }
 
             // ── The Silent Approach (Positioning) ──
             var wa = Screen.PrimaryScreen?.WorkingArea ?? Screen.AllScreens[0].WorkingArea;
-            Location = new Point(wa.Right - Width - S(20), wa.Bottom - Height - S(20));
+            Location = new Point(wa.Right - Width - S(10), wa.Bottom - Height - S(10));
             
             Opacity = 0; // Start hidden in the shadows
 
@@ -109,6 +142,7 @@ namespace RedfurSync
             _animTimer.Tick += OnTick;
             _animTimer.Start();
 
+            // A gentle tap dismisses the window early and triggers her action
             MouseClick += (_, _) => {
                 onClick?.Invoke();
                 BeginFadeOut();
@@ -215,14 +249,14 @@ namespace RedfurSync
             g.FillEllipse(glintBrush, gx + gSize / 4, gy + gSize / 6, gSize / 3, gSize / 3);
 
             // ── The Hazy, Glowing Header ──
-            using var tf = Title(10f, _scale, FontStyle.Bold);
+            using var tf = Title(12f, _scale, FontStyle.Bold);
             string titleDisplay = $"> {_alertTitle.ToUpper()}";
             
             int baseGlow = (int)(30 + (50 * _glow)); // Breathes smoothly
             using var titleGlowBrush = new SolidBrush(Color.FromArgb(baseGlow, _themeColor));
             
-            float tx = dx + rimSize + S(8); // Shifted text to make room for the light
-            float ty = S(8);
+            float tx = dx + rimSize + S(5); // Shifted text to make room for the light
+            float ty = S(6);
             
             for (int hx = -1; hx <= 1; hx++)
             {
@@ -237,26 +271,26 @@ namespace RedfurSync
             g.DrawString(titleDisplay, tf, textCoreBrush, new PointF(tx, ty));
 
             // ── The CRT Screen Body ──
-            int boxX = S(12);
-            int boxY = S(32);
-            int boxW = Width - S(24);
-            int boxH = Height - S(44);
+            int boxX = S(10);
+            int boxY = S(30);
+            int boxW = Width - S(20);
+            int boxH = Height - S(40);
 
             using var crtBg = new SolidBrush(Color.FromArgb(8, 8, 10)); // Deep screen void
             g.FillRectangle(crtBg, boxX, boxY, boxW, boxH);
 
-            using var crtBorder = new Pen(Color.FromArgb(40, _themeColor), S(1));
+            using var crtBorder = new Pen(Color.FromArgb(50, _themeColor), S(1));
             g.DrawRectangle(crtBorder, boxX, boxY, boxW, boxH);
 
             // ── Terminal Scanlines ──
-            using var scanPen = new Pen(Color.FromArgb(15, _themeColor), 1);
+            using var scanPen = new Pen(Color.FromArgb(20, _themeColor), 1);
             for (int i = boxY + 2; i < boxY + boxH; i += 3)
             {
                 g.DrawLine(scanPen, boxX + 1, i, boxX + boxW - 1, i);
             }
 
             // ── The Trapped Text ──
-            using var bf = Body(8.5f, _scale);
+            using var bf = Body(9.5f, _scale);
             using var bodyTextBrush = new SolidBrush(CText);
             var textRect = new RectangleF(boxX + S(8), boxY + S(8), boxW - S(16), boxH - S(16));
             g.DrawString(_alertText, bf, bodyTextBrush, textRect);

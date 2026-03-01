@@ -23,16 +23,16 @@ namespace RedfurSync
         // ── Centralized Visual Configuration (Easy Maintenance) ──
         public static class AppConfig
         {
-            public static int AnimIntervalMs = 45; 
+            public static int AnimIntervalMs = 51; 
             
             public const int MaxLogsKept = 8;
-            public const int GlitchChancePer1k = 5;  
-            public const int HeavyGlitchPct = 15;    
+            public const int GlitchChancePer1k = 8;  
+            public const int HeavyGlitchPct = 18;    
             public const float ScanlineSpeed = 0.56f;
-            public const int MarqueePause = 150;     
-            public const float ShimmerSpeed = 0.35f; 
-            public const float ScrollFriction = 0.35f;
-            public const float ScrollWheelSpeedMain = 0.9f;
+            public const int MarqueePause = 80;     
+            public const float ShimmerSpeed = 0.85f; 
+            public const float ScrollFriction = 0.50f;
+            public const float ScrollWheelSpeedMain = 0.5f;
             public const float ScrollWheelSpeedDiag = 0.85f;
             public const float CopyBubbleFloatSpeed = 1.45f; 
             public const float CopyBubbleFadeSpeed = 4.8f;   
@@ -46,17 +46,17 @@ namespace RedfurSync
                 
                 if (mode == FidelityMode.Low)
                 {
-                    AnimIntervalMs = 60;
+                    AnimIntervalMs = 68;
                     SetAll(false);
                 }
                 else if (mode == FidelityMode.High)
                 {
-                    AnimIntervalMs = 33;
+                    AnimIntervalMs = 45;
                     SetAll(true);
                 }
                 else 
                 {
-                    AnimIntervalMs = 45;
+                    AnimIntervalMs = 51;
                     FX.ScreenScanlines   = false;
                     FX.ScreenVignette    = false;
                     FX.ScreenGlassShine  = false;
@@ -150,17 +150,17 @@ namespace RedfurSync
             }
         }
 
-        private const int BaseW       = 400;
-        private const int BaseHeaderH = 68; 
-        private const int BaseRowH    = 106;  
-        private const int BaseExpandH = 125; 
-        private const int BaseBarH    = 10;
-        private const int BasePad     = 18;
-        private const int BaseBtnW    = 68;   
-        private const int BaseBtnH    = 24;   
-        private const int BaseDiagH   = 20;   
-        private const int BaseEmptyH  = 90;
-        private const int MaxRows     = 5;
+        private const int BaseW       = 340; // 400 - Overall app size
+        private const int BaseHeaderH = 55; // 68 - How tall the area where the text/micro screen is at.
+        private const int BaseRowH    = 95;  // 106 How tall header's child items are.
+        private const int BaseExpandH = 125;  // How tall the DIAG menus under the child menus are.
+        private const int BaseBarH    = 8;  // Progress bar size.
+        private const int BasePad     = 14; // 18 - How close all the elements are to the edge of the main window
+        private const int BaseBtnW    = 65;   // 68  Buttons like "Apply" or "DIAG"
+        private const int BaseBtnH    = 20;   // 24  Buttons like "Apply" or "DIAG"
+        private const int BaseDiagH   = 20;   // Height specific to diag button?
+        private const int BaseEmptyH  = 90;   // No jobs at all, "Fissal's Ears" text.
+        private const int MaxRows     = 4;
         private float _emptyStateAlpha = 0f;
         private readonly float _scale;
         private int FormW, HeaderH, RowH, ExpandH, BarH, Pad, BtnW, BtnH, DiagH, EmptyH;
@@ -199,9 +199,9 @@ namespace RedfurSync
 
         private string? _purgingGroupText = null;
         private int _purgingJobIdx = -1;
-        private int _purgeAnimFrames = 1;
-        private const int MaxPurgeFrames = 4; 
-        private const int MaxJobPurgeFrames = 4;
+        private int _purgeAnimFrames = 10;
+        private const int MaxPurgeFrames = 5; 
+        private const int MaxJobPurgeFrames = 5;
         
         private float _slideOffset = 0f;
         private int _slideStartY = 0;
@@ -238,9 +238,9 @@ namespace RedfurSync
         private Color _coreColor = CGreen, _auraColor = Color.FromArgb(240, 150, 40);
         private readonly Action<UploadJob> _onApply;
         
-        private Rectangle CloseBtnRect => new Rectangle(Width - Pad - S(28), (HeaderH - S(28)) / 2, S(28), S(28));
+        private Rectangle CloseBtnRect => new Rectangle(Width - Pad - S(20), (HeaderH - S(20)) / 2, S(25), S(25));
         
-        private int RightGutterW => S(26);
+        private int RightGutterW => S(5);
         private int WorkingAreaW => Width - RightGutterW;
         private int RightBtnX => WorkingAreaW - Pad - BtnW;
 
@@ -817,7 +817,7 @@ namespace RedfurSync
                 
                 if (AppConfig.FX.ScreenScanlines)
                 {
-                    using var screenScanPen = new Pen(Color.FromArgb(15, 0, 0, 15), 10);
+                    using var screenScanPen = new Pen(Color.FromArgb(90, 10, 5, 2), 1.5f);
                     for (float sy = HeaderH + _scanPhase; sy < Height; sy += 4)
                         g.DrawLine(screenScanPen, 0, sy, Width, sy);
                 }
@@ -828,14 +828,14 @@ namespace RedfurSync
                     vignettePath.AddRectangle(clipRect);
                     using var pthGrBrush = new PathGradientBrush(vignettePath)
                     {
-                        CenterColor = Color.Transparent, SurroundColors = new[] { Color.FromArgb(160, 0, 0, 0) }, FocusScales = new PointF(0.80f, 0.90f)
+                        CenterColor = Color.Transparent, SurroundColors = new[] { Color.FromArgb(190, 0, 0, 0) }, FocusScales = new PointF(0.65f, 0.80f)
                     };
                     g.FillRectangle(pthGrBrush, clipRect);
                 }
 
                 if (AppConfig.FX.ScreenGlassShine)
                 {
-                    using var glassHighlight = new LinearGradientBrush(clipRect, Color.FromArgb(12, 255, 255, 255), Color.Transparent, LinearGradientMode.ForwardDiagonal);
+                    using var glassHighlight = new LinearGradientBrush(clipRect, Color.FromArgb(32, 180, 215, 190), Color.Transparent, LinearGradientMode.ForwardDiagonal);
                     g.FillRectangle(glassHighlight, clipRect);
                 }
 
@@ -862,6 +862,7 @@ namespace RedfurSync
 
         private void DrawEtchedRivets(Graphics g)
         {
+            return; // not using this for now.,
             int offset = S(6), rSize = S(5);
             Point[] corners = { new Point(offset, offset), new Point(Width - offset - rSize, offset), new Point(offset, Height - offset - rSize), new Point(Width - offset - rSize, Height - offset - rSize) };
             using var shadowBrush = new SolidBrush(Color.FromArgb(200, 0, 0, 0));
@@ -923,7 +924,7 @@ namespace RedfurSync
         private Rectangle DeleteBtnRect(RowLayout row)
         {
             int boxX = Pad, boxY = row.Y + S(4), boxW = WorkingAreaW - Pad * 2;
-            int boxH = row.GroupIsExpanded ? row.Height - S(4) : row.Height - S(8);
+            int boxH = row.GroupIsExpanded ? row.Height - S(4) : row.Height - S(4);
             return new Rectangle(boxX + boxW - S(50) - S(8), boxY + (boxH - S(16)) / 2 - S(2), S(50), S(16));
         }
 
@@ -960,7 +961,7 @@ namespace RedfurSync
                 g.DrawLine(groupSepLine, Pad + S(50), lineY, WorkingAreaW - Pad - S(50), lineY);
             }
 
-            int boxX = Pad, boxY = row.Y + S(4), boxW = WorkingAreaW - Pad * 2, boxH = isExpanded ? row.Height - S(8) : row.Height - S(8);
+            int boxX = Pad, boxY = row.Y + S(5), boxW = WorkingAreaW - Pad * 2, boxH = isExpanded ? row.Height - S(8) : row.Height - S(8);
 
             if (isExpanded && row.GroupTotalHeight > 0)
             {
@@ -991,7 +992,7 @@ namespace RedfurSync
             g.DrawRectangle(borderPen, boxX, boxY, boxW, boxH); 
 
             var sf = _fTitle10Bold;
-            string text = row.IsUpdateGroup ? $"!! UPDATE AWAITING INTEGRATION   {(isExpanded ? "[-]" : "[+]")}" : $"> LOG: {row.SepText.ToUpper()}   {(isExpanded ? "[-]" : "[+]")}";
+            string text = row.IsUpdateGroup ? $"!! UPDATE AWAITING   {(isExpanded ? "[-]" : "[+]")}" : $"> LOG: {row.SepText.ToUpper()}   {(isExpanded ? "[-]" : "[+]")}";
             Color mainColor = row.IsUpdateGroup ? (textHover ? Color.FromArgb(240, 180, 255) : Color.FromArgb(200, 130, 240)) : (textHover ? Color.White : CGoldBrt);
             
             var sz = g.MeasureString(text, sf);
@@ -1182,21 +1183,21 @@ namespace RedfurSync
 
             DrawBtn(g, DiagToggleBtnRect(job, y), job.IsExpanded ? "[X]  DIAG" : "[-]  DIAG", job.IsExpanded ? gc : CGoldDim, job.IsExpanded ? gc : CGoldDim, _hoverDiagJobIdx == idx, glow: (job.IsExpanded && AppConfig.FX.ButtonGlows));
 
-            DrawHazyText(g, "> " + Trunc(job.FileName, g, _fTitle95, RightBtnX - (childPad + S(36)) - S(40)), _fTitle95, job.Status == UploadStatus.UpdateReady ? Color.FromArgb(210, 160, 240) : CText, childPad + S(34), y + S(10));
+            DrawHazyText(g, "> " + Trunc(job.FileName, g, _fTitle95, RightBtnX - (childPad + S(30)) - S(40)), _fTitle95, job.Status == UploadStatus.UpdateReady ? Color.FromArgb(210, 160, 240) : CText, childPad + S(35), y + S(10));
             
-            string detailText = job.IsUpdate ? $"> Payload: {job.FileSizeDisplay}\n> Target Build: v{job.UpdateVersion}" : $"> {job.FileSizeDisplay}\n> synced at {job.QueuedAt:h:mm tt}";
+            string detailText = job.IsUpdate ? $"> size: {job.FileSizeDisplay}\n> version: v{job.UpdateVersion}" : $"> size: {job.FileSizeDisplay}\n> synced at {job.QueuedAt:h:mm tt}";
             var detailSz = g.MeasureString(detailText, _fBody8Italic);
-            var detailRect = new RectangleF(childPad + S(5), y + S(32), detailSz.Width + S(50), detailSz.Height + S(6));
+            var detailRect = new RectangleF(childPad + S(4), y + S(32), detailSz.Width + S(50), detailSz.Height + S(6));
             
             using var infoBgPath = RoundRect(detailRect.X, detailRect.Y, detailRect.Width, detailRect.Height, S(1));
-            using var infoBgBrush = new SolidBrush(Color.FromArgb(8, 12, 10));
+            using var infoBgBrush = new SolidBrush(Color.FromArgb(150, 20, 20, 20));
             g.FillPath(infoBgBrush, infoBgPath);
-            using var infoBorder = new Pen(Color.FromArgb(80, 75, 90), 1);
+            using var infoBorder = new Pen(Color.FromArgb(150, 100, 100, 100), 1);
             g.DrawPath(infoBorder, infoBgPath);
-            using var detailTextBrush = new SolidBrush(Color.FromArgb(150, 150, 100));
-            g.DrawString(detailText, _fBody8Italic, detailTextBrush, new PointF(detailRect.X + S(6), detailRect.Y + S(3)));
+            using var detailTextBrush = new SolidBrush(Color.FromArgb(130, 220, 220, 190));
+            g.DrawString(detailText, _fBody8Italic, detailTextBrush, new PointF(detailRect.X + S(4), detailRect.Y + S(3)));
 
-            float bx = childPad + S(6), bw = childW - S(16), by = y + RowH - BarH - S(8);
+            float bx = childPad + S(6), bw = childW - S(16), by = y + RowH - BarH - S(-3);
             string statusText = job.Status switch { UploadStatus.UpdateReady => "[RDY!] CLICK APPLY TO UPDATE", UploadStatus.Done => "[DONE] DATA VERIFIED", UploadStatus.Failed => "[ERR!] LUNAR STATIC", UploadStatus.Cancelled => "[VOID] SYNC ABORTED", UploadStatus.Queued => "[PEND] AWAITING ALIGNMENT", UploadStatus.Uploading => job.IsUpdate ? "[XMIT] PULLING NEW MATRIX..." : "[XMIT] TRANSMITTING...", _ => "[ ?? ] UNKNOWN SIGNAL" };
 
             using var statBrush = new SolidBrush(gc); g.DrawString(statusText, job.Status switch { UploadStatus.Done or UploadStatus.UpdateReady => _fBody75Bold, UploadStatus.Failed or UploadStatus.Cancelled => _fBody75Italic, _ => _fBody75Reg }, statBrush, new PointF(bx, by - S(14)));
@@ -1310,7 +1311,7 @@ namespace RedfurSync
 
             if (isTrash)
             {
-                int tW = S(8), tH = S(10), tX = cx - tW / 2, tY = cy - tH / 2 + S(1);
+                int tW = S(9), tH = S(11), tX = cx - tW / 2, tY = cy - tH / 2 + S(1);
                 g.DrawLine(iconPen, tX - S(2), tY, tX + tW + S(2), tY); 
                 g.DrawLine(iconPen, tX + S(2), tY, tX + S(2), tY - S(2)); 
                 g.DrawLine(iconPen, tX + tW - S(2), tY, tX + tW - S(2), tY - S(2)); 
@@ -1369,10 +1370,10 @@ namespace RedfurSync
         private void DrawHeader(Graphics g)
         {
             using var hg = new LinearGradientBrush(new Point(0, 0), new Point(0, HeaderH), Color.FromArgb(46, 36, 18), Color.FromArgb(20, 16, 9)); g.FillRectangle(hg, 0, 0, Width, HeaderH);
-            using var bezelEdgePen = new Pen(Color.FromArgb(90, 255, 255, 255), 1); g.DrawLine(bezelEdgePen, 0, HeaderH - 2, Width, HeaderH - 2);
-            using var bezelInnerPen = new Pen(Color.FromArgb(200, 0, 0, 0), 2); g.DrawLine(bezelInnerPen, 0, HeaderH - 1, Width, HeaderH - 1);
+            using var bezelEdgePen = new Pen(Color.FromArgb(50, 255, 255, 255), 8); g.DrawLine(bezelEdgePen, 0, HeaderH - 2, Width, HeaderH - 2);
+            using var bezelInnerPen = new Pen(Color.FromArgb(250, 0, 0, 0), 4); g.DrawLine(bezelInnerPen, 0, HeaderH - 1, Width, HeaderH - 1);
 
-            int plateH = S(45), plateW = S(165), plateX = Pad-15, plateY = (HeaderH - plateH) / 2;
+            int plateH = S(45), plateW = S(165), plateX = Pad-10, plateY = (HeaderH - plateH) / 2;
             using var platePath = RoundRect(plateX, plateY, plateW, plateH, S(4));
             using var plateBg = new LinearGradientBrush(new Rectangle(plateX, plateY, plateW, plateH), Color.FromArgb(12, 14, 16), Color.FromArgb(35, 40, 45), LinearGradientMode.Vertical); g.FillPath(plateBg, platePath);
             using var plateShadow = new Pen(Color.FromArgb(200, 0, 0, 0), S(2)); g.DrawPath(plateShadow, platePath);
@@ -1380,7 +1381,7 @@ namespace RedfurSync
 
             g.TranslateTransform(plateX, plateY);
 
-            int rimSize = S(18), dx = S(10), dy = (plateH - rimSize) / 2;
+            int rimSize = S(20), dx = S(10), dy = (plateH - rimSize) / 2;
             using var socketShadow = new SolidBrush(Color.FromArgb(220, 0, 0, 0)); g.FillEllipse(socketShadow, dx - S(1), dy - S(1), rimSize + S(2), rimSize + S(2));
             using var rimBrush = new LinearGradientBrush(new Rectangle(dx, dy, rimSize, rimSize), CGoldDim, CGoldBrt, LinearGradientMode.BackwardDiagonal); g.FillEllipse(rimBrush, dx, dy, rimSize, rimSize);
 
@@ -1390,7 +1391,7 @@ namespace RedfurSync
                 using var reflectionBrush = new SolidBrush(Color.FromArgb(Math.Max(0, (int)(_glowAlpha * 0.45f)), _auraColor)); g.FillEllipse(reflectionBrush, dx, dy, rimSize, rimSize);
             }
 
-            using var rimBorder = new Pen(Color.FromArgb(30, 20, 10), S(1)); g.DrawEllipse(rimBorder, dx, dy, rimSize, rimSize);
+            using var rimBorder = new Pen(Color.FromArgb(50, 40, 30), S(2)); g.DrawEllipse(rimBorder, dx, dy, rimSize, rimSize);
 
             int glassPad = S(2), gSize = rimSize - glassPad * 2, gx = dx + glassPad, gy = dy + glassPad;
             using var shadowBrush = new SolidBrush(Color.FromArgb(180, 5, 5, 5)); g.FillEllipse(shadowBrush, gx, gy, gSize, gSize);
@@ -1405,7 +1406,7 @@ namespace RedfurSync
                 using var glassGlintBrush = new LinearGradientBrush(new Rectangle(gx, gy, gSize, gSize), Color.FromArgb(180, 255, 255, 255), Color.Transparent, LinearGradientMode.ForwardDiagonal); g.FillPath(glassGlintBrush, glintPath);
             }
 
-            float titleX = dx + rimSize + S(6), titleY = S(4); Color neonColor = Color.FromArgb(255, 255, 170, 80); 
+            float titleX = dx + rimSize + S(8), titleY = S(5); Color neonColor = Color.FromArgb(255, 255, 170, 80); 
             
             if (AppConfig.FX.HeaderNeonText)
             {
@@ -1414,15 +1415,15 @@ namespace RedfurSync
                 DrawGlowingText(g, "Fissal Relay", _fTitle125Bold, neonColor, titleX, titleY, 180);
             }
 
-            using var coreNeon = new SolidBrush(Color.FromArgb(255, 255, 255, 200)); g.DrawString("Fissal Relay", _fTitle125Bold, coreNeon, new PointF(titleX, titleY));
+            using var coreNeon = new SolidBrush(Color.FromArgb(150, 255, 255, 200)); g.DrawString("Fissal Relay", _fTitle125Bold, coreNeon, new PointF(titleX, titleY));
 
-            float subX = dx + rimSize + S(5), subY = S(26); string subText = $"Masser Matrix v{(System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(2) ?? "1.00")}";
+            float subX = dx + rimSize + S(5), subY = S(25); string subText = $"Masser Matrix v{(System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(2) ?? "1.00")}";
             using var subIndentShadow = new SolidBrush(Color.FromArgb(255, 20, 10, 0)); g.DrawString(subText, _fBody95Italic, subIndentShadow, new PointF(subX-2, subY - 2));
             using var subIndentHi = new SolidBrush(Color.FromArgb(170, 190, 190, 190)); g.DrawString(subText, _fBody95Italic, subIndentHi, new PointF(subX, subY + 2));
             using var subCore = new SolidBrush(Color.FromArgb(100, CGoldMid.R, CGoldMid.G, CGoldMid.B)); g.DrawString(subText, _fBody95Italic, subCore, new PointF(subX, subY));
             g.ResetTransform(); 
 
-            int mcW = S(155), mcH = S(34), mcX = CloseBtnRect.Left - mcW - S(15);
+            int mcW = S(115), mcH = S(35), mcX = CloseBtnRect.Left - mcW - S(8);
             int mcY = plateY + plateH - mcH; 
             using var mcPath = RoundRect(mcX, mcY, mcW, mcH, S(4));
             using var mcBg = new SolidBrush(Color.FromArgb(255, 4, 12, 6)); g.FillPath(mcBg, mcPath);
@@ -1456,14 +1457,14 @@ namespace RedfurSync
             var currentStatus = statuses[_dispStatusIdx];
             string displayBadge = currentStatus.text; Color badgeColor = currentStatus.color;
 
-            int lightDia = S(10), lightSpacing = S(20), lightsY = (mcY - lightDia) / 2, leftLightsStartX = mcX + S(6); 
+            int lightDia = S(8), lightSpacing = S(20), lightsY = (mcY - lightDia) / 3, leftLightsStartX = mcX + S(5); 
             Color[] lightColors = { Color.FromArgb(255, 20, 255, 20), Color.FromArgb(255, 255, 220, 0), Color.FromArgb(255, 255, 30, 30), Color.FromArgb(255, 220, 50, 255) };
 
             for (int i = 0; i < 4; i++)
             {
                 bool isActive = statuses.Exists(s => s.type == i), isCurrent = currentStatus.type == i;
                 int cx = leftLightsStartX + (i * lightSpacing);
-                if (i == 3) cx += S(12); // Extra gap for the update light
+                if (i == 3) cx += S(18); // Extra gap for the update light
                 
                 using var offBrush = new LinearGradientBrush(new Rectangle(cx, lightsY, lightDia, lightDia), 
                     Color.FromArgb(70, lightColors[i].R/3, lightColors[i].G/3, lightColors[i].B/3), 
@@ -1576,27 +1577,27 @@ namespace RedfurSync
         private void DrawScrollbar(Graphics g, Rectangle clipRect)
         {
             float maxScroll = _contentHeight + (int)_slideOffset - clipRect.Height; if (maxScroll <= 0) return;
-            int sbWidth = S(8); 
+            int sbWidth = S(9); 
             
             int sbPaneW = RightGutterW;
             int sbPaneX = Width - sbPaneW;
-            using var sbPaneBg = new SolidBrush(Color.FromArgb(16, 14, 18));
+            using var sbPaneBg = new SolidBrush(Color.FromArgb(28, 24, 20));
             g.FillRectangle(sbPaneBg, sbPaneX, HeaderH, sbPaneW, clipRect.Height);
             using var sbPaneBorder = new Pen(Color.FromArgb(40, CGoldDim), 1);
             g.DrawLine(sbPaneBorder, sbPaneX, HeaderH, sbPaneX, HeaderH + clipRect.Height);
 
-            int sbX = Width - S(17);
-            float trackTop = HeaderH + S(22);
-            float trackBot = HeaderH + clipRect.Height - S(22);
+            int sbX = Width - S(12);
+            float trackTop = HeaderH + S(20);
+            float trackBot = HeaderH + clipRect.Height - S(20);
             float trackHeight = trackBot - trackTop;
 
             float thumbHeight = Math.Max(S(24), trackHeight * (clipRect.Height / (float)(_contentHeight + (int)_slideOffset)));
             float thumbY = trackTop + (trackHeight - thumbHeight) * (_scrollY / maxScroll);
 
-            using var trackBrush = new SolidBrush(Color.FromArgb(40, 5, 5, 5)); g.FillRectangle(trackBrush, sbX, trackTop, sbWidth, trackHeight);
+            using var trackBrush = new SolidBrush(Color.FromArgb(150, 5, 5, 5)); g.FillRectangle(trackBrush, sbX, trackTop, sbWidth, trackHeight);
             using var trackShadow = new Pen(Color.FromArgb(100, 0, 0, 0), 1); g.DrawRectangle(trackShadow, sbX, trackTop, sbWidth, trackHeight);
 
-            using var arrowPen = new Pen(Color.FromArgb(150, 150, 150), 1.5f * _scale); arrowPen.LineJoin = LineJoin.Round; 
+            using var arrowPen = new Pen(Color.FromArgb(180, 140, 50), 1.8f * _scale); arrowPen.LineJoin = LineJoin.Round; 
             float arrX = sbX;
             g.DrawLines(arrowPen, new PointF[] { new PointF(arrX + S(1), HeaderH + S(12)), new PointF(arrX + sbWidth/2, HeaderH + S(7)), new PointF(arrX + sbWidth - S(1), HeaderH + S(12)) });
             g.DrawLines(arrowPen, new PointF[] { new PointF(arrX + S(1), HeaderH + clipRect.Height - S(12)), new PointF(arrX + sbWidth/2, HeaderH + clipRect.Height - S(7)), new PointF(arrX + sbWidth - S(1), HeaderH + clipRect.Height - S(12)) });
