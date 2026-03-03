@@ -7,18 +7,34 @@ namespace RedfurSync
 {
     public class AppConfig
     {
+        // Network variables
         public string ServerUrl    { get; set; } = "http://47.135.77.158:3000/upload";
         public string UpdateUrl    { get; set; } = "http://47.135.77.158:3000/update/check";
         public string ApiKey       { get; set; } = "872615399f313ef9920a4b4a51df66d51f2c179ee4c3c70fb289df7178479180";
         public string DisplayName  { get; set; } = "Redfur Trader";
+        
+        // Polling and application state behavior variables
+        /// <summary>
+        /// Delay before dispatching file change events (in milliseconds)
+        /// </summary>
         public int    DebounceMs   { get; set; } = 4000;
+        
+        /// <summary>
+        /// Enable or disable launching the application at Windows startup
+        /// </summary>
         public bool   RunOnStartup { get; set; } = true;
+        
+        /// <summary>
+        /// Stores the timestamp to avoid redundant update prompt alerts
+        /// </summary>
         public DateTime LastUpdatePrompt { get; set; } = DateTime.MinValue;
         
         // ── Fissal's remembered visual state ──
+        /// <summary>
+        /// Selects the rendering style (Low, Medium, High) modifying CPU load vs Graphical complexity
+        /// </summary>
         public UploadProgressForm.AppConfig.FidelityMode VisualFidelity { get; set; } = UploadProgressForm.AppConfig.FidelityMode.Medium;
 
-        // Adding the EnumConverter so the config file reads "Medium" instead of just a number
         private static readonly JsonSerializerOptions _opts = new() 
         { 
             WriteIndented = true,

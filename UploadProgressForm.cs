@@ -32,10 +32,20 @@ namespace RedfurSync
             public const int MarqueePause = 80;     
             public const float ShimmerSpeed = 0.85f; 
             public const float ScrollFriction = 0.50f;
-            public const float ScrollWheelSpeedMain = 0.5f;
+            public const float ScrollWheelSpeedMain = 0.85f;
             public const float ScrollWheelSpeedDiag = 0.85f;
             public const float CopyBubbleFloatSpeed = 1.45f; 
             public const float CopyBubbleFadeSpeed = 4.8f;   
+
+            // --- Fissal Additions: UI Tweaks & Adjustments ---
+            public const int BaseGroupHeaderH = 40;     // Reduced padding for Log/Update headers (Was 40)
+            public const int BaseGroupHeaderPad = 2;    // Padding between header and first job child
+            
+            public const int DiagScrollWidth = 8;      // Width of the Diag scrollbar
+            public const int DiagScrollRightOffset = 6; // Moves Diag scrollbar left away from edge
+            public const int DiagScrollTopPad = 4;      // Stretches scrollbar upward
+            public const int DiagScrollBottomPad = 4;   // Stretches scrollbar downward
+            // -------------------------------------------------
             
             public enum FidelityMode { Low, Medium, High }
             public static FidelityMode CurrentMode = FidelityMode.Medium;
@@ -177,7 +187,7 @@ namespace RedfurSync
 
         private SolidBrush _bgBrush;
         private Font _fTitle28Bold, _fTitle125Bold, _fTitle10Bold, _fTitle95;
-        private Font _fBody95Italic, _fBody8Bold, _fBody8Italic, _fBody75Bold, _fBody75Italic, _fBody75Reg, _fBody7Bold;
+        private Font _fBody95Italic, _fBody9Bold, _fBody8Bold, _fBody8Italic, _fBody75Bold, _fBody75Italic, _fBody75Reg, _fBody7Bold;
         private Font _fMono9Bold, _fMono9, _fMono8Bold, _fMono8, _fMono75Bold;
         private StringFormat _sfCenter, _sfLeft;
 
@@ -198,7 +208,10 @@ namespace RedfurSync
         private int   _marqueeWait   = AppConfig.MarqueePause;
 
         private string? _purgingGroupText = null;
-        private int _purgingJobIdx = -1;
+        
+        // FISSAL FIX: Use object reference instead of index to prevent bounds errors
+        private UploadJob? _purgingJobRef = null; 
+        
         private int _purgeAnimFrames = 10;
         private const int MaxPurgeFrames = 5; 
         private const int MaxJobPurgeFrames = 5;
@@ -275,7 +288,8 @@ namespace RedfurSync
             _bgBrush = new SolidBrush(CBg);
             _fTitle28Bold = Title(28f, _scale, FontStyle.Bold); _fTitle125Bold = Title(12.5f, _scale, FontStyle.Bold);
             _fTitle10Bold = Title(10f, _scale, FontStyle.Bold); _fTitle95 = Title(9.5f, _scale);
-            _fBody95Italic = Body(9.5f, _scale, FontStyle.Italic); _fBody8Bold = Body(8f, _scale, FontStyle.Bold);
+            _fBody95Italic = Body(9.5f, _scale, FontStyle.Italic); _fBody9Bold = Body(9f, _scale, FontStyle.Bold);
+            _fBody8Bold = Body(8f, _scale, FontStyle.Bold);
             _fBody8Italic = Body(8f, _scale, FontStyle.Italic); _fBody75Bold = Body(7.5f, _scale, FontStyle.Bold);
             _fBody75Italic = Body(7.5f, _scale, FontStyle.Italic); _fBody75Reg = Body(7.5f, _scale, FontStyle.Regular);
             _fBody7Bold = Body(7f, _scale, FontStyle.Bold);
@@ -309,6 +323,76 @@ namespace RedfurSync
             Location = new Point(wa.Right - FormW - S(10), wa.Bottom - Height - S(10));
         }
 
+        // FISSAL FIX: Safely removes jobs while preserving existing group expansion states
+        private void SafeRemoveJob(UploadJob jobToRemove)
+        {
+            string targetGroupText = null;
+            var peerJobs = new List<UploadJob>();
+            
+            DateTime? currentGroupAnchor = null;
+            string currentGroupText = "";
+            bool? lastWasUpdate = null;
+            
+            // Identify which group this job belonged to
+            foreach(var job in _jobs) {
+                bool isNewGroup = currentGroupAnchor == null
+                                || Math.Abs((job.QueuedAt - currentGroupAnchor.Value).TotalSeconds) > 10
+                                || (lastWasUpdate.HasValue && lastWasUpdate.Value != job.IsUpdate);
+                
+                if (isNewGroup) {
+                    currentGroupAnchor = job.QueuedAt;
+                    currentGroupText = job.QueuedAt.ToString("MMM dd, h:mm:ss tt");
+                }
+                if (job == jobToRemove) targetGroupText = currentGroupText;
+                lastWasUpdate = job.IsUpdate;
+            }
+
+            bool wasExpanded = targetGroupText != null && _expandedLogs.Contains(targetGroupText);
+
+            // Collect surviving peers in that same group
+            currentGroupAnchor = null;
+            foreach(var job in _jobs) {
+                bool isNewGroup = currentGroupAnchor == null
+                                || Math.Abs((job.QueuedAt - currentGroupAnchor.Value).TotalSeconds) > 10
+                                || (lastWasUpdate.HasValue && lastWasUpdate.Value != job.IsUpdate);
+                if (isNewGroup) {
+                    currentGroupAnchor = job.QueuedAt;
+                    currentGroupText = job.QueuedAt.ToString("MMM dd, h:mm:ss tt");
+                }
+                if (currentGroupText == targetGroupText && job != jobToRemove) {
+                    peerJobs.Add(job);
+                }
+                lastWasUpdate = job.IsUpdate;
+            }
+
+            // Perform actual removal
+            _jobs.Remove(jobToRemove);
+
+            // If group survives, find its new identifier and expand it
+            if (wasExpanded && peerJobs.Count > 0) {
+                currentGroupAnchor = null;
+                string newGroupText = null;
+                foreach(var job in _jobs) {
+                    bool isNewGroup = currentGroupAnchor == null
+                                    || Math.Abs((job.QueuedAt - currentGroupAnchor.Value).TotalSeconds) > 10
+                                    || (lastWasUpdate.HasValue && lastWasUpdate.Value != job.IsUpdate);
+                    if (isNewGroup) {
+                        currentGroupAnchor = job.QueuedAt;
+                        currentGroupText = job.QueuedAt.ToString("MMM dd, h:mm:ss tt");
+                    }
+                    if (job == peerJobs[0]) {
+                        newGroupText = currentGroupText;
+                        break;
+                    }
+                    lastWasUpdate = job.IsUpdate;
+                }
+                if (newGroupText != null) _expandedLogs.Add(newGroupText);
+            }
+            
+            _layoutNeedsUpdate = true;
+            EnsureLayoutUpdated();
+        }
+
         private void OnAnimationTick(object? sender, EventArgs e)
         {
             bool visualChanged = ProcessVisualMath();
@@ -327,20 +411,25 @@ namespace RedfurSync
                 _purgeAnimFrames--;
                 if (_purgeAnimFrames == 0)
                 {
-                    if (_purgingJobIdx != -1)
+                    if (_purgingJobRef != null)
                     {
-                        var job = _jobs[_purgingJobIdx];
+                        var job = _purgingJobRef;
                         int startY = -1;
                         int purgedHeight = 0;
+                        int foundIndex = _jobs.IndexOf(job);
+                        
                         foreach(var r in _layout) {
-                            if (!r.IsSeparator && r.JobIndex == _purgingJobIdx) {
+                            if (!r.IsSeparator && r.JobIndex == foundIndex) {
                                 startY = r.Y; purgedHeight = r.Height + S(12); break;
                             }
                         }
                         _slideStartY = startY; _slideOffset = purgedHeight;
-                        if (job.CanCancel && (job.Status == UploadStatus.Uploading || job.Status == UploadStatus.Queued)) _onCancel(job);
-                        _jobs.RemoveAt(_purgingJobIdx);
-                        _purgingJobIdx = -1;
+                        
+                        if (job.CanCancel && (job.Status == UploadStatus.Uploading || job.Status == UploadStatus.Queued)) 
+                            _onCancel(job);
+                            
+                        SafeRemoveJob(job);
+                        _purgingJobRef = null;
                     }
                     else if (_purgingGroupText != null)
                     {
@@ -560,7 +649,7 @@ namespace RedfurSync
 
                 if (g > 0) currentY += S(24); 
 
-                int headerHeight = S(40); 
+                int headerHeight = S(AppConfig.BaseGroupHeaderH); 
                 _layout.Add(new RowLayout
                 {
                     IsSeparator = true, SepText = currentGroupText, GroupText = currentGroupText,
@@ -568,7 +657,7 @@ namespace RedfurSync
                     GroupColor = grpCol
                 });
                 int sepIndex = _layout.Count - 1;
-                currentY += headerHeight + S(2); 
+                currentY += headerHeight + S(AppConfig.BaseGroupHeaderPad); 
                 int groupStartY = currentY;
 
                 if (isExpanded)
@@ -751,7 +840,7 @@ namespace RedfurSync
                     var gState = g.Save();
 
                     bool isPurgingGroup = _purgingGroupText != null && row.GroupText == _purgingGroupText;
-                    bool isPurgingJob = !row.IsSeparator && _purgingJobIdx == row.JobIndex;
+                    bool isPurgingJob = !row.IsSeparator && _jobs.Count > row.JobIndex && _jobs[row.JobIndex] == _purgingJobRef;
                     
                     float purgeIntensity = 0f;
                     
@@ -900,7 +989,7 @@ namespace RedfurSync
         private void DrawCopyBubbles(Graphics g)
         {
             if (_copyBubbles.Count == 0) return;
-            const string gearPart = "⚙ ", textPart = "Copied!";
+            const string gearPart = "⚙ ", textPart = "Diag Copied!"; // FISSAL FIX: Custom message for Diag Copy
             var bf = _fBody8Bold; var totalSz = g.MeasureString(gearPart + textPart, bf);
             int bw = (int)totalSz.Width + S(14), bh = (int)totalSz.Height + S(6);
 
@@ -1026,13 +1115,13 @@ namespace RedfurSync
                 UploadStatus.Done => ("[✓]", CGreen), UploadStatus.Failed => ("[!!]", CBarFail), UploadStatus.Cancelled => ("[//]", CBarCancel), UploadStatus.UpdateReady => ("[^]", Color.FromArgb(180, 100, 220)), _ => ("[??]", CTextSub)
             };
 
-            int lineX = Pad + S(2), midY = y + S(18); 
+            int lineX = Pad + S(1), midY = y + S(20); 
             
             int prevMidY = y - S(20); 
             Color prevColor = rowInfo.GroupColor;
             for(int k = layoutIdx - 1; k >= 0; k--) {
                 if (_layout[k].IsSeparator) { prevMidY = _layout[k].Y + _layout[k].Height; break; }
-                prevMidY = _layout[k].Y + S(18); 
+                prevMidY = _layout[k].Y + S(20); 
                 prevColor = GetJobStatusColor(_jobs[_layout[k].JobIndex]); 
                 break;
             }
@@ -1087,26 +1176,28 @@ namespace RedfurSync
                 float textWNoScroll = childW - S(48);
                 float textWWithScroll = childW - S(66); 
                 
-                var testSz = g.MeasureString(diagContent, _fMono9Bold, (int)textWNoScroll);
+                var testSz = g.MeasureString(diagContent, _fBody9Bold, (int)textWNoScroll);
                 bool willScroll = testSz.Height > (rowInfo.ExpandedHeight - S(38));
                 
                 float actualTextW = willScroll ? textWWithScroll : textWNoScroll;
                 var diagTextRect = new RectangleF(childPad + S(10), ey + S(24), actualTextW, rowInfo.ExpandedHeight - S(38));
-                var sz = g.MeasureString(diagContent, _fMono9Bold, (int)actualTextW);
+                var sz = g.MeasureString(diagContent, _fBody9Bold, (int)actualTextW);
                 
                 float maxScroll = Math.Max(0, sz.Height - diagTextRect.Height); _diagMaxScrolls[idx] = maxScroll; 
                 float currentScroll = _diagScrolls.TryGetValue(idx, out float ds) ? ds : 0f;
                 if (currentScroll > maxScroll) currentScroll = maxScroll; _diagScrolls[idx] = currentScroll; 
 
                 var prevClip = g.Clip; g.SetClip(diagTextRect, CombineMode.Intersect); 
-                g.DrawString(diagContent, _fMono9, errMsgBrush, new RectangleF(diagTextRect.X, diagTextRect.Y - currentScroll, diagTextRect.Width, sz.Height), StringFormat.GenericDefault); g.Clip = prevClip;
+                g.DrawString(diagContent, _fBody9Bold, errMsgBrush, new RectangleF(diagTextRect.X, diagTextRect.Y - currentScroll, diagTextRect.Width, sz.Height), StringFormat.GenericDefault); g.Clip = prevClip;
 
                 bool hasScroll = maxScroll > 0;
                 if (hasScroll)
                 {
-                    float sbW = S(10), sbX = childPad + childW - sbW - S(1);
-                    float topBoxY = ey + S(8);
-                    float botBoxY = ey + rowInfo.ExpandedHeight - S(8) - sbW;
+                    // FISSAL FIX: Diag scrollbar configurable offsets
+                    float sbW = S(AppConfig.DiagScrollWidth);
+                    float sbX = childPad + childW - sbW - S(AppConfig.DiagScrollRightOffset);
+                    float topBoxY = ey + S(AppConfig.DiagScrollTopPad);
+                    float botBoxY = ey + rowInfo.ExpandedHeight - S(AppConfig.DiagScrollBottomPad) - sbW;
                     float trackY = topBoxY + sbW + S(2);
                     float trackBottom = botBoxY - S(2);
                     float trackH = trackBottom - trackY;
@@ -1135,8 +1226,6 @@ namespace RedfurSync
                     using var ridgePen = new Pen(drawerBg, 1); float midT = thumbY + thumbH / 2;
                     g.DrawLine(ridgePen, sbX + S(2), midT - S(2), sbX + sbW - S(3), midT - S(2)); g.DrawLine(ridgePen, sbX + S(2), midT, sbX + sbW - S(3), midT); g.DrawLine(ridgePen, sbX + S(2), midT + S(2), sbX + sbW - S(3), midT + S(2));
                 }
-
-                DrawIconBtn(g, CopyBtnRect(rowInfo, hasScroll), gc, diagTextColor, _hoverCopyJobIdx == idx, AppConfig.FX.ButtonGlows, drawerBg, false);
             }
 
             Color baseCardBg = job.IsUpdate ? Color.FromArgb(20, 10, 30) : (idx % 2 == 1 ? Color.FromArgb(20, 15, 5) : Color.FromArgb(10, 8, 2));
@@ -1174,13 +1263,6 @@ namespace RedfurSync
                 DrawBtn(g, btn.Value, canApply ? "Apply" : (canResend ? "Re-send" : "Abort"), btnColor, btnColor, hoverAction, glow: (canApply && AppConfig.FX.ButtonGlows));
             }
 
-            var trashBtn = TrashBtnRect(job, y);
-            if (trashBtn.HasValue)
-            {
-                bool trashHover = _hoverTrashJobIdx == idx;
-                DrawIconBtn(g, trashBtn.Value, gc, gc, trashHover, AppConfig.FX.ButtonGlows, baseCardBg, true);
-            }
-
             DrawBtn(g, DiagToggleBtnRect(job, y), job.IsExpanded ? "[X]  DIAG" : "[-]  DIAG", job.IsExpanded ? gc : CGoldDim, job.IsExpanded ? gc : CGoldDim, _hoverDiagJobIdx == idx, glow: (job.IsExpanded && AppConfig.FX.ButtonGlows));
 
             DrawHazyText(g, "> " + Trunc(job.FileName, g, _fTitle95, RightBtnX - (childPad + S(30)) - S(40)), _fTitle95, job.Status == UploadStatus.UpdateReady ? Color.FromArgb(210, 160, 240) : CText, childPad + S(35), y + S(10));
@@ -1197,7 +1279,15 @@ namespace RedfurSync
             using var detailTextBrush = new SolidBrush(Color.FromArgb(130, 220, 220, 190));
             g.DrawString(detailText, _fBody8Italic, detailTextBrush, new PointF(detailRect.X + S(4), detailRect.Y + S(3)));
 
-            float bx = childPad + S(6), bw = childW - S(16), by = y + RowH - BarH - S(-3);
+            // FISSAL FIX: Progress bar and inline utility buttons (Trash, Copy) calculations
+            int actionBtnSize = S(22);
+            int actionBtnY = y + RowH - actionBtnSize - S(5);
+            
+            // Reconfigure progress bar width to leave room for the inline buttons
+            float bw = childW - S(85) - (actionBtnSize * 2 + S(8));
+            float bx = childPad + S(6);
+            float by = actionBtnY + (actionBtnSize - BarH) / 2f; 
+
             string statusText = job.Status switch { UploadStatus.UpdateReady => "[RDY!] CLICK APPLY TO UPDATE", UploadStatus.Done => "[DONE] DATA VERIFIED", UploadStatus.Failed => "[ERR!] LUNAR STATIC", UploadStatus.Cancelled => "[VOID] SYNC ABORTED", UploadStatus.Queued => "[PEND] AWAITING ALIGNMENT", UploadStatus.Uploading => job.IsUpdate ? "[XMIT] PULLING NEW MATRIX..." : "[XMIT] TRANSMITTING...", _ => "[ ?? ] UNKNOWN SIGNAL" };
 
             using var statBrush = new SolidBrush(gc); g.DrawString(statusText, job.Status switch { UploadStatus.Done or UploadStatus.UpdateReady => _fBody75Bold, UploadStatus.Failed or UploadStatus.Cancelled => _fBody75Italic, _ => _fBody75Reg }, statBrush, new PointF(bx, by - S(14)));
@@ -1241,6 +1331,21 @@ namespace RedfurSync
                     if (offset < bw) { using var coolGlow = new LinearGradientBrush(new RectangleF(bx + offset, by, S(30), BarH), Color.Transparent, Color.FromArgb(60, 255, 255, 255), LinearGradientMode.Horizontal); g.FillRectangle(coolGlow, bx + offset, by, S(30), BarH); }
                 }
                 g.Clip = prevClip; 
+            }
+
+            // FISSAL FIX: Draw Inline Action Buttons (Trash and Copy)
+            var trashBtn = TrashBtnRect(job, y, childPad, childW);
+            if (trashBtn.HasValue)
+            {
+                bool trashHover = _hoverTrashJobIdx == idx;
+                DrawIconBtn(g, trashBtn.Value, gc, gc, trashHover, AppConfig.FX.ButtonGlows, baseCardBg, true);
+            }
+
+            var copyBtn = CopyBtnRect(job, y, childPad, childW);
+            if (copyBtn.HasValue)
+            {
+                bool copyHover = _hoverCopyJobIdx == idx;
+                DrawIconBtn(g, copyBtn.Value, gc, gc, copyHover, AppConfig.FX.ButtonGlows, baseCardBg, false);
             }
         }
 
@@ -1322,6 +1427,7 @@ namespace RedfurSync
             }
             else
             {
+                // This renders the document/copy icon perfectly sized for action buttons
                 int docW = Math.Max(S(8), r.Width / 2 - S(2)); 
                 int docH = Math.Max(S(10), r.Height / 2);
                 int docX = cx - docW / 2 + S(1);
@@ -1346,26 +1452,33 @@ namespace RedfurSync
             return new Rectangle(RightBtnX, y + S(9), BtnW, BtnH);
         }
 
-        private Rectangle? TrashBtnRect(UploadJob job, int y)
+        // FISSAL FIX: Relocated and sized the inline utility buttons. 
+        private Rectangle? TrashBtnRect(UploadJob job, int y, int childPad, int childW)
         {
-            if (job.IsUpdate) return null;
-            var b = BtnRect(job, y);
-            int refX = b.HasValue ? b.Value.X : RightBtnX;
+            if (job.IsUpdate) return null; // Updates can't be trashed typically
             
-            int shortH = BtnH - S(4);
-            return new Rectangle(refX - S(30), y + S(9) + S(2), S(25), shortH);
+            int actionBtnSize = S(22);
+            int actionBtnY = y + RowH - actionBtnSize - S(5);
+            
+            float bw = childW - S(85) - (actionBtnSize * 2 + S(8));
+            float bx = childPad + S(6);
+            
+            return new Rectangle((int)(bx + bw + S(8)), actionBtnY, actionBtnSize, actionBtnSize);
+        }
+
+        private Rectangle? CopyBtnRect(UploadJob job, int y, int childPad, int childW)
+        {
+            int actionBtnSize = S(22);
+            int actionBtnY = y + RowH - actionBtnSize - S(5);
+            
+            float bw = childW - S(85) - (actionBtnSize * 2 + S(8));
+            float bx = childPad + S(6);
+            
+            int trashW = job.IsUpdate ? 0 : actionBtnSize + S(4);
+            return new Rectangle((int)(bx + bw + S(8) + trashW), actionBtnY, actionBtnSize, actionBtnSize);
         }
 
         private Rectangle DiagToggleBtnRect(UploadJob job, int y) => new Rectangle(RightBtnX, (job.CanRetry || job.CanCancel || job.Status == UploadStatus.Done || job.Status == UploadStatus.UpdateReady) ? y + S(9) + BtnH + S(5) : y + S(9), BtnW, DiagH);
-
-        private Rectangle CopyBtnRect(RowLayout row, bool hasScroll) 
-        {
-            int childPad = Pad + S(18);
-            int childW = WorkingAreaW - childPad - Pad;
-            int btnW = S(26), btnH = S(24);
-            int rightOffset = hasScroll ? S(26) : S(8);
-            return new Rectangle(childPad + childW - btnW - rightOffset, row.Y + RowH + S(6), btnW, btnH);
-        }
 
         private void DrawHeader(Graphics g)
         {
@@ -1423,7 +1536,7 @@ namespace RedfurSync
             using var subCore = new SolidBrush(Color.FromArgb(100, CGoldMid.R, CGoldMid.G, CGoldMid.B)); g.DrawString(subText, _fBody95Italic, subCore, new PointF(subX, subY));
             g.ResetTransform(); 
 
-            int mcW = S(115), mcH = S(35), mcX = CloseBtnRect.Left - mcW - S(8);
+            int mcW = S(115), mcH = S(25), mcX = CloseBtnRect.Left - mcW - S(8);
             int mcY = plateY + plateH - mcH; 
             using var mcPath = RoundRect(mcX, mcY, mcW, mcH, S(4));
             using var mcBg = new SolidBrush(Color.FromArgb(255, 4, 12, 6)); g.FillPath(mcBg, mcPath);
@@ -1457,8 +1570,8 @@ namespace RedfurSync
             var currentStatus = statuses[_dispStatusIdx];
             string displayBadge = currentStatus.text; Color badgeColor = currentStatus.color;
 
-            int lightDia = S(8), lightSpacing = S(20), lightsY = (mcY - lightDia) / 3, leftLightsStartX = mcX + S(5); 
-            Color[] lightColors = { Color.FromArgb(255, 20, 255, 20), Color.FromArgb(255, 255, 220, 0), Color.FromArgb(255, 255, 30, 30), Color.FromArgb(255, 220, 50, 255) };
+            int lightDia = S(8), lightSpacing = S(20), lightsY = (mcY - lightDia) / 2, leftLightsStartX = mcX + S(15); 
+            Color[] lightColors = { Color.FromArgb(10, 20, 255, 20), Color.FromArgb(10, 255, 220, 0), Color.FromArgb(10, 255, 30, 30), Color.FromArgb(10, 220, 50, 255) };
 
             for (int i = 0; i < 4; i++)
             {
@@ -1467,11 +1580,11 @@ namespace RedfurSync
                 if (i == 3) cx += S(18); // Extra gap for the update light
                 
                 using var offBrush = new LinearGradientBrush(new Rectangle(cx, lightsY, lightDia, lightDia), 
-                    Color.FromArgb(70, lightColors[i].R/3, lightColors[i].G/3, lightColors[i].B/3), 
-                    Color.FromArgb(40, 15, 15, 15), LinearGradientMode.Vertical); 
+                    Color.FromArgb(50, lightColors[i].R/2, lightColors[i].G/2, lightColors[i].B/2), 
+                    Color.FromArgb(255, 50, 50, 90), LinearGradientMode.Vertical); 
                 g.FillEllipse(offBrush, cx, lightsY, lightDia, lightDia);
                 
-                using var rim = new Pen(Color.FromArgb(90, lightColors[i].R/2, lightColors[i].G/2, lightColors[i].B/2), 1); 
+                using var rim = new Pen(Color.FromArgb(255, lightColors[i].R/2, lightColors[i].G/2, lightColors[i].B/2), 3); 
                 g.DrawEllipse(rim, cx, lightsY, lightDia, lightDia);
 
                 if (isActive && AppConfig.FX.MCLightsGlow)
@@ -1481,7 +1594,7 @@ namespace RedfurSync
                     g.FillEllipse(litBrush, cx + 1, lightsY + 1, lightDia - 2, lightDia - 2);
                     
                     using var whiteCore = new SolidBrush(Color.FromArgb(alpha, 255, 255, 255));
-                    g.FillEllipse(whiteCore, cx + S(2), lightsY + S(2), lightDia - S(4), lightDia - S(4));
+                    g.FillEllipse(whiteCore, cx + S(2), lightsY + S(2), lightDia - S(2), lightDia - S(2));
 
                     using var glowH = new SolidBrush(Color.FromArgb(alpha / 4, lightColors[i])); g.FillEllipse(glowH, cx - S(3), lightsY, lightDia + S(6), lightDia); 
                     using var glowV = new SolidBrush(Color.FromArgb(alpha / 5, lightColors[i])); g.FillEllipse(glowV, cx, lightsY - S(2), lightDia, lightDia + S(4)); 
@@ -1529,7 +1642,7 @@ namespace RedfurSync
             }
 
             var clipState = g.Save(); g.SetClip(new Rectangle(mcX + S(2), mcY + S(2), mcW - S(4), mcH - S(4)), CombineMode.Intersect);
-            DrawGlowingText(g, displayBadge, _fMono9Bold, badgeColor, mcX + S(6) + _marqueeX, mcY + S(10) - 3, AppConfig.FX.HeaderNeonText ? 90 : 0); 
+            DrawGlowingText(g, displayBadge, _fMono9Bold, badgeColor, mcX + S(6) + _marqueeX, mcY + S(5), AppConfig.FX.HeaderNeonText ? 90 : 0); 
             g.Restore(clipState);
             
             if (AppConfig.FX.MCGloss)
@@ -1647,13 +1760,16 @@ namespace RedfurSync
                         float diagMaxScroll = _diagMaxScrolls.TryGetValue(row.JobIndex, out float ms) ? ms : 0f;
                         if (diagMaxScroll > 0) 
                         {
-                            float trackY = (row.Y + RowH) + S(4) + S(10) + S(2), trackH = row.ExpandedHeight - S(8) - (S(10) * 2) - S(4);
+                            // FISSAL FIX: Updates hit-testing for Diag Scroll dragging to match new bounds
+                            float sbW = S(AppConfig.DiagScrollWidth);
+                            float trackY = (row.Y + RowH) + S(AppConfig.DiagScrollTopPad) + sbW + S(2); 
+                            float trackH = row.ExpandedHeight - S(AppConfig.DiagScrollTopPad) - S(AppConfig.DiagScrollBottomPad) - (sbW * 2) - S(4);
                             float currentScroll = _diagScrolls.TryGetValue(row.JobIndex, out float ds) ? ds : 0f;
                             float thumbH = Math.Max(S(12), trackH * ((row.ExpandedHeight - S(38)) / (row.ExpandedHeight - S(38) + diagMaxScroll))), screenThumbY = HeaderH - _scrollY + trackY + (trackH - thumbH) * (currentScroll / diagMaxScroll);
 
                             if (_slideOffset > 0 && row.Y >= _slideStartY) screenThumbY += _slideOffset;
 
-                            if (new RectangleF(WorkingAreaW - Pad - S(10) - S(14), screenThumbY, S(10), thumbH).Contains(e.Location))
+                            if (new RectangleF(WorkingAreaW - Pad - sbW - S(AppConfig.DiagScrollRightOffset), screenThumbY, sbW, thumbH).Contains(e.Location))
                             {
                                 _isDraggingDiagIdx = row.JobIndex; _dragStartY = e.Y; _dragStartScrollY = currentScroll; return; 
                             }
@@ -1690,7 +1806,7 @@ namespace RedfurSync
                     int expH = ExpandH;
                     foreach(var r in _layout) { if(!r.IsSeparator && r.JobIndex == _isDraggingDiagIdx) { expH = r.ExpandedHeight; break; } }
                     
-                    float trackH = expH - S(8) - (S(10) * 2) - S(4);
+                    float trackH = expH - S(AppConfig.DiagScrollTopPad) - S(AppConfig.DiagScrollBottomPad) - (S(AppConfig.DiagScrollWidth) * 2) - S(4);
                     float scrollableTrack = trackH - Math.Max(S(12), trackH * ((expH - S(38)) / (expH - S(38) + diagMaxScroll)));
                     if (scrollableTrack > 0) { _diagScrolls[_isDraggingDiagIdx] = Math.Clamp(_dragStartScrollY + ((e.Y - _dragStartY) / scrollableTrack) * diagMaxScroll, 0, diagMaxScroll); Invalidate(); }
                 }
@@ -1718,12 +1834,17 @@ namespace RedfurSync
                     if (row.JobIndex < 0 || row.JobIndex >= _jobs.Count) continue;
 
                     var job = _jobs[row.JobIndex];
-                    bool hasScroll = _diagMaxScrolls.TryGetValue(row.JobIndex, out float ms) && ms > 0;
-                    if (job.IsExpanded && CopyBtnRect(row, hasScroll).Contains(e.X, (int)contentY)) { _hoverCopyJobIdx = row.JobIndex; break; }
-                    if (DiagToggleBtnRect(job, row.Y).Contains(e.X, (int)contentY)) { _hoverDiagJobIdx = row.JobIndex; break; }
-                    
-                    var trashBtn = TrashBtnRect(job, row.Y);
+                    int childPad = Pad + S(18);
+                    int childW = WorkingAreaW - childPad - Pad;
+
+                    // FISSAL FIX: New bounds checks for inline buttons
+                    var copyBtn = CopyBtnRect(job, row.Y, childPad, childW);
+                    if (copyBtn.HasValue && copyBtn.Value.Contains(e.X, (int)contentY)) { _hoverCopyJobIdx = row.JobIndex; break; }
+
+                    var trashBtn = TrashBtnRect(job, row.Y, childPad, childW);
                     if (trashBtn.HasValue && trashBtn.Value.Contains(e.X, (int)contentY)) { _hoverTrashJobIdx = row.JobIndex; break; }
+                    
+                    if (DiagToggleBtnRect(job, row.Y).Contains(e.X, (int)contentY)) { _hoverDiagJobIdx = row.JobIndex; break; }
                     
                     var b = BtnRect(job, row.Y); if (b.HasValue && b.Value.Contains(e.X, (int)contentY)) { _hoverLayoutIdx = li; break; }
                     break;
@@ -1768,9 +1889,12 @@ namespace RedfurSync
                     if (row.JobIndex < 0 || row.JobIndex >= _jobs.Count) continue;
 
                     var job = _jobs[row.JobIndex];
+                    int childPad = Pad + S(18);
+                    int childW = WorkingAreaW - childPad - Pad;
 
-                    bool hasScroll = _diagMaxScrolls.TryGetValue(row.JobIndex, out float ms) && ms > 0;
-                    if (job.IsExpanded && CopyBtnRect(row, hasScroll).Contains(e.X, (int)contentY))
+                    // FISSAL FIX: Process clicks for inline utility buttons
+                    var copyBtn = CopyBtnRect(job, row.Y, childPad, childW);
+                    if (copyBtn.HasValue && copyBtn.Value.Contains(e.X, (int)contentY))
                     {
                         string diagContent = GetDiagContent(job);
                         try { Clipboard.SetText(diagContent); } catch { /* silent */ }
@@ -1778,16 +1902,16 @@ namespace RedfurSync
                         _copyBubbles.Add(new CopyBubble { X = e.X, Y = e.Y, Alpha = 255f, ThemeColor = thC }); Invalidate(); return;
                     }
 
-                    if (DiagToggleBtnRect(job, row.Y).Contains(e.X, (int)contentY)) { job.IsExpanded = !job.IsExpanded; _layoutNeedsUpdate = true; EnsureLayoutUpdated(); Invalidate(); return; }
-
-                    var trashBtn = TrashBtnRect(job, row.Y);
+                    var trashBtn = TrashBtnRect(job, row.Y, childPad, childW);
                     if (trashBtn.HasValue && trashBtn.Value.Contains(e.X, (int)contentY))
                     {
-                        _purgingJobIdx = row.JobIndex;
+                        _purgingJobRef = job; // FISSAL FIX: Target the object itself to avoid array shifts
                         _purgeAnimFrames = MaxJobPurgeFrames;
                         Invalidate();
                         return;
                     }
+
+                    if (DiagToggleBtnRect(job, row.Y).Contains(e.X, (int)contentY)) { job.IsExpanded = !job.IsExpanded; _layoutNeedsUpdate = true; EnsureLayoutUpdated(); Invalidate(); return; }
 
                     var b = BtnRect(job, row.Y);
                     if (b.HasValue && b.Value.Contains(e.X, (int)contentY))

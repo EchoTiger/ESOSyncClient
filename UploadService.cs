@@ -15,7 +15,6 @@ namespace RedfurSync
 
         public string? LastError { get; private set; }
 
-        // ── Update Hunting ───────────────────────────────────────────────────
         public async Task<UpdatePayload?> CheckForUpdateAsync(string currentVersion)
         {
             try
@@ -26,14 +25,11 @@ namespace RedfurSync
                 if (!response.IsSuccessStatusCode) return null;
 
                 var json = await response.Content.ReadAsStringAsync();
-                
-                // We deeply inhale the JSON scent and map it directly to our payload structure
                 var payload = JsonSerializer.Deserialize<UpdatePayload>(json, new JsonSerializerOptions 
                 { 
                     PropertyNameCaseInsensitive = true 
                 });
                 
-                // If we caught a scent, and it is a different version than our own coat
                 if (payload != null && !string.IsNullOrWhiteSpace(payload.Version) && payload.Version != currentVersion)
                 {                    
                     return payload;
@@ -41,8 +37,7 @@ namespace RedfurSync
             }
             catch (Exception ex) 
             { 
-                // A low growl if the trail goes cold
-                Console.WriteLine($"[Redfur Update Hunt Error] ✖ The scent was lost: {ex.Message}"); 
+                Console.WriteLine($"[Update Error] ✖ Error: {ex.Message}"); 
             }
             return null;
         }
@@ -91,7 +86,6 @@ namespace RedfurSync
             _http.DefaultRequestHeaders.Add("X-Api-Key", config.ApiKey);
         }
 
-        // ── Connection check ─────────────────────────────────────────────────
         public async Task<(bool ok, string message)> PingAsync()
         {
             try
@@ -118,7 +112,6 @@ namespace RedfurSync
             }
         }
 
-        // ── Upload ───────────────────────────────────────────────────────────
         public async Task<bool> UploadAsync(UploadJob job)
         {
             try
@@ -132,6 +125,8 @@ namespace RedfurSync
                     return false;
                 }
 
+                // FileShare.ReadWrite is used because the game client may still have a handle open.
+                // However, we've already ensured it isn't strictly locked via IsFileLocked in FileWatcherService.
                 await using var fileStream = new FileStream(
                     job.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
 
@@ -164,6 +159,11 @@ namespace RedfurSync
             catch (OperationCanceledException)
             {
                 LastError = job.ErrorMessage = "Cancelled by user";
+                return false;
+            }
+            catch (IOException ex)
+            {
+                LastError = job.ErrorMessage = $"File IO error (possibly locked): {ex.Message}";
                 return false;
             }
             catch (HttpRequestException ex)

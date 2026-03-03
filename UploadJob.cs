@@ -8,7 +8,6 @@ namespace RedfurSync
 {
     public enum UploadStatus { Queued, Uploading, Done, Failed, Cancelled, UpdateReady }
 
-    // ── We add this small structure to perfectly catch the server's scent ──
     public class UpdatePayload
     {
         public string Version { get; set; } = string.Empty;
@@ -28,8 +27,8 @@ namespace RedfurSync
         public string FileName    { get; init; } = string.Empty;
         public long   FileSizeBytes { get; init; } = 0;
         public DateTime QueuedAt  { get; init; } = DateTime.Now;
+        public int    RetryCount  { get; set; } = 0; // Added variable for auto-retry tracking
 
-        // ── New Update Instincts ──
         public bool IsUpdate { get; init; } = false;
         public string CurrentVersion { get; init; } = string.Empty;
         public string UpdateVersion { get; init; } = string.Empty;
@@ -76,10 +75,8 @@ namespace RedfurSync
         public bool CanCancel => Status is UploadStatus.Queued or UploadStatus.Uploading;
         public bool CanRetry  => Status is UploadStatus.Failed or UploadStatus.Cancelled;
 
-        // ── A swift strike to assemble an update job directly from the payload ──
         public static UploadJob CreateUpdateJob(UpdatePayload payload)
         {
-            // We sense the local application's version dynamically
             string localVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
 
             return new UploadJob 

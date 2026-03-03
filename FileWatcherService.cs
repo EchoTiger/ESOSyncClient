@@ -3,8 +3,8 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
+using System.Security.Cryptography;
 using System.Threading.Tasks;
-using System.Timers;
 
 namespace RedfurSync
 {
@@ -30,8 +30,10 @@ namespace RedfurSync
 
         private readonly List<FileSystemWatcher>               _watchers       = new();
         private readonly Dictionary<string, System.Timers.Timer> _debounceTimers = new();
+        private readonly Dictionary<string, string>            _lastFileHashes = new();
         private readonly object _timerLock = new();
         private readonly object _jobLock   = new();
+        private readonly object _hashLock  = new();
         private readonly System.Timers.Timer _updateTimer = new();
 
         public FileWatcherService(Action<string> onStatus)
@@ -43,16 +45,14 @@ namespace RedfurSync
 
         private async Task CheckForUpdatesAsync()
         {
-            Console.WriteLine("[RedfurSync] Sniffing the air for new upgrades...");
+            Console.WriteLine("[RedfurSync] Checking for updates...");
             
             if (Jobs.Any(j => j.Status == UploadStatus.Uploading)) 
             {
-                Console.WriteLine("[RedfurSync] Paws are full with trade data. Delaying update hunt.");
                 return; 
             }
             
             var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
-            
             var payload = await _uploader.CheckForUpdateAsync(version);
             
             if (payload == null) return;
@@ -103,11 +103,11 @@ namespace RedfurSync
                 return;
             }
 
-            _onStatus("Fissal is establishing the aetheric link…");
+            _onStatus("Establishing connection...");
             var (ok, msg) = await _uploader.PingAsync();
 
             _onStatus(ok
-                ? "Aetheric link established!"
+                ? "Connection established!"
                 : $"Signal lost: {msg}");
 
             ConnectionChecked?.Invoke(ok, msg);
@@ -115,7 +115,7 @@ namespace RedfurSync
             _updateTimer.Interval = TimeSpan.FromMinutes(60).TotalMilliseconds;
             _updateTimer.Elapsed += async (_, _) => await CheckForUpdatesAsync();
             _updateTimer.Start();
-_ =         Task.Run(async () => { await Task.Delay(8000); await CheckForUpdatesAsync(); });
+            _ = Task.Run(async () => { await Task.Delay(8000); await CheckForUpdatesAsync(); });
         }
 
         private void SetupWatchers()
@@ -131,19 +131,20 @@ _ =         Task.Run(async () => { await Task.Delay(8000); await CheckForUpdates
             TryWatch(Path.Combine(esoBase, "AddOns", "LibEsoHubPrices"));
 
             _onStatus(count == 0
-                ? "Fissal cannot find your data!"
-                : $"Fissal is monitoring {count} folder(s)");
+                ? "Cannot find target directories!"
+                : $"Monitoring {count} folder(s)");
         }
 
         private void AddWatcher(string folder)
         {
             var w = new FileSystemWatcher(folder, "*.lua")
             {
-                NotifyFilter          = NotifyFilters.LastWrite | NotifyFilters.Size,
+                NotifyFilter          = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.CreationTime,
                 EnableRaisingEvents   = true,
                 IncludeSubdirectories = false
             };
             w.Changed += OnFileChanged;
+            w.Created += OnFileChanged;
             _watchers.Add(w);
         }
 
@@ -170,10 +171,54 @@ _ =         Task.Run(async () => { await Task.Delay(8000); await CheckForUpdates
         public void CancelJob(UploadJob job) =>
             job.Cts.Cancel();
 
+        private string GetFileHash(string filePath)
+        {
+            try
+            {
+                using var md5 = MD5.Create();
+                using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                var hash = md5.ComputeHash(stream);
+                return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
         private async Task EnqueueUploadAsync(string filePath, bool isRetry = false)
         {
             UploadJob job;
             int currentJobCount;
+
+            // Yield and wait if the file is currently locked/in-use by another process
+            int lockWaitRetries = 0;
+            while (IsFileLocked(filePath) && lockWaitRetries < 5)
+            {
+                await Task.Delay(2000); // Wait 2 seconds before checking again
+                lockWaitRetries++;
+            }
+
+            if (IsFileLocked(filePath))
+            {
+                Console.WriteLine($"[RedfurSync] File {Path.GetFileName(filePath)} is persistently locked. Deferring.");
+                return;
+            }
+
+            // Ensure the file actually changed to prevent redundant uploads
+            string currentHash = GetFileHash(filePath);
+            lock (_hashLock)
+            {
+                if (!isRetry && !string.IsNullOrEmpty(currentHash))
+                {
+                    if (_lastFileHashes.TryGetValue(filePath, out var lastHash) && lastHash == currentHash)
+                    {
+                        Console.WriteLine($"[RedfurSync] {Path.GetFileName(filePath)} contents have not changed. Ignoring.");
+                        return; // No actual change in content
+                    }
+                    _lastFileHashes[filePath] = currentHash;
+                }
+            }
 
             lock (_jobLock)
             {
@@ -195,7 +240,8 @@ _ =         Task.Run(async () => { await Task.Delay(8000); await CheckForUpdates
                     FilePath       = filePath,
                     FileName       = Path.GetFileName(filePath),
                     FileSizeBytes  = size,
-                    QueuedAt       = DateTime.Now
+                    QueuedAt       = DateTime.Now,
+                    RetryCount     = isRetry ? 1 : 0
                 };
 
                 PruneOldJobs();
@@ -204,12 +250,28 @@ _ =         Task.Run(async () => { await Task.Delay(8000); await CheckForUpdates
             }
 
             NotifyChanged();
-            _onStatus($"Dispatching {job.FileName} to the Redfur database...");
+            _onStatus($"Dispatching {job.FileName}...");
 
-            job.Status = UploadStatus.Uploading;
-            NotifyChanged();
+            bool success = false;
+            int uploadRetries = 0;
+            const int maxUploadRetries = 3;
 
-            var success = await _uploader.UploadAsync(job);
+            while (uploadRetries < maxUploadRetries && !success && !job.Cts.Token.IsCancellationRequested)
+            {
+                job.Status = UploadStatus.Uploading;
+                NotifyChanged();
+
+                success = await _uploader.UploadAsync(job);
+
+                if (!success && !job.Cts.Token.IsCancellationRequested)
+                {
+                    uploadRetries++;
+                    job.Status = UploadStatus.Queued;
+                    job.ErrorMessage = $"Failed. Retrying {uploadRetries}/{maxUploadRetries}...";
+                    NotifyChanged();
+                    await Task.Delay(3000 * uploadRetries); // Exponential-ish backoff
+                }
+            }
 
             if (job.Cts.Token.IsCancellationRequested)
                 job.Status = UploadStatus.Cancelled;
@@ -220,8 +282,7 @@ _ =         Task.Run(async () => { await Task.Delay(8000); await CheckForUpdates
 
             if (success)
             {
-                Console.WriteLine($"[RedfurSync] ✦ {job.FileName} delivered to the vault.");
-                
+                Console.WriteLine($"[RedfurSync] ✦ {job.FileName} uploaded successfully.");
                 if (currentJobCount > 1)
                     _onStatus($"Last Sync: {DateTime.Now:MMM dd, h:mm tt}");
                 else
@@ -229,19 +290,36 @@ _ =         Task.Run(async () => { await Task.Delay(8000); await CheckForUpdates
             }
             else if (job.Status == UploadStatus.Cancelled)
             {
-                Console.WriteLine($"[RedfurSync] — Transmission of {job.FileName} aborted.");
                 _onStatus("Transmission aborted.");
             }
             else
             {
-                Console.WriteLine($"[RedfurSync] ✖ Transmission of {job.FileName} failed: {job.ErrorMessage}");
                 _onStatus($"Transmission failed: {job.FileName}");
             }
         }
 
+        private bool IsFileLocked(string filePath)
+        {
+            try
+            {
+                using FileStream stream = new FileInfo(filePath).Open(FileMode.Open, FileAccess.Read, FileShare.None);
+                stream.Close();
+            }
+            catch (IOException)
+            {
+                return true; // The file is locked by another process
+            }
+            catch (Exception)
+            {
+                return false;
+            }
+            return false;
+        }
+
         private void PruneOldJobs()
         {
-            var cutoff = DateTime.Now.AddMinutes(-5);
+            // Changed from 5 minutes to 1 minute to clear logs faster
+            var cutoff = DateTime.Now.AddMinutes(-1);
             for (int i = Jobs.Count - 1; i >= 0; i--)
             {
                 var j = Jobs[i];
