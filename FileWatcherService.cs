@@ -139,12 +139,28 @@ namespace RedfurSync
         {
             var w = new FileSystemWatcher(folder, "*.lua")
             {
-                NotifyFilter          = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.CreationTime,
+                NotifyFilter          = NotifyFilters.LastWrite | NotifyFilters.Size | NotifyFilters.CreationTime | NotifyFilters.FileName,
+                InternalBufferSize    = 65536, 
                 EnableRaisingEvents   = true,
                 IncludeSubdirectories = false
             };
+            
             w.Changed += OnFileChanged;
             w.Created += OnFileChanged;
+            
+            // Listen for the atomic save renames
+            w.Renamed += (sender, e) => 
+            {
+                // Treat a rename just like a file change
+                OnFileChanged(sender, new FileSystemEventArgs(WatcherChangeTypes.Changed, Path.GetDirectoryName(e.FullPath)!, e.Name!));
+            };
+
+            // Listen for buffer overflows so it cries out instead of failing silently
+            w.Error += (sender, e) => 
+            {
+                Console.WriteLine($"[RedfurSync] ⚠ Watcher lost the scent (Buffer Overflow): {e.GetException().Message}");
+            };
+
             _watchers.Add(w);
         }
 

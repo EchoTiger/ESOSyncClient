@@ -158,7 +158,14 @@ namespace RedfurSync
             }
             catch (OperationCanceledException)
             {
-                LastError = job.ErrorMessage = "Cancelled by user";
+                if (job.Cts.Token.IsCancellationRequested)
+                {
+                    LastError = job.ErrorMessage = "Cancelled by user";
+                }
+                else
+                {
+                    LastError = job.ErrorMessage = "Upload timed out. The connection may be unstable or too slow.";
+                }
                 return false;
             }
             catch (IOException ex)
