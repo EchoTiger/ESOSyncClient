@@ -35,6 +35,7 @@ namespace RedfurSync
         private int  _prevActiveCount  = 0;
         private bool _batchHadError    = false;
         private bool _batchHadSuccess  = false;
+        private readonly Control _invoker = new Control();
 
         public TrayApp()
         {
@@ -290,13 +291,13 @@ namespace RedfurSync
 
         private void UpdateStartupText(bool on)
         {
-            if (_menu.InvokeRequired) { _menu.BeginInvoke(() => UpdateStartupText(on)); return; }
+            if (_invoker.InvokeRequired) { _invoker.BeginInvoke(() => UpdateStartupText(on)); return; }
             _startupItem.Text = (on ? Checked : Unchecked) + "Run Fissal on startup";
         }
 
         private void UpdateStatus(string msg)
         {
-            if (_menu.InvokeRequired) { _menu.BeginInvoke(() => UpdateStatus(msg)); return; }
+            if (_invoker.InvokeRequired) { _invoker.BeginInvoke(() => UpdateStatus(msg)); return; }
             _statusItem.Text = "⚙  " + msg;
             var full = "" + msg;
             _trayIcon.Text = full.Length > 63 ? full[..63] : full;
@@ -304,12 +305,13 @@ namespace RedfurSync
 
         private void OnSetDisplayName(object? sender, EventArgs e)
         {
-            var config = AppConfig.Load();
+            // Fissal reaches into her shared memory
+            var config = AppConfig.Instance; 
             using var form = new DisplayNameForm(config.DisplayName);
             if (form.ShowDialog() == DialogResult.OK)
             {
-                config.DisplayName = form.DisplayName;
-                AppConfig.Save(config);
+                config.DisplayName = form.DisplayName; // Updates it in RAM instantly
+                AppConfig.Save(config);                // Saves it to disk for next launch
                 ShowCustomAlert("Registry Updated!",
                     $"Confirmed!\n\nFissal will address you as \"{config.DisplayName}\" in the logs!",
                     CGreen,
@@ -337,13 +339,13 @@ namespace RedfurSync
 
         private void ShowAlert(string title, string text, FissalAlert.AlertLevel level = FissalAlert.AlertLevel.Normal, int timeoutMs = 7000, Action? onClick = null)
         {
-            if (_menu.InvokeRequired) { _menu.BeginInvoke(() => ShowAlert(title, text, level, timeoutMs, onClick)); return; }
+            if (_invoker.InvokeRequired) { _invoker.BeginInvoke(() => ShowAlert(title, text, level, timeoutMs, onClick)); return; }
             FissalAlert.Show(title, text, level, timeoutMs, onClick);
         }
 
         private void ShowCustomAlert(string title, string text, Color lightColor, int flashSpeed, int timeoutMs = 7000, Action? onClick = null)
         {
-            if (_menu.InvokeRequired) { _menu.BeginInvoke(() => ShowCustomAlert(title, text, lightColor, flashSpeed, timeoutMs, onClick)); return; }
+            if (_invoker.InvokeRequired) { _invoker.BeginInvoke(() => ShowCustomAlert(title, text, lightColor, flashSpeed, timeoutMs, onClick)); return; }
             FissalAlert.ShowCustom(title, text, lightColor, flashSpeed, timeoutMs, onClick);
         }
         private static void OpenConfigFolder() => Process.Start("explorer.exe", AppConfig.ConfigDirectory);

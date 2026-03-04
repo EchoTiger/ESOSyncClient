@@ -14,14 +14,14 @@ namespace RedfurSync
     internal static class FissalTheme
     {
         // ── Palette ───────────────────────────────────────────────────────────
-        public static readonly Color CBg        = Color.FromArgb(12, 9, 5);
-        public static readonly Color CPanelBg   = Color.FromArgb(22, 17, 10);
+        public static readonly Color CBg        = Color.FromArgb(15, 12, 6);
+        public static readonly Color CPanelBg   = Color.FromArgb(29, 22, 12);
         public static readonly Color CBorder    = Color.FromArgb(90, 72, 36);
         public static readonly Color CGoldBrt   = Color.FromArgb(218, 182, 88);
         public static readonly Color CGoldMid   = Color.FromArgb(160, 128, 55);
         public static readonly Color CGoldDim   = Color.FromArgb(95,  74, 30);
         public static readonly Color CGoldDark   = Color.FromArgb(64, 50, 20);
-        public static readonly Color CGreen     = Color.FromArgb(55,  200, 100);
+        public static readonly Color CGreen     = Color.FromArgb(85,  220, 100);
         public static readonly Color CGreenDim  = Color.FromArgb(28,  100,  50);
         public static readonly Color CText      = Color.FromArgb(232, 215, 185);
         public static readonly Color CTextSub   = Color.FromArgb(130, 112, 82);

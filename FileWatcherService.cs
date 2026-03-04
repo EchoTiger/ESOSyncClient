@@ -335,7 +335,7 @@ namespace RedfurSync
         private void PruneOldJobs()
         {
             // Changed from 5 minutes to 1 minute to clear logs faster
-            var cutoff = DateTime.Now.AddMinutes(-1);
+            var cutoff = DateTime.Now.AddDays(7);
             for (int i = Jobs.Count - 1; i >= 0; i--)
             {
                 var j = Jobs[i];

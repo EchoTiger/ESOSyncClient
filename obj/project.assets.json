@@ -252,7 +252,7 @@
     "C:\\Users\\Brand\\.nuget\\packages\\": {}
   },
   "project": {
-    "version": "1.0.0",
+    "version": "1.0.1",
     "restore": {
       "projectUniqueName": "E:\\Files\\Documents\\Elder Scrolls Online\\redfur-bot-updater\\ESOSync\\client\\ESOSyncClient\\ESOSyncClient.csproj",
       "projectName": "RedfurSync",

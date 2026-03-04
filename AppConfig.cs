@@ -34,7 +34,6 @@ namespace RedfurSync
         /// Selects the rendering style (Low, Medium, High) modifying CPU load vs Graphical complexity
         /// </summary>
         public UploadProgressForm.AppConfig.FidelityMode VisualFidelity { get; set; } = UploadProgressForm.AppConfig.FidelityMode.Medium;
-
         private static readonly JsonSerializerOptions _opts = new() 
         { 
             WriteIndented = true,
@@ -46,6 +45,7 @@ namespace RedfurSync
             "FissalCogworkCourier");
 
         public static string ConfigPath { get; } = Path.Combine(ConfigDirectory, "config.json");
+        public static AppConfig Instance { get; } = Load();
 
         public static AppConfig Load()
         {

@@ -140,6 +140,7 @@ namespace RedfurSync
                 streamContent.Headers.ContentLength    = fileInfo.Length;
 
                 form.Add(streamContent,                         "file",        job.FileName);
+                var freshConfig = AppConfig.Load();
                 form.Add(new StringContent(_config.DisplayName),"displayName"           );
 
                 var response = await _http.PostAsync(_config.ServerUrl, form, job.Cts.Token);
