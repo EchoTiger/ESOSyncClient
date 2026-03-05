@@ -335,14 +335,53 @@ namespace RedfurSync
 
         private void PruneOldJobs()
         {
-            // Changed from 5 minutes to 1 minute to clear logs faster
-            var cutoff = DateTime.Now.AddDays(7);
-            for (int i = Jobs.Count - 1; i >= 0; i--)
+            if (Jobs.Count == 0) return;
+
+            // Gather the jobs and group them by our 45-second scent trail
+            var groups = new List<List<UploadJob>>();
+            List<UploadJob>? currentGroup = null;
+            DateTime? groupStartTime = null;
+            bool? lastWasUpdate = null;
+
+            // Sort jobs chronologically to track the timeline accurately
+            var sortedJobs = Jobs.OrderBy(j => j.QueuedAt).ToList();
+
+            foreach (var job in sortedJobs)
             {
-                var j = Jobs[i];
-                if (j.Status is UploadStatus.Done or UploadStatus.Failed or UploadStatus.Cancelled
-                    && j.QueuedAt < cutoff)
-                    Jobs.RemoveAt(i);
+                bool isNewGroup = groupStartTime == null || 
+                                  Math.Abs((job.QueuedAt - groupStartTime.Value).TotalSeconds) > 45 || 
+                                  (lastWasUpdate.HasValue && lastWasUpdate.Value != job.IsUpdate);
+
+                if (isNewGroup || currentGroup == null)
+                {
+                    currentGroup = new List<UploadJob>();
+                    groups.Add(currentGroup);
+                    groupStartTime = job.QueuedAt;
+                }
+                currentGroup.Add(job);
+                lastWasUpdate = job.IsUpdate;
+            }
+
+            // Enforce the pack limit using your configured MaxLogsKept
+            //int maxLogs = UploadProgressForm.AppConfig.MaxLogsKept;
+            int maxLogs = AppConfig.Instance.MaxLogsKept;
+            
+            if (groups.Count > maxLogs)
+            {
+                int groupsToRemove = groups.Count - maxLogs;
+                
+                // Only remove from the oldest groups
+                for (int i = 0; i < groupsToRemove; i++)
+                {
+                    foreach (var jobToRemove in groups[i])
+                    {
+                        // Ensure we only let go of jobs that are fully finished
+                        if (jobToRemove.Status is UploadStatus.Done or UploadStatus.Failed or UploadStatus.Cancelled)
+                        {
+                            Jobs.Remove(jobToRemove);
+                        }
+                    }
+                }
             }
         }
 

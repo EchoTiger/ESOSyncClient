@@ -139,7 +139,6 @@ namespace RedfurSync
 
                 form.Add(streamContent, "file", job.FileName);
                 
-                // ── Pulls the fresh name directly from her synchronized mind ──
                 form.Add(new StringContent(AppConfig.Instance.DisplayName), "displayName");
 
                 var response = await _http.PostAsync(_config.ServerUrl, form, job.Cts.Token);
