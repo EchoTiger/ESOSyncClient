@@ -10,6 +10,9 @@ using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using static RedfurSync.FissalTheme;
 
+// Upload log not showing raffle data file.
+// Multiple logs not being created still, might need to yield the writing process of GS files a bit more, and maybe even expect all 00-17 - give longer timeout if all 17 haven't arrived.
+
 namespace RedfurSync
 {
     public sealed class UploadProgressForm : Form
@@ -336,7 +339,7 @@ namespace RedfurSync
             // Identify which group this job belonged to
             foreach(var job in _jobs) {
                 bool isNewGroup = currentGroupAnchor == null
-                                || Math.Abs((job.QueuedAt - currentGroupAnchor.Value).TotalSeconds) > 10
+                                || Math.Abs((job.QueuedAt - currentGroupAnchor.Value).TotalSeconds) > 60
                                 || (lastWasUpdate.HasValue && lastWasUpdate.Value != job.IsUpdate);
                 
                 if (isNewGroup) {
@@ -353,7 +356,7 @@ namespace RedfurSync
             currentGroupAnchor = null;
             foreach(var job in _jobs) {
                 bool isNewGroup = currentGroupAnchor == null
-                                || Math.Abs((job.QueuedAt - currentGroupAnchor.Value).TotalSeconds) > 10
+                                || Math.Abs((job.QueuedAt - currentGroupAnchor.Value).TotalSeconds) > 60
                                 || (lastWasUpdate.HasValue && lastWasUpdate.Value != job.IsUpdate);
                 if (isNewGroup) {
                     currentGroupAnchor = job.QueuedAt;
@@ -587,7 +590,7 @@ namespace RedfurSync
             for (int i = 0; i < _jobs.Count; i++)
             {
                 var job = _jobs[i];
-                bool isNewGroup = groupStartTime == null || Math.Abs((job.QueuedAt - groupStartTime.Value).TotalSeconds) > 10 || (lastWasUpdate.HasValue && lastWasUpdate.Value != job.IsUpdate);
+                bool isNewGroup = groupStartTime == null || Math.Abs((job.QueuedAt - groupStartTime.Value).TotalSeconds) > 60 || (lastWasUpdate.HasValue && lastWasUpdate.Value != job.IsUpdate);
                 
                 if (isNewGroup || currentGroup == null) 
                 { 

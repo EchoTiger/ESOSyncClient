@@ -35,11 +35,14 @@ namespace RedfurSync
         private int  _prevActiveCount  = 0;
         private bool _batchHadError    = false;
         private bool _batchHadSuccess  = false;
-        private readonly Control _invoker = new Control();
 
         public TrayApp()
         {
             _menu     = BuildMenu();
+            
+            // Force the menu handle to exist immediately so we can safely invoke on it
+            var _ = _menu.Handle;
+
             _trayIcon = new NotifyIcon
             {
                 Icon             = BuildFissalIcon(),
@@ -54,8 +57,8 @@ namespace RedfurSync
             _watcher.JobsChanged       += OnJobsChanged;
             _watcher.ConnectionChecked += OnConnectionChecked;
 
-            // ── Read her memory and restore the visual fidelity right as she wakes ──
-            var config = AppConfig.Load();
+            // ── Read her unified mind and restore the visual fidelity right as she wakes ──
+            var config = AppConfig.Instance;
             SetPerformanceMode(config.VisualFidelity, saveConfig: false);
 
             CheckFirstRun();
@@ -63,7 +66,7 @@ namespace RedfurSync
 
         private void CheckFirstRun()
         {
-            var config = AppConfig.Load();
+            var config = AppConfig.Instance;
             if (!config.IsConfigured())
             {
                 ShowAlert("Fissal needs to tune her vocal coils!",
@@ -77,7 +80,7 @@ namespace RedfurSync
             bool on = StartupHelper.IsStartupEnabled();
             if (config.RunOnStartup && !on) StartupHelper.SetStartup(true);
             UpdateStartupText(config.RunOnStartup || on);
-            _ = _watcher.StartAsync();
+            var _ = _watcher.StartAsync();
         }
 
         private void OnConnectionChecked(bool ok, string msg)
@@ -110,6 +113,7 @@ namespace RedfurSync
 
             OpenProgressForm();
         }
+        
         private void OnJobsChanged()
         {
             if (_progressForm != null && !_progressForm.IsDisposed)
@@ -144,6 +148,14 @@ namespace RedfurSync
                 bool hasReadyUpdate  = recentGroup.Any(j => j.Status == UploadStatus.UpdateReady);
                 bool hasFailedUpdate = recentGroup.Any(j => j.IsUpdate && (j.Status == UploadStatus.Failed || j.Status == UploadStatus.Cancelled));
                 
+                // Alert when a sync begins
+                if (_prevActiveCount == 0 && activeNow > 0)
+                {
+                    var activeJobs = recentGroup.Where(j => j.Status is UploadStatus.Uploading or UploadStatus.Queued).ToList();
+                    string names = activeJobs.Count <= 2 ? string.Join(" & ", activeJobs.Select(j => j.FileName)) : $"{activeJobs.Count} files";
+                    ShowCustomAlert("Transmission Initiated", $"Fissal is carrying {names} to the matrix.", Color.FromArgb(200, 160, 60), 6, 4000, OpenProgressForm);
+                }
+
                 if (_prevActiveCount > 0)
                 {
                     if (anyFailed)    _batchHadError   = true;
@@ -160,13 +172,13 @@ namespace RedfurSync
                         ShowCustomAlert("Update Prepared!", 
                             "A new module has been received from Redfur!\nOpen the terminal to apply the upgrade.", 
                             Color.FromArgb(180, 100, 220), 
-                            4, 10000, OpenProgressForm); // <-- Added callback
+                            4, 10000, OpenProgressForm);
                     }
                     else if (hasFailedUpdate)
                     {
                         ShowAlert("Update Interrupted", 
                             "Fissal's claws slipped while pulling the new module.\nCheck diagnostics for details!", 
-                            FissalAlert.AlertLevel.TotalError, 9000, OpenProgressForm); // <-- Added callback
+                            FissalAlert.AlertLevel.TotalError, 9000, OpenProgressForm);
                     }
                     else if (_batchHadSuccess || _batchHadError)
                     {
@@ -186,7 +198,7 @@ namespace RedfurSync
                                 msg += $"\n\n✦ However, {doneNames} transmitted successfully.";
                             }
 
-                            ShowAlert("Sync Encountered Errors", msg, FissalAlert.AlertLevel.TotalError, 9000, OpenProgressForm); // <-- Added callback
+                            ShowAlert("Sync Encountered Errors", msg, FissalAlert.AlertLevel.TotalError, 9000, OpenProgressForm);
                         }
                         else if (doneJobs.Count > 0)
                         {
@@ -196,7 +208,7 @@ namespace RedfurSync
                                 
                             string msg = $"{doneNames} successfully delivered to the matrix.\nAll transmissions verified and sealed.";
 
-                            ShowCustomAlert("Sync Complete!", msg, Color.FromArgb(60, 180, 220), 6, 7000, OpenProgressForm); // <-- Added callback
+                            ShowCustomAlert("Sync Complete!", msg, Color.FromArgb(60, 180, 220), 6, 7000, OpenProgressForm);
                         }
                     }
                     _batchHadError   = false;
@@ -251,9 +263,11 @@ namespace RedfurSync
             {
                 bool nowOn = _startupItem?.Text != null && !_startupItem.Text.StartsWith(Checked);
                 StartupHelper.SetStartup(nowOn);
-                var cfg = AppConfig.Load();
+                
+                var cfg = AppConfig.Instance;
                 cfg.RunOnStartup = nowOn;
-                AppConfig.Save(cfg);
+                cfg.Save();
+                
                 UpdateStartupText(nowOn);
             };
             menu.Items.Add(_startupItem);
@@ -277,9 +291,9 @@ namespace RedfurSync
 
             if (saveConfig)
             {
-                var config = AppConfig.Load();
+                var config = AppConfig.Instance;
                 config.VisualFidelity = mode;
-                AppConfig.Save(config);
+                config.Save();
             }
 
             if (_progressForm != null && !_progressForm.IsDisposed)
@@ -291,13 +305,13 @@ namespace RedfurSync
 
         private void UpdateStartupText(bool on)
         {
-            if (_invoker.InvokeRequired) { _invoker.BeginInvoke(() => UpdateStartupText(on)); return; }
+            if (_menu.InvokeRequired) { _menu.BeginInvoke(() => UpdateStartupText(on)); return; }
             _startupItem.Text = (on ? Checked : Unchecked) + "Run Fissal on startup";
         }
 
         private void UpdateStatus(string msg)
         {
-            if (_invoker.InvokeRequired) { _invoker.BeginInvoke(() => UpdateStatus(msg)); return; }
+            if (_menu.InvokeRequired) { _menu.BeginInvoke(() => UpdateStatus(msg)); return; }
             _statusItem.Text = "⚙  " + msg;
             var full = "" + msg;
             _trayIcon.Text = full.Length > 63 ? full[..63] : full;
@@ -305,13 +319,12 @@ namespace RedfurSync
 
         private void OnSetDisplayName(object? sender, EventArgs e)
         {
-            // Fissal reaches into her shared memory
             var config = AppConfig.Instance; 
             using var form = new DisplayNameForm(config.DisplayName);
             if (form.ShowDialog() == DialogResult.OK)
             {
-                config.DisplayName = form.DisplayName; // Updates it in RAM instantly
-                AppConfig.Save(config);                // Saves it to disk for next launch
+                config.DisplayName = form.DisplayName;
+                config.Save(); // Writes her thought down permanently
                 ShowCustomAlert("Registry Updated!",
                     $"Confirmed!\n\nFissal will address you as \"{config.DisplayName}\" in the logs!",
                     CGreen,
@@ -339,15 +352,16 @@ namespace RedfurSync
 
         private void ShowAlert(string title, string text, FissalAlert.AlertLevel level = FissalAlert.AlertLevel.Normal, int timeoutMs = 7000, Action? onClick = null)
         {
-            if (_invoker.InvokeRequired) { _invoker.BeginInvoke(() => ShowAlert(title, text, level, timeoutMs, onClick)); return; }
+            if (_menu.InvokeRequired) { _menu.BeginInvoke(() => ShowAlert(title, text, level, timeoutMs, onClick)); return; }
             FissalAlert.Show(title, text, level, timeoutMs, onClick);
         }
 
         private void ShowCustomAlert(string title, string text, Color lightColor, int flashSpeed, int timeoutMs = 7000, Action? onClick = null)
         {
-            if (_invoker.InvokeRequired) { _invoker.BeginInvoke(() => ShowCustomAlert(title, text, lightColor, flashSpeed, timeoutMs, onClick)); return; }
+            if (_menu.InvokeRequired) { _menu.BeginInvoke(() => ShowCustomAlert(title, text, lightColor, flashSpeed, timeoutMs, onClick)); return; }
             FissalAlert.ShowCustom(title, text, lightColor, flashSpeed, timeoutMs, onClick);
         }
+        
         private static void OpenConfigFolder() => Process.Start("explorer.exe", AppConfig.ConfigDirectory);
 
         private static void OpenConfigFile()
@@ -406,6 +420,7 @@ namespace RedfurSync
             _progressForm.Show();
             _progressForm.Activate();
         }
+        
         private static Icon BuildFissalIcon()
         {
             using var bmp = new Bitmap(64, 64);

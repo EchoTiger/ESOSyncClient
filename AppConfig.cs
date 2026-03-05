@@ -14,26 +14,13 @@ namespace RedfurSync
         public string DisplayName  { get; set; } = "Redfur Trader";
         
         // Polling and application state behavior variables
-        /// <summary>
-        /// Delay before dispatching file change events (in milliseconds)
-        /// </summary>
         public int    DebounceMs   { get; set; } = 4000;
-        
-        /// <summary>
-        /// Enable or disable launching the application at Windows startup
-        /// </summary>
         public bool   RunOnStartup { get; set; } = true;
-        
-        /// <summary>
-        /// Stores the timestamp to avoid redundant update prompt alerts
-        /// </summary>
         public DateTime LastUpdatePrompt { get; set; } = DateTime.MinValue;
         
         // ── Fissal's remembered visual state ──
-        /// <summary>
-        /// Selects the rendering style (Low, Medium, High) modifying CPU load vs Graphical complexity
-        /// </summary>
         public UploadProgressForm.AppConfig.FidelityMode VisualFidelity { get; set; } = UploadProgressForm.AppConfig.FidelityMode.Medium;
+        
         private static readonly JsonSerializerOptions _opts = new() 
         { 
             WriteIndented = true,
@@ -45,20 +32,74 @@ namespace RedfurSync
             "FissalCogworkCourier");
 
         public static string ConfigPath { get; } = Path.Combine(ConfigDirectory, "config.json");
-        public static AppConfig Instance { get; } = Load();
+        
+        private static AppConfig? _instance;
+        private static readonly object _fileLock = new object();
 
-        public static AppConfig Load()
+        // ── A singular, unified mind ──
+        public static AppConfig Instance 
         {
-            Directory.CreateDirectory(ConfigDirectory);
-            if (!File.Exists(ConfigPath)) { var d = new AppConfig(); Save(d); return d; }
-            try { return JsonSerializer.Deserialize<AppConfig>(File.ReadAllText(ConfigPath), _opts) ?? new(); }
-            catch { return new(); }
+            get 
+            {
+                lock (_fileLock) 
+                {
+                    if (_instance == null) _instance = LoadLocked();
+                    return _instance;
+                }
+            }
         }
 
-        public static void Save(AppConfig cfg)
+        private static AppConfig LoadLocked()
         {
             Directory.CreateDirectory(ConfigDirectory);
-            File.WriteAllText(ConfigPath, JsonSerializer.Serialize(cfg, _opts));
+            if (!File.Exists(ConfigPath)) 
+            { 
+                var d = new AppConfig(); 
+                SaveInternal(d); 
+                return d; 
+            }
+            
+            try 
+            { 
+                string json = File.ReadAllText(ConfigPath);
+                if (string.IsNullOrWhiteSpace(json))
+                {
+                    var d = new AppConfig();
+                    SaveInternal(d);
+                    return d;
+                }
+                var config = JsonSerializer.Deserialize<AppConfig>(json, _opts);
+                return config ?? new AppConfig();
+            }
+            catch 
+            { 
+                // If the file is deeply corrupted, she resets gracefully
+                var d = new AppConfig();
+                SaveInternal(d);
+                return d; 
+            }
+        }
+
+        public void Save()
+        {
+            lock (_fileLock)
+            {
+                SaveInternal(this);
+            }
+        }
+
+        private static void SaveInternal(AppConfig cfg)
+        {
+            try 
+            {
+                Directory.CreateDirectory(ConfigDirectory);
+                string json = JsonSerializer.Serialize(cfg, _opts);
+                File.WriteAllText(ConfigPath, json);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Config Error] Fissal's claws slipped while writing memory: {ex.Message}");
+            }
         }
 
         public bool IsConfigured() =>

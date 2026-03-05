@@ -36,10 +36,11 @@ namespace RedfurSync
         private readonly object _hashLock  = new();
         private readonly System.Timers.Timer _updateTimer = new();
 
-        public FileWatcherService(Action<string> onStatus)
+    public FileWatcherService(Action<string> onStatus)
         {
             _onStatus = onStatus;
-            _config   = AppConfig.Load();
+            // Change from AppConfig.Load() to AppConfig.Instance
+            _config   = AppConfig.Instance; 
             _uploader = new UploadService(_config);
         }
 

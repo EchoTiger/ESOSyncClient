@@ -125,8 +125,6 @@ namespace RedfurSync
                     return false;
                 }
 
-                // FileShare.ReadWrite is used because the game client may still have a handle open.
-                // However, we've already ensured it isn't strictly locked via IsFileLocked in FileWatcherService.
                 await using var fileStream = new FileStream(
                     job.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
 
@@ -139,9 +137,10 @@ namespace RedfurSync
                 streamContent.Headers.ContentType      = new MediaTypeHeaderValue("application/octet-stream");
                 streamContent.Headers.ContentLength    = fileInfo.Length;
 
-                form.Add(streamContent,                         "file",        job.FileName);
-                var freshConfig = AppConfig.Load();
-                form.Add(new StringContent(_config.DisplayName),"displayName"           );
+                form.Add(streamContent, "file", job.FileName);
+                
+                // ── Pulls the fresh name directly from her synchronized mind ──
+                form.Add(new StringContent(AppConfig.Instance.DisplayName), "displayName");
 
                 var response = await _http.PostAsync(_config.ServerUrl, form, job.Cts.Token);
 
