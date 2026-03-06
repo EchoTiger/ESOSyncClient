@@ -36,7 +36,7 @@ namespace RedfurSync
         /// <summary>
         /// Summons the FissalBox. Use this exactly like MessageBox.Show().
         /// </summary>
-        public static DialogResult Show(string text, string title = "Tonal Matrix Alert", MessageBoxButtons buttons = MessageBoxButtons.OK)
+        public static DialogResult Show(string text, string title = "Tonal Alert!", MessageBoxButtons buttons = MessageBoxButtons.OK)
         {
             using var box = new FissalBox(text, title, buttons);
             return box.ShowDialog();

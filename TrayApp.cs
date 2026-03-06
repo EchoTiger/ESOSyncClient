@@ -153,7 +153,7 @@ namespace RedfurSync
                 {
                     var activeJobs = recentGroup.Where(j => j.Status is UploadStatus.Uploading or UploadStatus.Queued).ToList();
                     string names = activeJobs.Count <= 2 ? string.Join(" & ", activeJobs.Select(j => j.FileName)) : $"{activeJobs.Count} files";
-                    ShowCustomAlert("Transmission Initiated", $"Fissal is carrying {names} to the matrix.", Color.FromArgb(200, 160, 60), 6, 4000, OpenProgressForm);
+                    ShowCustomAlert("Transmission Initiated", $"Fissal is syncronizing {names} to the lattice!", Color.FromArgb(200, 160, 60), 6, 4000, OpenProgressForm);
                 }
 
                 if (_prevActiveCount > 0)
@@ -206,7 +206,7 @@ namespace RedfurSync
                                 ? string.Join(" and ", doneJobs.Select(j => j.FileName))
                                 : $"{doneJobs.Count} files";
                                 
-                            string msg = $"{doneNames} successfully delivered to the matrix.\nAll transmissions verified and sealed.";
+                            string msg = $"{doneNames} successfully delivered to the lattice!\nAll transmissions verified and scribed.";
 
                             ShowCustomAlert("Sync Complete!", msg, Color.FromArgb(60, 180, 220), 6, 7000, OpenProgressForm);
                         }
@@ -244,7 +244,7 @@ namespace RedfurSync
             // ── Themed Visual Fidelity Menu ──
             var perfMenu = new ToolStripMenuItem("⚡  Visual Fidelity");
             ((ToolStripDropDownMenu)perfMenu.DropDown).ShowImageMargin = false;
-            
+
             _perfLowItem  = new ToolStripMenuItem(Unselected + "Super Clear (Low CPU)");
             _perfMedItem  = new ToolStripMenuItem(Selected   + "Clear (Balanced)");
             _perfHighItem = new ToolStripMenuItem(Unselected + "Terminal (Max Visuals)");
@@ -325,8 +325,9 @@ namespace RedfurSync
             using var form = new DisplayNameForm(config.DisplayName);
             if (form.ShowDialog() == DialogResult.OK)
             {
-                config.DisplayName = form.DisplayName;
-                config.Save(); // Writes her thought down permanently
+                // 🐾 Fissal's memory was already updated and saved inside the form itself!
+                // We no longer overwrite it here. We simply celebrate the new name.
+
                 ShowCustomAlert("Registry Updated!",
                     $"Confirmed!\n\nFissal will address you as \"{config.DisplayName}\" in the logs!",
                     CGreen,
@@ -368,8 +369,19 @@ namespace RedfurSync
 
         private static void OpenConfigFile()
         {
-            string configFilePath = System.IO.Path.Combine(AppConfig.ConfigDirectory, "config.json");
-            var psi = new System.Diagnostics.ProcessStartInfo { FileName = configFilePath, UseShellExecute = true };
+            string configFilePath = AppConfig.ConfigPath; 
+            
+            if (!System.IO.File.Exists(configFilePath))
+            {
+                AppConfig.Instance.Save();
+            }
+
+            var psi = new System.Diagnostics.ProcessStartInfo 
+            { 
+                FileName = "notepad.exe", 
+                Arguments = $"\"{configFilePath}\"",
+                UseShellExecute = true 
+            };
             System.Diagnostics.Process.Start(psi);
         }
 
