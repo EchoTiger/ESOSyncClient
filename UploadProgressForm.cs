@@ -34,20 +34,20 @@ namespace RedfurSync
             public const float ScanlineSpeed = 0.56f;
             public const int MarqueePause = 80;     
             public const float ShimmerSpeed = 0.85f; 
-            public const float ScrollFriction = 0.50f;
-            public const float ScrollWheelSpeedMain = 0.85f;
-            public const float ScrollWheelSpeedDiag = 0.85f;
+            public const float ScrollFriction = 0.75f;
+            public const float ScrollWheelSpeedMain = 0.90f;
+            public const float ScrollWheelSpeedDiag = 0.90f;
             public const float CopyBubbleFloatSpeed = 1.45f; 
             public const float CopyBubbleFadeSpeed = 4.8f;   
 
             // --- Fissal Additions: UI Tweaks & Adjustments ---
-            public const int BaseGroupHeaderH = 40;     // Reduced padding for Log/Update headers (Was 40)
+            public const int BaseGroupHeaderH = 36;     // Reduced padding for Log/Update headers (Was 40)
             public const int BaseGroupHeaderPad = 1;    // Padding between header and first job child
             
-            public const int DiagScrollWidth = 8;      // Width of the Diag scrollbar
-            public const int DiagScrollRightOffset = 3; // Moves Diag scrollbar left away from edge
-            public const int DiagScrollTopPad = 3;      // Stretches scrollbar upward
-            public const int DiagScrollBottomPad = 3;   // Stretches scrollbar downward
+            public const int DiagScrollWidth = 10;      // Width of the Diag scrollbar
+            public const int DiagScrollRightOffset = 5; // Moves Diag scrollbar left away from edge
+            public const int DiagScrollTopPad = 5;      // Stretches scrollbar upward
+            public const int DiagScrollBottomPad = 5;   // Stretches scrollbar downward
             // -------------------------------------------------
             
             public enum FidelityMode { Low, Medium, High }
@@ -164,11 +164,11 @@ namespace RedfurSync
         }
 
         private const int BaseW       = 340; // 400 - Overall app size
-        private const int BaseHeaderH = 55; // 68 - How tall the area where the text/micro screen is at.
-        private const int BaseRowH    = 95;  // 106 How tall header's child items are.
+        private const int BaseHeaderH = 60; // 68 - How tall the area where the text/micro screen is at.
+        private const int BaseRowH    = 86;  // 106 How tall header's child items are.
         private const int BaseExpandH = 125;  // How tall the DIAG menus under the child menus are.
-        private const int BaseBarH    = 8;  // Progress bar size.
-        private const int BasePad     = 14; // 18 - How close all the elements are to the edge of the main window
+        private const int BaseBarH    = 7;  // Progress bar size.
+        private const int BasePad     = 12; // 18 - How close all the elements are to the edge of the main window
         private const int BaseBtnW    = 65;   // 68  Buttons like "Apply" or "DIAG"
         private const int BaseBtnH    = 20;   // 24  Buttons like "Apply" or "DIAG"
         private const int BaseDiagH   = 20;   // Height specific to diag button?
@@ -216,8 +216,8 @@ namespace RedfurSync
         private UploadJob? _purgingJobRef = null; 
         
         private int _purgeAnimFrames = 10;
-        private const int MaxPurgeFrames = 5; 
-        private const int MaxJobPurgeFrames = 5;
+        private const int MaxPurgeFrames = 4; 
+        private const int MaxJobPurgeFrames = 4;
         
         private float _slideOffset = 0f;
         private int _slideStartY = 0;
@@ -256,7 +256,7 @@ namespace RedfurSync
         
         private Rectangle CloseBtnRect => new Rectangle(Width - Pad - S(20), (HeaderH - S(20)) / 2, S(25), S(25));
         
-        private int RightGutterW => S(5);
+        private int RightGutterW => S(6);
         private int WorkingAreaW => Width - RightGutterW;
         private int RightBtnX => WorkingAreaW - Pad - BtnW;
 
@@ -571,7 +571,7 @@ namespace RedfurSync
                 UploadStatus.Done => "[ OK ] Signal verified. No anomalies in the transmission log.", 
                 UploadStatus.Uploading => $"[ >> ] Active transmission in progress -- {job.Progress * 100:0}% complete.",
                 UploadStatus.Queued => "[ -- ] Awaiting open transmission slot. Standing by.", 
-                UploadStatus.UpdateReady => $"[ OK ] Matrix downloaded and verified.\n • Current Build : v{job.CurrentVersion}\n • Target Build  : v{job.UpdateVersion}\n • Payload Size  : {job.FileSizeDisplay}\n\n[ CHANGELOG ] :\n{job.Changelog}\n\n[ OK ] Ready for integration!",                _ => "[ ?? ] Signal state unknown."
+                UploadStatus.UpdateReady => $"[ OK ] Matrix downloaded and verified. Fissal is ready to deplay this new module at your will!\n • Current Build : v{job.CurrentVersion}\n • Target Build  : v{job.UpdateVersion}\n • Payload Size  : {job.FileSizeDisplay}\n\n[ CHANGELOG ] :\n{job.Changelog}\n\n[ OK ] Ready for integration!",                _ => "[ ?? ] Signal state unknown."
             };
         }
 
@@ -991,7 +991,7 @@ namespace RedfurSync
         private void DrawCopyBubbles(Graphics g)
         {
             if (_copyBubbles.Count == 0) return;
-            const string gearPart = "⚙ ", textPart = "Diag Copied!"; // FISSAL FIX: Custom message for Diag Copy
+            const string gearPart = "⚙ ", textPart = "Copied!"; // FISSAL FIX: Custom message for Diag Copy
             var bf = _fBody8Bold; var totalSz = g.MeasureString(gearPart + textPart, bf);
             int bw = (int)totalSz.Width + S(14), bh = (int)totalSz.Height + S(6);
 
@@ -1098,8 +1098,8 @@ namespace RedfurSync
             var delRect = DeleteBtnRect(row);
             using var delPath = RoundRect(delRect.X, delRect.Y, delRect.Width, delRect.Height, S(2));
             using var delBg = new SolidBrush(delHover ? Color.FromArgb(40, CBarFail) : Color.Transparent); g.FillPath(delBg, delPath);
-            using var delPen = new Pen(delHover ? Color.FromArgb(255, 120, 120) : Color.FromArgb(100, CBarFail), 1); g.DrawPath(delPen, delPath);
-            using var delTextBrush = new SolidBrush(delHover ? Color.White : Color.FromArgb(200, CBarFail)); g.DrawString("[ PURGE ]", _fBody7Bold, delTextBrush, delRect, _sfCenter);
+            using var delPen = new Pen(delHover ? Color.FromArgb(255, 120, 120) : Color.FromArgb(10, CBarFail), 1); g.DrawPath(delPen, delPath);
+            using var delTextBrush = new SolidBrush(delHover ? Color.White : Color.FromArgb(240, CBarFail)); g.DrawString("[ PURGE ]", _fMono8, delTextBrush, delRect, _sfCenter);
         }
 
         private Color GetJobStatusColor(UploadJob j) => j.Status switch {
@@ -1117,7 +1117,7 @@ namespace RedfurSync
                 UploadStatus.Done => ("[✓]", CGreen), UploadStatus.Failed => ("[!!]", CBarFail), UploadStatus.Cancelled => ("[//]", CBarCancel), UploadStatus.UpdateReady => ("[^]", Color.FromArgb(180, 100, 220)), _ => ("[??]", CTextSub)
             };
 
-            int lineX = Pad + S(1), midY = y + S(20); 
+            int lineX = Pad + S(1), midY = y + S(14); 
             
             int prevMidY = y - S(20); 
             Color prevColor = rowInfo.GroupColor;
@@ -1144,12 +1144,12 @@ namespace RedfurSync
                 g.DrawLine(solidPen, lineX, clampedPrevMidY, lineX, midY); 
             }
 
-            using var horizPen = new Pen(gc, S(1)); g.DrawLine(horizPen, lineX, midY, childPad - S(6), midY);
+            using var horizPen = new Pen(gc, S(1)); g.DrawLine(horizPen, lineX, midY, childPad - S(4), midY);
 
             if (job.IsExpanded)
             {
-                int ey = y + RowH; 
-                Color drawerBg = job.Status switch { UploadStatus.Failed or UploadStatus.Cancelled => Color.FromArgb(16, 4, 28), UploadStatus.Done or UploadStatus.Uploading => Color.FromArgb(4, 16, 28), UploadStatus.Queued => Color.FromArgb(18, 16, 28), UploadStatus.UpdateReady => Color.FromArgb(24, 12, 36), _ => CErrBg };
+                int ey = y + RowH - S(1); 
+                Color drawerBg = job.Status switch { UploadStatus.Failed or UploadStatus.Cancelled => Color.FromArgb(6, 2, 16), UploadStatus.Done or UploadStatus.Uploading => Color.FromArgb(6, 10, 24), UploadStatus.Queued => Color.FromArgb(18, 16, 28), UploadStatus.UpdateReady => Color.FromArgb(24, 12, 36), _ => CErrBg };
                 Color drawerBorder = job.Status switch { UploadStatus.Failed or UploadStatus.Cancelled => Color.FromArgb(100, 44, 28), UploadStatus.Done => Color.FromArgb(38, 95, 52), UploadStatus.Uploading => CGoldMid, UploadStatus.Queued => Color.FromArgb(90, 72, 22), UploadStatus.UpdateReady => Color.FromArgb(140, 80, 180), _ => CErrBorder };
                 Color diagTitleColor = job.Status switch { UploadStatus.Failed or UploadStatus.Cancelled => Color.FromArgb(140, 82, 58), UploadStatus.Done => Color.FromArgb(68, 130, 80), UploadStatus.Uploading => CGoldMid, UploadStatus.Queued => Color.FromArgb(120, 100, 42), UploadStatus.UpdateReady => Color.FromArgb(190, 120, 230), _ => Color.FromArgb(140, 82, 58) };
                 Color diagTextColor = job.Status switch { UploadStatus.Failed or UploadStatus.Cancelled => Color.FromArgb(215, 118, 100), UploadStatus.Done => Color.FromArgb(130, 200, 140), UploadStatus.Uploading => CGoldBrt, UploadStatus.Queued => Color.FromArgb(185, 160, 80), UploadStatus.UpdateReady => Color.FromArgb(210, 160, 240), _ => Color.FromArgb(170, 190, 160) };
@@ -1164,11 +1164,11 @@ namespace RedfurSync
 
                 if (AppConfig.FX.DrawerShadow)
                 {
-                    using var drawerShadow = new LinearGradientBrush(new Rectangle(childPad + 1, ey, childW - 2, S(10)), Color.FromArgb(110, 0, 0, 0), Color.Transparent, LinearGradientMode.Vertical);
+                    using var drawerShadow = new LinearGradientBrush(new Rectangle(childPad + 1, ey, childW - 2, S(10)), Color.FromArgb(50, 0, 0, 0), Color.Transparent, LinearGradientMode.Vertical);
                     g.FillRectangle(drawerShadow, childPad + 1, ey, childW - 2, S(10));
                 }
 
-                using var diagTitleBrush = new SolidBrush(diagTitleColor); g.DrawString("// DIAGNOSTICS:", _fBody75Italic, diagTitleBrush, new PointF(childPad + S(5), ey + S(3)));
+                using var diagTitleBrush = new SolidBrush(diagTitleColor); g.DrawString("// DIAGNOSTICS:", _fBody75Italic, diagTitleBrush, new PointF(childPad + S(4), ey + S(2)));
 
                 string diagContent = GetDiagContent(job);
 
@@ -1182,15 +1182,15 @@ namespace RedfurSync
                 bool willScroll = testSz.Height > (rowInfo.ExpandedHeight - S(38));
                 
                 float actualTextW = willScroll ? textWWithScroll : textWNoScroll;
-                var diagTextRect = new RectangleF(childPad + S(5), ey + S(20), actualTextW, rowInfo.ExpandedHeight - S(35));
-                var sz = g.MeasureString(diagContent, _fBody75Bold, (int)actualTextW);
+                var diagTextRect = new RectangleF(childPad + S(5), ey + S(20), actualTextW, rowInfo.ExpandedHeight - S(25));
+                var sz = g.MeasureString(diagContent, _fBody75Reg, (int)actualTextW);
                 
                 float maxScroll = Math.Max(0, sz.Height - diagTextRect.Height); _diagMaxScrolls[idx] = maxScroll; 
                 float currentScroll = _diagScrolls.TryGetValue(idx, out float ds) ? ds : 0f;
                 if (currentScroll > maxScroll) currentScroll = maxScroll; _diagScrolls[idx] = currentScroll; 
 
                 var prevClip = g.Clip; g.SetClip(diagTextRect, CombineMode.Intersect); 
-                g.DrawString(diagContent, _fBody75Bold, errMsgBrush, new RectangleF(diagTextRect.X, diagTextRect.Y - currentScroll, diagTextRect.Width, sz.Height), StringFormat.GenericDefault); g.Clip = prevClip;
+                g.DrawString(diagContent, _fBody75Reg, errMsgBrush, new RectangleF(diagTextRect.X, diagTextRect.Y - currentScroll, diagTextRect.Width, sz.Height), StringFormat.GenericDefault); g.Clip = prevClip;
 
                 bool hasScroll = maxScroll > 0;
                 if (hasScroll)
@@ -1200,23 +1200,23 @@ namespace RedfurSync
                     float sbX = childPad + childW - sbW - S(AppConfig.DiagScrollRightOffset);
                     float topBoxY = ey + S(AppConfig.DiagScrollTopPad);
                     float botBoxY = ey + rowInfo.ExpandedHeight - S(AppConfig.DiagScrollBottomPad) - sbW;
-                    float trackY = topBoxY + sbW + S(2);
-                    float trackBottom = botBoxY - S(2);
+                    float trackY = topBoxY + sbW + S(3);
+                    float trackBottom = botBoxY - S(3);
                     float trackH = trackBottom - trackY;
 
-                    float thumbH = Math.Max(S(16), trackH * (diagTextRect.Height / sz.Height)), thumbY = trackY + (trackH - thumbH) * (currentScroll / maxScroll);
+                    float thumbH = Math.Max(S(15), trackH * (diagTextRect.Height / sz.Height)), thumbY = trackY + (trackH - thumbH) * (currentScroll / maxScroll);
 
                     if (currentScroll < maxScroll - 1)
                     {
                         using var fadeBrush = new LinearGradientBrush(new RectangleF(diagTextRect.X, diagTextRect.Bottom - S(16), diagTextRect.Width, S(16)), Color.FromArgb(0, drawerBg), drawerBg, LinearGradientMode.Vertical);
                         g.FillRectangle(fadeBrush, diagTextRect.X, diagTextRect.Bottom - S(16), diagTextRect.Width, S(16));
-                        int arrowAlpha = (int)(Math.Sin(_shimmer * 0.2f) * 100 + 100);
+                        int arrowAlpha = (int)(Math.Sin(_shimmer * 0.25f) * 100 + 100);
                         using var indBrush = new SolidBrush(Color.FromArgb(arrowAlpha, diagTextColor));
-                        g.DrawString("V", _fTitle10Bold, indBrush, new PointF(diagTextRect.X + diagTextRect.Width / 2f, diagTextRect.Bottom - S(5)));
+                        g.DrawString("ↆ", _fBody9Bold, indBrush, new PointF(diagTextRect.X + diagTextRect.Width / 1.8f, diagTextRect.Bottom - S(15)));
                     }
 
-                    using var sbTrackBrush = new SolidBrush(Color.FromArgb(30, drawerBorder)); g.FillRectangle(sbTrackBrush, sbX, trackY, sbW, trackH);
-                    using var arrowPen = new Pen(diagTextColor, 1.5f * _scale); arrowPen.LineJoin = LineJoin.Round; 
+                    using var sbTrackBrush = new SolidBrush(Color.FromArgb(25, drawerBorder)); g.FillRectangle(sbTrackBrush, sbX, trackY, sbW, trackH);
+                    using var arrowPen = new Pen(diagTextColor, 1.1f * _scale); arrowPen.LineJoin = LineJoin.Round; 
 
                     g.DrawRectangle(arrowPen, sbX, topBoxY, sbW, sbW); 
                     g.DrawLines(arrowPen, new PointF[] { new PointF(sbX + S(3), topBoxY + S(7)), new PointF(sbX + sbW/2, topBoxY + S(4)), new PointF(sbX + sbW - S(3), topBoxY + S(7)) }); 
@@ -1225,22 +1225,22 @@ namespace RedfurSync
                     g.DrawLines(arrowPen, new PointF[] { new PointF(sbX + S(3), botBoxY + S(4)), new PointF(sbX + sbW/2, botBoxY + S(7)), new PointF(sbX + sbW - S(3), botBoxY + S(4)) }); 
 
                     using var sbThumbBrush = new SolidBrush(diagTextColor); g.FillRectangle(sbThumbBrush, sbX + S(1), thumbY, sbW - S(2), thumbH);
-                    using var ridgePen = new Pen(drawerBg, 1); float midT = thumbY + thumbH / 2;
+                    using var ridgePen = new Pen(drawerBg, 2); float midT = thumbY + thumbH / 2;
                     g.DrawLine(ridgePen, sbX + S(2), midT - S(2), sbX + sbW - S(3), midT - S(2)); g.DrawLine(ridgePen, sbX + S(2), midT, sbX + sbW - S(3), midT); g.DrawLine(ridgePen, sbX + S(2), midT + S(2), sbX + sbW - S(3), midT + S(2));
                 }
             }
 
-            Color baseCardBg = job.IsUpdate ? Color.FromArgb(20, 10, 30) : (idx % 2 == 1 ? Color.FromArgb(20, 15, 5) : Color.FromArgb(10, 8, 2));
+            Color baseCardBg = job.IsUpdate ? Color.FromArgb(13, 10, 30) : (idx % 2 == 2 ? Color.FromArgb(13, 13, 13) : Color.FromArgb(8, 6, 1));
             using var altBrush = new SolidBrush(baseCardBg); g.FillRectangle(altBrush, childPad, y, childW, RowH);
 
-            using var blockBorderPen = new Pen(Color.FromArgb(60, CGoldDim), 1);
+            using var blockBorderPen = new Pen(Color.FromArgb(190, CGoldDim), 1.53f);
             if (job.IsExpanded) { g.DrawLine(blockBorderPen, childPad, y, childPad + childW - 1, y); g.DrawLine(blockBorderPen, childPad, y, childPad, y + RowH); g.DrawLine(blockBorderPen, childPad + childW - 1, y, childPad + childW - 1, y + RowH); }
             else { g.DrawRectangle(blockBorderPen, childPad, y, childW - 1, RowH - 1); }
 
-            int badgeX = childPad + S(4), badgeY = y + S(8);
+            int badgeX = childPad + S(4), badgeY = y + S(4);
             
-            if (AppConfig.FX.RowBadgeGlow) { using var badgeBgBrush = new SolidBrush(Color.FromArgb(28, gc)); g.FillRectangle(badgeBgBrush, badgeX, badgeY, S(26), S(21)); }
-            using var badgeBorderPen = new Pen(Color.FromArgb(99, gc), 3); g.DrawRectangle(badgeBorderPen, badgeX, badgeY, S(26), S(20));
+            if (AppConfig.FX.RowBadgeGlow) { using var badgeBgBrush = new SolidBrush(Color.FromArgb(25, gc)); g.FillRectangle(badgeBgBrush, badgeX, badgeY, S(27), S(20)); }
+            using var badgeBorderPen = new Pen(Color.FromArgb(255, gc), 1.5f); g.DrawRectangle(badgeBorderPen, badgeX, badgeY, S(26), S(20));
             
             if (AppConfig.FX.RowBadgeScanlines) {
                 using var badgeScanPen = new Pen(Color.FromArgb(20, gc), 1);
@@ -1248,7 +1248,7 @@ namespace RedfurSync
             }
 
             var glyphSz = g.MeasureString(glyph, _fMono75Bold);
-            DrawGlowingText(g, glyph, _fMono75Bold, gc, badgeX + (S(26) - glyphSz.Width) / 2f, badgeY + (S(21) - glyphSz.Height) / 2f, AppConfig.FX.RowBadgeGlow ? 50 : 0);
+            DrawGlowingText(g, glyph, _fMono75Bold, gc, badgeX + (S(26) - glyphSz.Width) / 2f, badgeY + (S(20) - glyphSz.Height) / 2f, AppConfig.FX.RowBadgeGlow ? 50 : 0);
 
             var btn = BtnRect(job, y);
             if (btn.HasValue)
@@ -1260,41 +1260,40 @@ namespace RedfurSync
                 if (canApply)
                 {
                     float arrowBaseX = btn.Value.X - S(5), arrowY = btn.Value.Y + btn.Value.Height / 2, ah = S(14) * Math.Abs((float)Math.Cos(_spinPhase));
-                    if (ah > 0.5f) { using var arrowBrush = new SolidBrush(CGreen); g.FillPolygon(arrowBrush, new PointF[] { new PointF(arrowBaseX - S(10), arrowY - ah/2), new PointF(arrowBaseX, arrowY), new PointF(arrowBaseX - S(10), arrowY + ah/2) }); }
+                    if (ah > 0.5f) { using var arrowBrush = new SolidBrush(Color.GreenYellow); g.FillPolygon(arrowBrush, new PointF[] { new PointF(arrowBaseX - S(10), arrowY - ah/2), new PointF(arrowBaseX, arrowY), new PointF(arrowBaseX - S(10), arrowY + ah/2) }); }
                 }
                 DrawBtn(g, btn.Value, canApply ? "Apply" : (canResend ? "Re-send" : "Abort"), btnColor, btnColor, hoverAction, glow: (canApply && AppConfig.FX.ButtonGlows));
             }
 
             DrawBtn(g, DiagToggleBtnRect(job, y), job.IsExpanded ? "[X]  DIAG" : "[-]  DIAG", job.IsExpanded ? gc : CGoldDim, job.IsExpanded ? gc : CGoldDim, _hoverDiagJobIdx == idx, glow: (job.IsExpanded && AppConfig.FX.ButtonGlows));
 
-            DrawHazyText(g, "> " + Trunc(job.FileName, g, _fTitle95, RightBtnX - (childPad + S(30)) - S(40)), _fTitle95, job.Status == UploadStatus.UpdateReady ? Color.FromArgb(210, 160, 240) : CText, childPad + S(35), y + S(10));
+            DrawHazyText(g, "> " + Trunc(job.FileName, g, _fTitle95, RightBtnX - (childPad + S(34)) - S(40)), _fTitle95, job.Status == UploadStatus.UpdateReady ? Color.FromArgb(210, 160, 240) : CText, childPad + S(33), y + S(6));
             
             string detailText = job.IsUpdate ? $"> size: {job.FileSizeDisplay}\n> version: v{job.UpdateVersion}" : $"> size: {job.FileSizeDisplay}\n> synced at {job.QueuedAt:h:mm tt}";
             var detailSz = g.MeasureString(detailText, _fBody8Italic);
-            var detailRect = new RectangleF(childPad + S(4), y + S(32), detailSz.Width + S(50), detailSz.Height + S(6));
+            var detailRect = new RectangleF(childPad + S(4), y + S(27), detailSz.Width + S(35), detailSz.Height + S(2));
             
-            using var infoBgPath = RoundRect(detailRect.X, detailRect.Y, detailRect.Width, detailRect.Height, S(5));
-            using var infoBgBrush = new SolidBrush(Color.FromArgb(120, 8, 8, 53));
+            using var infoBgPath = RoundRect(detailRect.X, detailRect.Y, detailRect.Width, detailRect.Height, S(2));
+            using var infoBgBrush = new SolidBrush(Color.FromArgb(240, 12, 8, 16));
             g.FillPath(infoBgBrush, infoBgPath);
-            using var infoBorder = new Pen(Color.FromArgb(255, 15, 15, 96), 1.8f);
+            using var infoBorder = new Pen(Color.FromArgb(120, 55, 45, 135), 1.3f);
             g.DrawPath(infoBorder, infoBgPath);
-            using var detailTextBrush = new SolidBrush(Color.FromArgb(255, 180, 155, 180));
-            g.DrawString(detailText, _fBody8Italic, detailTextBrush, new PointF(detailRect.X + S(4), detailRect.Y + S(3)));
+            using var detailTextBrush = new SolidBrush(Color.FromArgb(210, 120, 120, 120));
+            g.DrawString(detailText, _fBody8Italic, detailTextBrush, new PointF(detailRect.X + S(5), detailRect.Y + S(1)));
 
             // FISSAL FIX: Progress bar and inline utility buttons (Trash, Copy) calculations
-            int actionBtnSize = S(22);
-            int actionBtnY = y + RowH - actionBtnSize - S(5);
+            int actionBtnSize = S(20);
+            int actionBtnY = y + RowH - actionBtnSize - S(6);
             
-            // Reconfigure progress bar width to leave room for the inline buttons
-            float bw = childW - S(30) - (actionBtnSize * 2 + S(8));
-            float bx = childPad + S(6);
+            float bw = childW - S(20) - (actionBtnSize * 2 + S(20));
+            float bx = childPad + S(4);
             float by = actionBtnY + (actionBtnSize - BarH) / 1f; 
 
             string statusText = job.Status switch { UploadStatus.UpdateReady => "[RDY!] CLICK APPLY TO UPDATE", UploadStatus.Done => "[DONE] DATA VERIFIED", UploadStatus.Failed => "[ERR!] LUNAR STATIC", UploadStatus.Cancelled => "[VOID] SYNC ABORTED", UploadStatus.Queued => "[PEND] AWAITING ALIGNMENT", UploadStatus.Uploading => job.IsUpdate ? "[XMIT] PULLING NEW MATRIX..." : "[XMIT] TRANSMITTING...", _ => "[ ?? ] UNKNOWN SIGNAL" };
 
-            using var statBrush = new SolidBrush(gc); g.DrawString(statusText, job.Status switch { UploadStatus.Done or UploadStatus.UpdateReady => _fBody75Bold, UploadStatus.Failed or UploadStatus.Cancelled => _fBody75Italic, _ => _fBody75Reg }, statBrush, new PointF(bx, by - S(14)));
+            using var statBrush = new SolidBrush(gc); g.DrawString(statusText, job.Status switch { UploadStatus.Done or UploadStatus.UpdateReady => _fBody75Reg, UploadStatus.Failed or UploadStatus.Cancelled => _fBody75Reg, _ => _fBody75Reg }, statBrush, new PointF(bx-7, by - S(13)));
             string pct = job.Status switch { UploadStatus.Done or UploadStatus.UpdateReady => "100%", UploadStatus.Failed => "ERR", UploadStatus.Cancelled => "N/A", UploadStatus.Queued => "0%", _ => $"{job.Progress * 100:0}%" };
-            g.DrawString(pct, _fBody8Bold, statBrush, new PointF(bx + bw - g.MeasureString(pct, _fBody8Bold).Width, by - S(14)));
+            g.DrawString(pct, _fBody75Reg, statBrush, new PointF(bx + 8 + bw - g.MeasureString(pct, _fBody75Reg).Width, by - S(13)));
 
             // Not really noticable.
             using var track = RoundRect(bx, by, bw, BarH, S(1));
@@ -1384,7 +1383,7 @@ namespace RedfurSync
             using var fillBrush = new SolidBrush(fillC);
             g.FillPath(fillBrush, path);
 
-            using var btnPen = new Pen(hov || (glow && AppConfig.FX.ButtonGlows) ? Color.FromArgb(255, accent) : Color.FromArgb(120, accent), S(1));
+            using var btnPen = new Pen(hov || (glow && AppConfig.FX.ButtonGlows) ? Color.FromArgb(255, accent) : Color.FromArgb(130, accent), S(1));
             g.DrawPath(btnPen, path);
             
             using var textBrush = new SolidBrush(hov ? Color.White : txtColor); 
@@ -1393,33 +1392,33 @@ namespace RedfurSync
 
         private void DrawIconBtn(Graphics g, Rectangle r, Color accent, Color txtColor, bool hov, bool glow, Color containerBg, bool isTrash)
         {
-            using var path = RoundRect(r.X, r.Y, r.Width, r.Height, S(1));
+            using var path = RoundRect(r.X, r.Y, r.Width, r.Height, S(2));
             
             if (glow && AppConfig.FX.ButtonGlows)
             {
-                int pulse = (int)(Math.Sin(_shimmer * 0.15f) * 80 + 80); 
-                using var pOuter = new Pen(Color.FromArgb(pulse / 3, accent), S(4));
+                int pulse = (int)(Math.Sin(_shimmer * 0.25f) * 80 + 80); 
+                using var pOuter = new Pen(Color.FromArgb(pulse / 3, accent), S(1));
                 g.DrawPath(pOuter, path);
                 
-                var innerPath = RoundRect(r.X + 1, r.Y + 1, r.Width - 2, r.Height - 2, S(3));
-                using var pInner = new Pen(Color.FromArgb(pulse / 4, accent), S(2));
+                var innerPath = RoundRect(r.X + 1, r.Y + 1, r.Width - 2, r.Height - 2, S(1));
+                using var pInner = new Pen(Color.FromArgb(pulse / 5, accent), S(2));
                 g.DrawPath(pInner, innerPath);
                 innerPath.Dispose();
             }
 
-            Color fillC = hov ? Color.FromArgb(10, accent) : Color.FromArgb(10, accent);
+            Color fillC = hov ? Color.FromArgb(10, accent) : Color.FromArgb(25, accent);
             using var fillBrush = new SolidBrush(fillC);
             g.FillPath(fillBrush, path);
 
-            using var btnPen = new Pen(hov || (glow && AppConfig.FX.ButtonGlows) ? Color.FromArgb(190, accent) : Color.FromArgb(255, accent), S(1));
+            using var btnPen = new Pen(hov || (glow && AppConfig.FX.ButtonGlows) ? Color.FromArgb(100, accent) : Color.FromArgb(255, accent), S(1));
             g.DrawPath(btnPen, path);
 
-            using var iconPen = new Pen(hov ? Color.White : txtColor, 1.2f * _scale);
+            using var iconPen = new Pen(hov ? Color.White : txtColor, 0.76f * _scale);
             int cx = r.X + r.Width / 2, cy = r.Y + r.Height / 2;
 
             if (isTrash)
             {
-                int tW = S(9), tH = S(11), tX = cx - tW / 2, tY = cy - tH / 2 + S(1);
+                int tW = S(7), tH = S(11), tX = cx - tW / 2, tY = cy - tH / 2 + S(1);
                 g.DrawLine(iconPen, tX - S(2), tY, tX + tW + S(2), tY); 
                 g.DrawLine(iconPen, tX + S(2), tY, tX + S(2), tY - S(2)); 
                 g.DrawLine(iconPen, tX + tW - S(2), tY, tX + tW - S(2), tY - S(2)); 
@@ -1431,8 +1430,8 @@ namespace RedfurSync
             else
             {
                 // This renders the document/copy icon perfectly sized for action buttons
-                int docW = Math.Max(S(8), r.Width / 2 - S(2)); 
-                int docH = Math.Max(S(10), r.Height / 2);
+                int docW = Math.Max(S(8), r.Width / 2 - S(5)); 
+                int docH = Math.Max(S(11), r.Height / 2);
                 int docX = cx - docW / 2 + S(1);
                 int docY = cy - docH / 2 + S(1);
 
@@ -1452,7 +1451,7 @@ namespace RedfurSync
         private Rectangle? BtnRect(UploadJob job, int y)
         {
             if (!job.CanRetry && !job.CanCancel && job.Status != UploadStatus.Done && job.Status != UploadStatus.UpdateReady) return null;
-            return new Rectangle(RightBtnX, y + S(9), BtnW, BtnH);
+            return new Rectangle(RightBtnX, y + S(4), BtnW, BtnH);
         }
 
         // FISSAL FIX: Relocated and sized the inline utility buttons. 
@@ -1461,27 +1460,27 @@ namespace RedfurSync
             if (job.IsUpdate) return null; // Updates can't be trashed typically
             
             int actionBtnSize = S(20);
-            int actionBtnY = y + RowH - actionBtnSize - S(5);
+            int actionBtnY = y + RowH - actionBtnSize - S(10);
             
-            float bw = childW - S(25) - (actionBtnSize * 2 + S(8));
-            float bx = childPad + S(5);
+            float bw = childW - S(10) - (actionBtnSize * 2 + S(17));
+            float bx = childPad + S(1);
             
-            return new Rectangle((int)(bx + bw + S(8)), actionBtnY, actionBtnSize, actionBtnSize);
+            return new Rectangle((int)(bx + bw + S(5)), actionBtnY, actionBtnSize, actionBtnSize);
         }
 
         private Rectangle? CopyBtnRect(UploadJob job, int y, int childPad, int childW)
         {
             int actionBtnSize = S(20);
-            int actionBtnY = y + RowH - actionBtnSize - S(5);
+            int actionBtnY = y + RowH - actionBtnSize - S(10);
             
-            float bw = childW - S(20) - (actionBtnSize * 2 + S(8));
+            float bw = childW - S(10) - (actionBtnSize * 2 + S(10));
             float bx = childPad + S(5);
             
-            int trashW = job.IsUpdate ? 0 : actionBtnSize + S(4);
-            return new Rectangle((int)(bx + bw + S(8) + trashW), actionBtnY, actionBtnSize, actionBtnSize);
+            int trashW = actionBtnSize + S(4);  // job.IsUpdate ? 0 : 
+            return new Rectangle((int)(bx + bw + S(5) + trashW), actionBtnY, actionBtnSize, actionBtnSize);
         }
 
-        private Rectangle DiagToggleBtnRect(UploadJob job, int y) => new Rectangle(RightBtnX, (job.CanRetry || job.CanCancel || job.Status == UploadStatus.Done || job.Status == UploadStatus.UpdateReady) ? y + S(9) + BtnH + S(5) : y + S(9), BtnW, DiagH);
+        private Rectangle DiagToggleBtnRect(UploadJob job, int y) => new Rectangle(RightBtnX, (job.CanRetry || job.CanCancel || job.Status == UploadStatus.Done || job.Status == UploadStatus.UpdateReady) ? y + S(4) + BtnH + S(5) : y + S(9), BtnW, DiagH);
 
         private void DrawHeader(Graphics g)
         {
@@ -1810,7 +1809,7 @@ namespace RedfurSync
                     foreach(var r in _layout) { if(!r.IsSeparator && r.JobIndex == _isDraggingDiagIdx) { expH = r.ExpandedHeight; break; } }
                     
                     float trackH = expH - S(AppConfig.DiagScrollTopPad) - S(AppConfig.DiagScrollBottomPad) - (S(AppConfig.DiagScrollWidth) * 2) - S(4);
-                    float scrollableTrack = trackH - Math.Max(S(12), trackH * ((expH - S(38)) / (expH - S(38) + diagMaxScroll)));
+                    float scrollableTrack = trackH - Math.Max(S(12), trackH * ((expH - S(35)) / (expH - S(35) + diagMaxScroll)));
                     if (scrollableTrack > 0) { _diagScrolls[_isDraggingDiagIdx] = Math.Clamp(_dragStartScrollY + ((e.Y - _dragStartY) / scrollableTrack) * diagMaxScroll, 0, diagMaxScroll); Invalidate(); }
                 }
                 return;

@@ -254,6 +254,10 @@ namespace RedfurSync
                 t.Start();
                 return;
             }
+            
+            AppConfig.Instance.DisplayName = _input.Text.Trim();
+            AppConfig.Instance.Save();
+
             DialogResult = DialogResult.OK;
             Close();
         }
