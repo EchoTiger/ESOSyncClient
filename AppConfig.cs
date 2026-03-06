@@ -42,8 +42,9 @@ namespace RedfurSync
         private static readonly JsonSerializerOptions _opts = new() 
         { 
             WriteIndented = true,
+            PropertyNameCaseInsensitive = true,
             Converters = { new JsonStringEnumConverter() },
-            IncludeFields = true // An extra claw-hold just to be certain
+            IncludeFields = true 
         };
 
         public static string ConfigDirectory { get; } = Path.Combine(
@@ -94,9 +95,20 @@ namespace RedfurSync
                 
                 return config;
             }
-            catch 
+            catch (Exception ex)
             { 
-                // If the file is deeply corrupted, she resets gracefully
+                // 🐾 Let her speak the error to us!
+                System.Windows.Forms.MessageBox.Show($"Fissal's memory clouded:\n\n{ex.Message}\n\n{ex.StackTrace}", "Load Error");
+                
+                try 
+                {
+                    if (File.Exists(ConfigPath))
+                    {
+                        File.Copy(ConfigPath, ConfigPath + ".corrupted.bak", true);
+                    }
+                } 
+                catch { } 
+
                 var d = new AppConfig();
                 SaveInternal(d);
                 return d; 
@@ -121,7 +133,8 @@ namespace RedfurSync
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[Config Error] Fissal's claws slipped while writing memory: {ex.Message}");
+                // 🐾 A sharp cry so we know why she cannot write!
+                System.Windows.Forms.MessageBox.Show($"Fissal's claws slipped while writing memory:\n\n{ex.Message}\n\n{ex.StackTrace}", "Save Error");
             }
         }
 

@@ -276,7 +276,7 @@ namespace RedfurSync
             menu.Items.Add(new ToolStripSeparator());
 
             menu.Items.Add("📝  Register Your Name",      null, OnSetDisplayName);
-            menu.Items.Add("📡  Config",          null, (_, _) => OpenConfigFile());
+            menu.Items.Add("📡  Fissal Config",          null, (_, _) => OpenConfigFile());
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("🔌  Cut Connection",          null, OnShutdown);
 

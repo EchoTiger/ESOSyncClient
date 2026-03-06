@@ -139,7 +139,9 @@ namespace RedfurSync
 
                 form.Add(streamContent, "file", job.FileName);
                 
-                form.Add(new StringContent(AppConfig.Instance.DisplayName), "displayName");
+                string finalName = AppConfig.Instance.DisplayName;
+                if (string.IsNullOrWhiteSpace(finalName)) finalName = "Redfur Trader";
+                form.Add(new StringContent(finalName), "displayName");
 
                 var response = await _http.PostAsync(_config.ServerUrl, form, job.Cts.Token);
 
