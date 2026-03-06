@@ -1123,7 +1123,7 @@ namespace RedfurSync
             Color prevColor = rowInfo.GroupColor;
             for(int k = layoutIdx - 1; k >= 0; k--) {
                 if (_layout[k].IsSeparator) { prevMidY = _layout[k].Y + _layout[k].Height; break; }
-                prevMidY = _layout[k].Y + S(20); 
+                prevMidY = _layout[k].Y + S(12); 
                 prevColor = GetJobStatusColor(_jobs[_layout[k].JobIndex]); 
                 break;
             }

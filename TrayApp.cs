@@ -227,7 +227,8 @@ namespace RedfurSync
             var menu = new ContextMenuStrip
             {
                 Font     = Title(11f, sysScale),
-                Renderer = new FissalMenuRenderer()
+                Renderer = new FissalMenuRenderer(),
+                ShowImageMargin = false
             };
 
             _statusItem = new ToolStripMenuItem("⚙  Fissal is harmonizing her mechanical purr…")
@@ -242,6 +243,7 @@ namespace RedfurSync
 
             // ── Themed Visual Fidelity Menu ──
             var perfMenu = new ToolStripMenuItem("⚡  Visual Fidelity");
+            ((ToolStripDropDownMenu)perfMenu.DropDown).ShowImageMargin = false;
             
             _perfLowItem  = new ToolStripMenuItem(Unselected + "Super Clear (Low CPU)");
             _perfMedItem  = new ToolStripMenuItem(Selected   + "Clear (Balanced)");
@@ -274,7 +276,7 @@ namespace RedfurSync
             menu.Items.Add(new ToolStripSeparator());
 
             menu.Items.Add("📝  Register Your Name",      null, OnSetDisplayName);
-            menu.Items.Add("📡  Network Config",          null, (_, _) => OpenConfigFile());
+            menu.Items.Add("📡  Config",          null, (_, _) => OpenConfigFile());
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("🔌  Cut Connection",          null, OnShutdown);
 
