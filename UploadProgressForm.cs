@@ -1030,11 +1030,11 @@ namespace RedfurSync
             {
                 int lineY = row.Y - S(10);
                 if (AppConfig.FX.LogHeaderPulse) {
-                    using var groupSepGlow = new Pen(Color.FromArgb(40, row.GroupColor), S(5)); 
-                    g.DrawLine(groupSepGlow, Pad + S(20), lineY, WorkingAreaW - Pad - S(20), lineY);
+                    using var groupSepGlow = new Pen(Color.FromArgb(20, row.GroupColor), S(5)); 
+                    g.DrawLine(groupSepGlow, Pad - S(15), lineY, WorkingAreaW - Pad + S(15), lineY);
                 }
-                using var groupSepLine = new Pen(Color.FromArgb(60, CGoldBrt), S(2)) { DashStyle = DashStyle.Dot };
-                g.DrawLine(groupSepLine, Pad + S(50), lineY, WorkingAreaW - Pad - S(50), lineY);
+                using var groupSepLine = new Pen(Color.FromArgb(50, row.GroupColor.R/1, row.GroupColor.G/1, row.GroupColor.B/1), S(2)) { DashStyle = DashStyle.DashDotDot };
+                g.DrawLine(groupSepLine, Pad + S(90), lineY, WorkingAreaW - Pad - S(90), lineY);
             }
 
             int boxX = Pad, boxY = row.Y + S(5), boxW = WorkingAreaW - Pad * 2, boxH = isExpanded ? row.Height - S(8) : row.Height - S(8);
@@ -1569,8 +1569,8 @@ namespace RedfurSync
                         lastLogCount = _jobs.Count(j => Math.Abs((j.QueuedAt - newest.QueuedAt).TotalSeconds) <= 60 && j.IsUpdate == newest.IsUpdate);
                     }
 
-                    statuses.Add(($"> {lastLogCount} FILES IN LAST LOG", Color.FromArgb(255, 50, 255, 50), 0));
-                    statuses.Add(($"> {totalSynced} TOTAL FILES SYNCED", Color.FromArgb(255, 50, 255, 50), 0));
+                    statuses.Add(($"> {lastLogCount} IN LAST SYNC", Color.FromArgb(255, 50, 255, 50), 0));
+                    statuses.Add(($"> {totalSynced} TOTAL SYNCED", Color.FromArgb(255, 50, 255, 50), 0));
                     if (userStatus != "") statuses.Add((userStatus, Color.FromArgb(255, 50, 255, 50), 0));
                 }
             }
