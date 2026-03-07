@@ -87,16 +87,15 @@ namespace RedfurSync
         {
             if (ok)
                 ShowCustomAlert("Frequencies Synced!",
-                    "Fissal is now carefully monitoring your tracked sales!\n" +
-                    "This ones chassis hums with harmonic frequency!",
+                    "Fissal is carefully monitoring your tracked sales!",
                     Color.FromArgb(60, 180, 220),
                     10,
-                    7000);
+                    5000);
             else
                 ShowAlert("Fissal's meow was lost in the void…",
                     $"The signal to the moons could not be established:\n{msg}\n\n" +
                     "Fissal will clear her mechanical throat. Do not panic.",
-                    FissalAlert.AlertLevel.TotalError, 7000);
+                    FissalAlert.AlertLevel.TotalError, 9000);
         }
 
         private void OnTrayClick(object? sender, MouseEventArgs e)
@@ -153,7 +152,7 @@ namespace RedfurSync
                 {
                     var activeJobs = recentGroup.Where(j => j.Status is UploadStatus.Uploading or UploadStatus.Queued).ToList();
                     string names = activeJobs.Count <= 2 ? string.Join(" & ", activeJobs.Select(j => j.FileName)) : $"{activeJobs.Count} files";
-                    ShowCustomAlert("Transmission Initiated", $"Fissal is syncronizing {names} to the lattice!", Color.FromArgb(200, 160, 60), 6, 4000, OpenProgressForm);
+                    ShowCustomAlert("Transmission Started", $"Fissal is syncronizing {names} to Redfur!", Color.FromArgb(200, 160, 60), 6, 3500, OpenProgressForm);
                 }
 
                 if (_prevActiveCount > 0)
@@ -170,14 +169,14 @@ namespace RedfurSync
                     if (hasReadyUpdate)
                     {
                         ShowCustomAlert("Update Prepared!", 
-                            "A new module has been received from Redfur!\nOpen the terminal to apply the upgrade.", 
+                            "A new module has been received from Redfur!\n\nOpen the terminal to apply the upgrade.", 
                             Color.FromArgb(180, 100, 220), 
                             4, 10000, OpenProgressForm);
                     }
                     else if (hasFailedUpdate)
                     {
                         ShowAlert("Update Interrupted", 
-                            "Fissal's claws slipped while pulling the new module.\nCheck diagnostics for details!", 
+                            "Fissal's claws slipped while pulling the new module!\n\nCheck diagnostics for details!", 
                             FissalAlert.AlertLevel.TotalError, 9000, OpenProgressForm);
                     }
                     else if (_batchHadSuccess || _batchHadError)
@@ -206,9 +205,9 @@ namespace RedfurSync
                                 ? string.Join(" and ", doneJobs.Select(j => j.FileName))
                                 : $"{doneJobs.Count} files";
                                 
-                            string msg = $"{doneNames} successfully delivered to the lattice!\nAll transmissions verified and scribed.";
+                            string msg = $"{doneNames} successfully delivered to the lattice!\nFissal has verified all transmissions!";
 
-                            ShowCustomAlert("Sync Complete!", msg, Color.FromArgb(60, 180, 220), 6, 7000, OpenProgressForm);
+                            ShowCustomAlert("Sync Complete!", msg, Color.FromArgb(60, 180, 220), 6, 5000, OpenProgressForm);
                         }
                     }
                     _batchHadError   = false;

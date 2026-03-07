@@ -31,6 +31,11 @@ namespace RedfurSync
         private int _lightAlpha = 40;
         private int _lightStep;
 
+        private int _targetY;
+        private int _startY;
+        private int _slideFrame = 0;
+        private const int SlideDuration = 18; // The length of the bounce
+
         public static void Show(string title, string text, AlertLevel level = AlertLevel.Normal, int timeoutMs = 7000, Action? onClick = null)
         {
             var alert = new FissalAlert(title, text, level, null, null, timeoutMs, onClick);
@@ -79,6 +84,7 @@ namespace RedfurSync
 
             _lightStep = _flashSpeed;
 
+
             AutoScaleMode = AutoScaleMode.None;
             FormBorderStyle = FormBorderStyle.None;
             ShowInTaskbar = false;
@@ -113,13 +119,17 @@ namespace RedfurSync
             }
 
             var wa = Screen.PrimaryScreen?.WorkingArea ?? Screen.AllScreens[0].WorkingArea;
-            Location = new Point(wa.Right - Width - S(10), wa.Bottom - Height - S(10));
             
+            int targetX = wa.Right - Width - S(10);
+            _targetY = wa.Bottom - Height - S(10);
+            _startY = wa.Bottom + S(10); // Hidden just below the screen edge
+
+            Location = new Point(targetX, _startY);
             Opacity = 0;
 
             // Increased interval from 16ms to 33ms (~30fps) to drastically reduce CPU load and prevent UI thread freezing.
-            _maxTicks = timeoutMs / 33;
-            _animTimer = new System.Windows.Forms.Timer { Interval = 33 };
+            _maxTicks = timeoutMs / 26;
+            _animTimer = new System.Windows.Forms.Timer { Interval = 26 };
             _animTimer.Tick += OnTick;
             _animTimer.Start();
 
@@ -135,7 +145,7 @@ namespace RedfurSync
         {
             if (_fadingOut) return;
             _fadingOut = true;
-            _ticks = Math.Max(_ticks, _maxTicks - 15);
+            _ticks = Math.Max(_ticks, _maxTicks - SlideDuration);
         }
 
         private void OnTick(object? sender, EventArgs e)
@@ -150,19 +160,34 @@ namespace RedfurSync
             if (_lightAlpha >= 240) { _lightAlpha = 240; _lightStep = -_flashSpeed; }
             if (_lightAlpha <= 40)  { _lightAlpha = 40;  _lightStep = _flashSpeed; }
 
-            if (_fadingOut || _ticks > _maxTicks - 15)
+            if (_fadingOut || _ticks > _maxTicks - SlideDuration)
             {
-                Opacity -= 0.08; // Doubled fade step to match the 33ms interval change
-                if (Opacity <= 0)
+                if (!_fadingOut) BeginFadeOut();
+                
+                _slideFrame--;
+                Opacity = Math.Min(1.0, (double)_slideFrame / (SlideDuration - 5)); 
+                
+                if (_slideFrame <= 0)
                 {
                     _animTimer.Stop();
                     Close();
+                    return;
                 }
             }
-            else if (Opacity < 1.0)
+            else
             {
-                Opacity += 0.15; // Increased fade-in step
+                if (_slideFrame < SlideDuration) _slideFrame++;
+                if (Opacity < 1.0) Opacity += 0.15;
             }
+
+            // The mathematical arc of her pounce (Ease-Out-Back)
+            double t = (double)_slideFrame / SlideDuration;
+            double c1 = 1.70158;
+            double c3 = c1 + 1.0;
+            double easeOutBack = 1.0 + c3 * Math.Pow(t - 1.0, 3.0) + c1 * Math.Pow(t - 1.0, 2.0);
+
+            // Apply her new vertical position
+            Top = _startY + (int)((_targetY - _startY) * easeOutBack);
 
             Invalidate();
         }

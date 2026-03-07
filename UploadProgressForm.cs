@@ -32,7 +32,7 @@ namespace RedfurSync
             public const int GlitchChancePer1k = 8;  
             public const int HeavyGlitchPct = 18;    
             public const float ScanlineSpeed = 0.56f;
-            public const int MarqueePause = 80;     
+            public const int MarqueePause = 48;     
             public const float ShimmerSpeed = 0.85f; 
             public const float ScrollFriction = 0.75f;
             public const float ScrollWheelSpeedMain = 0.90f;
@@ -1566,7 +1566,33 @@ namespace RedfurSync
             if (active > 0) statuses.Add(($"> {active} FILES SYNCING", Color.FromArgb(255, 255, 200, 0), 1));
             else if (pending > 0) statuses.Add(($"# {pending} FILES PENDING", Color.FromArgb(255, 180, 255, 50), 1));
             
-            if (statuses.Count == 0) statuses.Add((_jobs.Count == 0 ? "> STAND BY..." : $"> {_jobs.Count} FILES SYNCED", Color.FromArgb(255, 50, 255, 50), 0));
+            if (statuses.Count == 0)
+            {
+                string dispName = RedfurSync.AppConfig.Instance.DisplayName;
+                string userStatus = string.IsNullOrWhiteSpace(dispName) ? "" : $"> LOGGED IN AS {dispName.ToUpper()}";
+
+                if (_jobs.Count == 0)
+                {
+                    statuses.Add(("> STAND BY...", Color.FromArgb(255, 50, 255, 50), 0));
+                    if (userStatus != "") statuses.Add((userStatus, Color.FromArgb(255, 50, 255, 50), 0));
+                }
+                else
+                {
+                    int totalSynced = _jobs.Count;
+                    int lastLogCount = 0;
+
+                    // Fissal sniffs out the most recent log group to count her fresh catches
+                    var newest = _jobs.OrderByDescending(j => j.QueuedAt).FirstOrDefault();
+                    if (newest != null)
+                    {
+                        lastLogCount = _jobs.Count(j => Math.Abs((j.QueuedAt - newest.QueuedAt).TotalSeconds) <= 60 && j.IsUpdate == newest.IsUpdate);
+                    }
+
+                    statuses.Add(($"> {lastLogCount} FILES IN LAST LOG", Color.FromArgb(255, 50, 255, 50), 0));
+                    statuses.Add(($"> {totalSynced} TOTAL FILES SYNCED", Color.FromArgb(255, 50, 255, 50), 0));
+                    if (userStatus != "") statuses.Add((userStatus, Color.FromArgb(255, 50, 255, 50), 0));
+                }
+            }
 
             if (_dispStatusIdx >= statuses.Count) _dispStatusIdx = 0;
             var currentStatus = statuses[_dispStatusIdx];
@@ -1627,7 +1653,7 @@ namespace RedfurSync
                 }
                 else if (_dispState == DisplayState.Scrolling)
                 {
-                    _marqueeX -= _scale * 0.7f;
+                    _marqueeX -= _scale * 1.8f;
                     if (_marqueeX <= -maxScroll) { _marqueeX = -maxScroll; _dispState = DisplayState.HoldEnd; _marqueeWait = AppConfig.MarqueePause; }
                 }
                 else if (_dispState == DisplayState.HoldEnd)

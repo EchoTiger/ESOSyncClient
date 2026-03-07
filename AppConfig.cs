@@ -96,14 +96,13 @@ namespace RedfurSync
                 }
                 var config = JsonSerializer.Deserialize<AppConfig>(json, _opts) ?? new AppConfig();
                 
-                // Immediately re-save so defaults are stamped through the fog
+                // Immediately re-save so defaults are stamped
                 SaveInternal(config);
                 
                 return config;
             }
             catch (Exception ex)
             { 
-                // 🐾 Let her speak the error to us!
                 System.Windows.Forms.MessageBox.Show($"Fissal's memory clouded:\n\n{ex.Message}\n\n{ex.StackTrace}", "Load Error");
                 
                 try 
