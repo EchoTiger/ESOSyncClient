@@ -35,17 +35,23 @@ namespace RedfurSync
         [JsonPropertyName("LastUpdatePrompt")]
         public DateTime LastUpdatePrompt { get; set; } = DateTime.MinValue;
         
-        // ── Fissal's remembered visual state ──
-        [JsonPropertyName("VisualFidelity")]
+        [JsonIgnore]
         public UploadProgressForm.AppConfig.FidelityMode VisualFidelity { get; set; } = UploadProgressForm.AppConfig.FidelityMode.Medium;
-        
-        private static readonly JsonSerializerOptions _opts = new() 
+
+        [JsonPropertyName("VisualFidelity")]
+        public int VisualFidelityInt 
         { 
-            WriteIndented = true,
-            PropertyNameCaseInsensitive = true,
-            Converters = { new JsonStringEnumConverter() },
-            IncludeFields = true 
-        };
+            get => (int)VisualFidelity; 
+            set => VisualFidelity = (UploadProgressForm.AppConfig.FidelityMode)value; 
+        }
+        
+    private static readonly JsonSerializerOptions _opts = new() 
+    { 
+        WriteIndented = true,
+        PropertyNameCaseInsensitive = true,
+        //Converters = { new JsonStringEnumConverter() }, 
+        IncludeFields = true 
+    };
 
         public static string ConfigDirectory { get; } = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
