@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
+using System.Threading;
 
 namespace RedfurSync
 {
@@ -36,10 +37,9 @@ namespace RedfurSync
         private readonly object _hashLock  = new();
         private readonly System.Timers.Timer _updateTimer = new();
 
-    public FileWatcherService(Action<string> onStatus)
+        public FileWatcherService(Action<string> onStatus)
         {
             _onStatus = onStatus;
-            // Change from AppConfig.Load() to AppConfig.Instance
             _config   = AppConfig.Instance; 
             _uploader = new UploadService(_config);
         }
@@ -48,10 +48,7 @@ namespace RedfurSync
         {
             Console.WriteLine("[RedfurSync] Checking for updates...");
             
-            if (Jobs.Any(j => j.Status == UploadStatus.Uploading)) 
-            {
-                return; 
-            }
+            if (Jobs.Any(j => j.Status == UploadStatus.Uploading)) return; 
             
             var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
             var payload = await _uploader.CheckForUpdateAsync(version);
@@ -107,12 +104,10 @@ namespace RedfurSync
             _onStatus("Establishing connection...");
             var (ok, msg) = await _uploader.PingAsync();
 
-            _onStatus(ok
-                ? "Connection established!"
-                : $"Signal lost: {msg}");
-
+            _onStatus(ok ? "Connection established!" : $"Signal lost: {msg}");
             ConnectionChecked?.Invoke(ok, msg);
             SetupWatchers();
+            
             _updateTimer.Interval = TimeSpan.FromMinutes(60).TotalMilliseconds;
             _updateTimer.Elapsed += async (_, _) => await CheckForUpdatesAsync();
             _updateTimer.Start();
@@ -131,9 +126,7 @@ namespace RedfurSync
             TryWatch(Path.Combine(esoBase, "AddOns", "TamrielTradeCentre"));
             TryWatch(Path.Combine(esoBase, "AddOns", "LibEsoHubPrices"));
 
-            _onStatus(count == 0
-                ? "Cannot find target directories!"
-                : $"Monitoring {count} folder(s)");
+            _onStatus(count == 0 ? "Cannot find target directories!" : $"Monitoring {count} folder(s)");
         }
 
         private void AddWatcher(string folder)
@@ -148,20 +141,8 @@ namespace RedfurSync
             
             w.Changed += OnFileChanged;
             w.Created += OnFileChanged;
-            
-            // Listen for the atomic save renames
-            w.Renamed += (sender, e) => 
-            {
-                // Treat a rename just like a file change
-                OnFileChanged(sender, new FileSystemEventArgs(WatcherChangeTypes.Changed, Path.GetDirectoryName(e.FullPath)!, e.Name!));
-            };
-
-            // Listen for buffer overflows so it cries out instead of failing silently
-            w.Error += (sender, e) => 
-            {
-                Console.WriteLine($"[RedfurSync] ⚠ Watcher lost the scent (Buffer Overflow): {e.GetException().Message}");
-            };
-
+            w.Renamed += (sender, e) => OnFileChanged(sender, new FileSystemEventArgs(WatcherChangeTypes.Changed, Path.GetDirectoryName(e.FullPath)!, e.Name!));
+            w.Error += (sender, e) => Console.WriteLine($"[RedfurSync] ⚠ Watcher lost the scent (Buffer Overflow): {e.GetException().Message}");
             _watchers.Add(w);
         }
 
@@ -182,11 +163,27 @@ namespace RedfurSync
             }
         }
 
-        public void RetryJob(UploadJob original) =>
-            _ = EnqueueUploadAsync(original.FilePath, isRetry: true);
+        public void RetryJob(UploadJob original)
+        {
+            if (original.Status == UploadStatus.Queued || original.Status == UploadStatus.Uploading) return;
 
-        public void CancelJob(UploadJob job) =>
+            original.Cts.Dispose();
+            original.Cts = new CancellationTokenSource();
+            original.Status = UploadStatus.Queued;
+            original.Progress = 0f;
+            original.ErrorMessage = string.Empty;
+            original.RetryCount++;
+            NotifyChanged();
+            
+            _ = ProcessUploadAsync(original);
+        }
+
+        public void CancelJob(UploadJob job)
+        {
             job.Cts.Cancel();
+            job.Status = UploadStatus.Cancelled;
+            NotifyChanged();
+        }
 
         private string GetFileHash(string filePath)
         {
@@ -197,22 +194,18 @@ namespace RedfurSync
                 var hash = md5.ComputeHash(stream);
                 return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
             }
-            catch
-            {
-                return string.Empty;
-            }
+            catch { return string.Empty; }
         }
 
-        private async Task EnqueueUploadAsync(string filePath, bool isRetry = false)
+        private async Task EnqueueUploadAsync(string filePath)
         {
             UploadJob job;
             int currentJobCount;
 
-            // Yield and wait if the file is currently locked/in-use by another process
             int lockWaitRetries = 0;
             while (IsFileLocked(filePath) && lockWaitRetries < 5)
             {
-                await Task.Delay(2000); // Wait 2 seconds before checking again
+                await Task.Delay(2000); 
                 lockWaitRetries++;
             }
 
@@ -222,16 +215,15 @@ namespace RedfurSync
                 return;
             }
 
-            // Ensure the file actually changed to prevent redundant uploads
             string currentHash = GetFileHash(filePath);
             lock (_hashLock)
             {
-                if (!isRetry && !string.IsNullOrEmpty(currentHash))
+                if (!string.IsNullOrEmpty(currentHash))
                 {
                     if (_lastFileHashes.TryGetValue(filePath, out var lastHash) && lastHash == currentHash)
                     {
                         Console.WriteLine($"[RedfurSync] {Path.GetFileName(filePath)} contents have not changed. Ignoring.");
-                        return; // No actual change in content
+                        return; 
                     }
                     _lastFileHashes[filePath] = currentHash;
                 }
@@ -239,14 +231,10 @@ namespace RedfurSync
 
             lock (_jobLock)
             {
-                if (!isRetry)
+                foreach (var ex in Jobs)
                 {
-                    foreach (var ex in Jobs)
-                    {
-                        if (ex.FilePath == filePath &&
-                            ex.Status is UploadStatus.Queued or UploadStatus.Uploading)
-                        { ex.Progress = 0f; return; }
-                    }
+                    if (ex.FilePath == filePath && ex.Status is UploadStatus.Queued or UploadStatus.Uploading)
+                    { ex.Progress = 0f; return; }
                 }
 
                 long size = 0;
@@ -258,7 +246,7 @@ namespace RedfurSync
                     FileName       = Path.GetFileName(filePath),
                     FileSizeBytes  = size,
                     QueuedAt       = DateTime.Now,
-                    RetryCount     = isRetry ? 1 : 0
+                    RetryCount     = 0
                 };
 
                 PruneOldJobs();
@@ -267,11 +255,15 @@ namespace RedfurSync
             }
 
             NotifyChanged();
-            _onStatus($"Dispatching {job.FileName}...");
+            _ = ProcessUploadAsync(job);
+        }
 
+        private async Task ProcessUploadAsync(UploadJob job)
+        {
+            _onStatus($"Dispatching {job.FileName}...");
             bool success = false;
             int uploadRetries = 0;
-            const int maxUploadRetries = 3;
+            const int maxUploadRetries = 3; 
 
             while (uploadRetries < maxUploadRetries && !success && !job.Cts.Token.IsCancellationRequested)
             {
@@ -286,7 +278,17 @@ namespace RedfurSync
                     job.Status = UploadStatus.Queued;
                     job.ErrorMessage = $"Failed. Retrying {uploadRetries}/{maxUploadRetries}...";
                     NotifyChanged();
-                    await Task.Delay(3000 * uploadRetries); // Exponential-ish backoff
+                    
+                    try { await Task.Delay(3000 * uploadRetries, job.Cts.Token); }
+                    catch (TaskCanceledException) { break; }
+                    
+                    int lockWait = 0;
+                    while (IsFileLocked(job.FilePath) && lockWait < 6 && !job.Cts.Token.IsCancellationRequested)
+                    {
+                        try { await Task.Delay(2000, job.Cts.Token); }
+                        catch (TaskCanceledException) { break; }
+                        lockWait++;
+                    }
                 }
             }
 
@@ -300,10 +302,7 @@ namespace RedfurSync
             if (success)
             {
                 Console.WriteLine($"[RedfurSync] ✦ {job.FileName} uploaded successfully.");
-                if (currentJobCount > 1)
-                    _onStatus($"Last Sync: {DateTime.Now:MMM dd, h:mm tt}");
-                else
-                    _onStatus($"{job.FileName} delivered!");
+                _onStatus($"{job.FileName} delivered!");
             }
             else if (job.Status == UploadStatus.Cancelled)
             {
@@ -322,14 +321,8 @@ namespace RedfurSync
                 using FileStream stream = new FileInfo(filePath).Open(FileMode.Open, FileAccess.Read, FileShare.None);
                 stream.Close();
             }
-            catch (IOException)
-            {
-                return true; // The file is locked by another process
-            }
-            catch (Exception)
-            {
-                return false;
-            }
+            catch (IOException) { return true; }
+            catch (Exception) { return false; }
             return false;
         }
 
@@ -337,19 +330,17 @@ namespace RedfurSync
         {
             if (Jobs.Count == 0) return;
 
-            // Gather the jobs and group them by our 45-second scent trail
             var groups = new List<List<UploadJob>>();
             List<UploadJob>? currentGroup = null;
             DateTime? groupStartTime = null;
             bool? lastWasUpdate = null;
 
-            // Sort jobs chronologically to track the timeline accurately
             var sortedJobs = Jobs.OrderBy(j => j.QueuedAt).ToList();
 
             foreach (var job in sortedJobs)
             {
                 bool isNewGroup = groupStartTime == null || 
-                                  Math.Abs((job.QueuedAt - groupStartTime.Value).TotalSeconds) > 45 || 
+                                  Math.Abs((job.QueuedAt - groupStartTime.Value).TotalSeconds) > 60 || 
                                   (lastWasUpdate.HasValue && lastWasUpdate.Value != job.IsUpdate);
 
                 if (isNewGroup || currentGroup == null)
@@ -362,20 +353,15 @@ namespace RedfurSync
                 lastWasUpdate = job.IsUpdate;
             }
 
-            // Enforce the pack limit using your configured MaxLogsKept
-            //int maxLogs = UploadProgressForm.AppConfig.MaxLogsKept;
             int maxLogs = AppConfig.Instance.MaxLogsKept;
             
             if (groups.Count > maxLogs)
             {
                 int groupsToRemove = groups.Count - maxLogs;
-                
-                // Only remove from the oldest groups
                 for (int i = 0; i < groupsToRemove; i++)
                 {
                     foreach (var jobToRemove in groups[i])
                     {
-                        // Ensure we only let go of jobs that are fully finished
                         if (jobToRemove.Status is UploadStatus.Done or UploadStatus.Failed or UploadStatus.Cancelled)
                         {
                             Jobs.Remove(jobToRemove);

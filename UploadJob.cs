@@ -27,7 +27,7 @@ namespace RedfurSync
         public string FileName    { get; init; } = string.Empty;
         public long   FileSizeBytes { get; init; } = 0;
         public DateTime QueuedAt  { get; init; } = DateTime.Now;
-        public int    RetryCount  { get; set; } = 0; // Added variable for auto-retry tracking
+        public int    RetryCount  { get; set; } = 0; 
 
         public bool IsUpdate { get; init; } = false;
         public string CurrentVersion { get; init; } = string.Empty;
@@ -35,7 +35,7 @@ namespace RedfurSync
         public string Changelog { get; init; } = string.Empty;
         public string DownloadUrl { get; init; } = string.Empty;
 
-        public CancellationTokenSource Cts { get; } = new();
+        public CancellationTokenSource Cts { get; set; } = new();
 
         public UploadStatus Status
         {
