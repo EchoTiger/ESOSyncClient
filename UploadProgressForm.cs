@@ -190,7 +190,7 @@ namespace RedfurSync
 
         private SolidBrush _bgBrush;
         private Font _fTitle28Bold, _fTitle125Bold, _fTitle10Bold, _fTitle95;
-        private Font _fBody95Italic, _fBody9Bold, _fBody8Bold, _fBody8Italic, _fBody75Bold, _fBody75Italic, _fBody75Reg, _fBody7Bold;
+        private Font _fBody95Italic, _fBody9Bold, _fBody8Bold, _fBody8Italic, _fBody8Reg, _fBody75Bold, _fBody75Italic, _fBody75Reg, _fBody7Bold;
         private Font _fMono9Bold, _fMono9, _fMono8Bold, _fMono8, _fMono75Bold;
         private StringFormat _sfCenter, _sfLeft;
 
@@ -292,7 +292,7 @@ namespace RedfurSync
             _fTitle28Bold = Title(28f, _scale, FontStyle.Bold); _fTitle125Bold = Title(12.5f, _scale, FontStyle.Bold);
             _fTitle10Bold = Title(10f, _scale, FontStyle.Bold); _fTitle95 = Title(9.5f, _scale);
             _fBody95Italic = Body(9.5f, _scale, FontStyle.Italic); _fBody9Bold = Body(9f, _scale, FontStyle.Bold);
-            _fBody8Bold = Body(8f, _scale, FontStyle.Bold);
+            _fBody8Bold = Body(8f, _scale, FontStyle.Bold); _fBody8Reg = Body(8f, _scale, FontStyle.Regular);
             _fBody8Italic = Body(8f, _scale, FontStyle.Italic); _fBody75Bold = Body(7.5f, _scale, FontStyle.Bold);
             _fBody75Italic = Body(7.5f, _scale, FontStyle.Italic); _fBody75Reg = Body(7.5f, _scale, FontStyle.Regular);
             _fBody7Bold = Body(7f, _scale, FontStyle.Bold);
@@ -1573,7 +1573,7 @@ namespace RedfurSync
 
                 if (_jobs.Count == 0)
                 {
-                    statuses.Add(("> STAND BY...", Color.FromArgb(255, 50, 255, 50), 0));
+                    statuses.Add(("> STAND BY... AWAITING FILE CHANGES", Color.FromArgb(255, 50, 255, 50), 0));
                     if (userStatus != "") statuses.Add((userStatus, Color.FromArgb(255, 50, 255, 50), 0));
                 }
                 else
@@ -1598,8 +1598,8 @@ namespace RedfurSync
             var currentStatus = statuses[_dispStatusIdx];
             string displayBadge = currentStatus.text; Color badgeColor = currentStatus.color;
 
-            int lightDia = S(8), lightSpacing = S(20), lightsY = (mcY - lightDia) / 2, leftLightsStartX = mcX + S(15); 
-            Color[] lightColors = { Color.FromArgb(10, 20, 255, 20), Color.FromArgb(10, 255, 220, 0), Color.FromArgb(10, 255, 30, 30), Color.FromArgb(10, 220, 50, 255) };
+            int lightDia = S(9), lightSpacing = S(20), lightsY = (mcY - lightDia+15) / 2, leftLightsStartX = mcX + S(25); 
+            Color[] lightColors = { Color.FromArgb(60, 20, 220, 20), Color.FromArgb(50, 250, 190, 0), Color.FromArgb(60, 255, 30, 30), Color.FromArgb(60, 190, 50, 240) };
 
             for (int i = 0; i < 4; i++)
             {
@@ -1608,25 +1608,25 @@ namespace RedfurSync
                 if (i == 3) cx += S(18); // Extra gap for the update light
                 
                 using var offBrush = new LinearGradientBrush(new Rectangle(cx, lightsY, lightDia, lightDia), 
-                    Color.FromArgb(50, lightColors[i].R/2, lightColors[i].G/2, lightColors[i].B/2), 
-                    Color.FromArgb(255, 50, 50, 90), LinearGradientMode.Vertical); 
+                    Color.FromArgb(255, lightColors[i].R/3, lightColors[i].G/100, lightColors[i].B/45), 
+                    Color.FromArgb(255, 40, 40, 70), LinearGradientMode.ForwardDiagonal); 
                 g.FillEllipse(offBrush, cx, lightsY, lightDia, lightDia);
                 
-                using var rim = new Pen(Color.FromArgb(255, lightColors[i].R/2, lightColors[i].G/2, lightColors[i].B/2), 3); 
+                using var rim = new Pen(Color.FromArgb(50, lightColors[i].R, lightColors[i].G, lightColors[i].B), 2f); 
                 g.DrawEllipse(rim, cx, lightsY, lightDia, lightDia);
 
                 if (isActive && AppConfig.FX.MCLightsGlow)
                 {
-                    int alpha = (int)((isCurrent ? (float)((Math.Sin(_shimmer * 0.45f) + 1.0) / 2.0) : 1f) * 200 + 55); 
+                    int alpha = (int)((isCurrent ? (float)((Math.Sin(_shimmer * 0.50) + 1) / 2.0) : 1f) * 245 + 1); 
                     using var litBrush = new SolidBrush(Color.FromArgb(alpha, lightColors[i])); 
-                    g.FillEllipse(litBrush, cx + 1, lightsY + 1, lightDia - 2, lightDia - 2);
+                    g.FillEllipse(litBrush, cx + 5, lightsY + 5, lightDia - 8, lightDia - 8);
                     
                     using var whiteCore = new SolidBrush(Color.FromArgb(alpha, 255, 255, 255));
                     g.FillEllipse(whiteCore, cx + S(2), lightsY + S(2), lightDia - S(2), lightDia - S(2));
 
-                    using var glowH = new SolidBrush(Color.FromArgb(alpha / 4, lightColors[i])); g.FillEllipse(glowH, cx - S(3), lightsY, lightDia + S(6), lightDia); 
-                    using var glowV = new SolidBrush(Color.FromArgb(alpha / 5, lightColors[i])); g.FillEllipse(glowV, cx, lightsY - S(2), lightDia, lightDia + S(4)); 
-                    using var glowCore = new SolidBrush(Color.FromArgb(alpha / 3, lightColors[i])); g.FillEllipse(glowCore, cx - S(1), lightsY - S(1), lightDia + S(2), lightDia + S(2));
+                    using var glowH = new SolidBrush(Color.FromArgb(alpha / 13+33, lightColors[i])); g.FillEllipse(glowH, cx - S(3), lightsY, lightDia + S(6), lightDia); 
+                    using var glowV = new SolidBrush(Color.FromArgb(alpha / 13+13, lightColors[i])); g.FillEllipse(glowV, cx, lightsY - S(3), lightDia, lightDia + S(2)); 
+                    using var glowCore = new SolidBrush(Color.FromArgb(alpha / 5, lightColors[i])); g.FillEllipse(glowCore, cx - S(1), lightsY - S(1), lightDia + S(2), lightDia + S(2));
                 }
 
                 using var glintBrush = new SolidBrush(Color.FromArgb(isActive ? 255 : 180, 255, 255, 255)); g.FillEllipse(glintBrush, cx + S(2), lightsY + S(1), S(3), S(2)); 
@@ -1653,7 +1653,7 @@ namespace RedfurSync
                 }
                 else if (_dispState == DisplayState.Scrolling)
                 {
-                    _marqueeX -= _scale * 1.8f;
+                    _marqueeX -= _scale * 2f;
                     if (_marqueeX <= -maxScroll) { _marqueeX = -maxScroll; _dispState = DisplayState.HoldEnd; _marqueeWait = AppConfig.MarqueePause; }
                 }
                 else if (_dispState == DisplayState.HoldEnd)
@@ -1670,12 +1670,12 @@ namespace RedfurSync
             }
 
             var clipState = g.Save(); g.SetClip(new Rectangle(mcX + S(2), mcY + S(2), mcW - S(4), mcH - S(4)), CombineMode.Intersect);
-            DrawGlowingText(g, displayBadge, _fMono9Bold, badgeColor, mcX + S(6) + _marqueeX, mcY + S(5), AppConfig.FX.HeaderNeonText ? 90 : 0); 
+            DrawGlowingText(g, displayBadge, _fBody8Reg, badgeColor, mcX + S(6) + _marqueeX, mcY + S(5), AppConfig.FX.HeaderNeonText ? 90 : 0); 
             g.Restore(clipState);
             
             if (AppConfig.FX.MCGloss)
             {
-                using var mcGloss = new LinearGradientBrush(new Rectangle(mcX, mcY, mcW, mcH / 2), Color.FromArgb(25, 255, 255, 255), Color.Transparent, LinearGradientMode.Vertical); g.FillPath(mcGloss, mcPath);
+                using var mcGloss = new LinearGradientBrush(new Rectangle(mcX, mcY, mcW, mcH / 1), Color.FromArgb(35, 110, 90, 110), Color.Transparent, LinearGradientMode.Vertical); g.FillPath(mcGloss, mcPath);
             }
 
             var cxRect = CloseBtnRect;
@@ -1966,7 +1966,7 @@ namespace RedfurSync
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) { _anim.Stop(); _anim.Dispose(); _bgBrush?.Dispose(); _fTitle28Bold?.Dispose(); _fTitle125Bold?.Dispose(); _fTitle10Bold?.Dispose(); _fTitle95?.Dispose(); _fBody95Italic?.Dispose(); _fBody8Bold?.Dispose(); _fBody8Italic?.Dispose(); _fBody75Bold?.Dispose(); _fBody75Italic?.Dispose(); _fBody75Reg?.Dispose(); _fBody7Bold?.Dispose(); _fMono9Bold?.Dispose(); _fMono9?.Dispose(); _fMono8Bold?.Dispose(); _fMono8?.Dispose(); _fMono75Bold?.Dispose(); _sfCenter?.Dispose(); _sfLeft?.Dispose(); }
+            if (disposing) { _anim.Stop(); _anim.Dispose(); _bgBrush?.Dispose(); _fTitle28Bold?.Dispose(); _fTitle125Bold?.Dispose(); _fTitle10Bold?.Dispose(); _fTitle95?.Dispose(); _fBody95Italic?.Dispose(); _fBody8Bold?.Dispose(); _fBody8Italic?.Dispose(); _fBody75Bold?.Dispose(); _fBody75Italic?.Dispose(); _fBody75Reg?.Dispose(); _fBody7Bold?.Dispose(); _fMono9Bold?.Dispose(); _fMono9?.Dispose(); _fMono8Bold?.Dispose(); _fMono8?.Dispose(); _fMono75Bold?.Dispose(); _sfCenter?.Dispose(); _sfLeft?.Dispose(); _fBody8Bold?.Dispose(); _fBody8Reg?.Dispose(); }
             base.Dispose(disposing);
         }
     }

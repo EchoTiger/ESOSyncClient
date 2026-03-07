@@ -128,8 +128,8 @@ namespace RedfurSync
             Opacity = 0;
 
             // Increased interval from 16ms to 33ms (~30fps) to drastically reduce CPU load and prevent UI thread freezing.
-            _maxTicks = timeoutMs / 26;
-            _animTimer = new System.Windows.Forms.Timer { Interval = 26 };
+            _maxTicks = timeoutMs / 25;
+            _animTimer = new System.Windows.Forms.Timer { Interval = 25 };
             _animTimer.Tick += OnTick;
             _animTimer.Start();
 

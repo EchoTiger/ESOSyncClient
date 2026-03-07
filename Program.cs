@@ -32,8 +32,8 @@ namespace RedfurSync
             if (!isNew)
             {
                 MessageBox.Show(
-                    "Fissal is already on duty!\n\nThis one is running in your system tray — look for the green goggles.",
-                    "Fissal's Cogwork Courier",
+                    "Fissal Relay is already active!\n\nCheck your system tray where your computer's time is!",
+                    "Fissal Relay",
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information);
                 return;
