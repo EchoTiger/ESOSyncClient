@@ -63,7 +63,7 @@ namespace RedfurSync
 
             CheckFirstRun();
         }
-
+        private System.Windows.Forms.Timer? _batchAlertTimer;
         private void CheckFirstRun()
         {
             var config = AppConfig.Instance;
@@ -75,6 +75,13 @@ namespace RedfurSync
                     FissalAlert.AlertLevel.TotalError);
                 OpenConfigFile();
                 return;
+            }
+
+            // [Req 6] Show DisplayNameForm if it's the default or empty
+            if (string.IsNullOrWhiteSpace(config.DisplayName) || config.DisplayName == "Redfur Trader")
+            {
+                using var form = new DisplayNameForm(config.DisplayName);
+                form.ShowDialog();
             }
 
             bool on = StartupHelper.IsStartupEnabled();
@@ -123,13 +130,22 @@ namespace RedfurSync
                     _progressForm.Invalidate();
             }
 
-            if (_menu.InvokeRequired)
-                _menu.BeginInvoke(CheckBatchCompletion);
-            else
-                CheckBatchCompletion();
+            // [Req 1 & Req 5] Delay slightly to group alerts together and prevent spam
+            if (_batchAlertTimer == null)
+            {
+                _batchAlertTimer = new System.Windows.Forms.Timer { Interval = 2000 };
+                _batchAlertTimer.Tick += (_, _) => 
+                { 
+                    _batchAlertTimer.Stop(); 
+                    if (_menu.InvokeRequired) _menu.BeginInvoke(CheckBatchCompletion);
+                    else CheckBatchCompletion();
+                };
+            }
+            _batchAlertTimer.Stop();
+            _batchAlertTimer.Start();
         }
 
-        private void CheckBatchCompletion()
+private void CheckBatchCompletion()
         {
             try
             {
@@ -138,7 +154,7 @@ namespace RedfurSync
 
                 DateTime newestTime = jobs.Max(j => j.QueuedAt);
                 var recentGroup = jobs
-                    .Where(j => Math.Abs((j.QueuedAt - newestTime).TotalMinutes) <= 10)
+                    .Where(j => Math.Abs((j.QueuedAt - newestTime).TotalMinutes) <= 15) // Expanded to catch larger batches
                     .ToList();
 
                 int  activeNow       = recentGroup.Count(j => j.Status is UploadStatus.Uploading or UploadStatus.Queued);
@@ -147,12 +163,16 @@ namespace RedfurSync
                 bool hasReadyUpdate  = recentGroup.Any(j => j.Status == UploadStatus.UpdateReady);
                 bool hasFailedUpdate = recentGroup.Any(j => j.IsUpdate && (j.Status == UploadStatus.Failed || j.Status == UploadStatus.Cancelled));
                 
-                // Alert when a sync begins
+                int totalPending     = recentGroup.Count(j => j.Status == UploadStatus.Queued);
+                int totalSynced      = recentGroup.Count(j => j.Status == UploadStatus.Done);
+                int totalErrors      = recentGroup.Count(j => j.Status is UploadStatus.Failed or UploadStatus.Cancelled);
+
+                // [Req 5] Summarized notification logic
                 if (_prevActiveCount == 0 && activeNow > 0)
                 {
                     var activeJobs = recentGroup.Where(j => j.Status is UploadStatus.Uploading or UploadStatus.Queued).ToList();
-                    string names = activeJobs.Count <= 2 ? string.Join(" & ", activeJobs.Select(j => j.FileName)) : $"{activeJobs.Count} files";
-                    ShowCustomAlert("Transmission Started", $"Fissal is syncronizing {names} to Redfur!", Color.FromArgb(200, 160, 60), 6, 3500, OpenProgressForm);
+                    string names = activeJobs.Count == 1 ? activeJobs[0].FileName : $"{activeJobs.Count} files";
+                    ShowCustomAlert("Transmission Initiated", $"Fissal is syncing {names} to the Redfur lattice!", Color.FromArgb(200, 160, 60), 6, 4000, OpenProgressForm);
                 }
 
                 if (_prevActiveCount > 0)
@@ -163,15 +183,11 @@ namespace RedfurSync
 
                 if (_prevActiveCount > 0 && activeNow == 0)
                 {
-                    var failJobs = recentGroup.Where(j => (j.Status == UploadStatus.Failed || j.Status == UploadStatus.Cancelled) && !j.IsUpdate).ToList();
-                    var doneJobs = recentGroup.Where(j => j.Status == UploadStatus.Done && !j.IsUpdate).ToList();
-                    
                     if (hasReadyUpdate)
                     {
                         ShowCustomAlert("Update Prepared!", 
                             "A new module has been received from Redfur!\n\nOpen the terminal to apply the upgrade.", 
-                            Color.FromArgb(180, 100, 220), 
-                            4, 10000, OpenProgressForm);
+                            Color.FromArgb(180, 100, 220), 4, 10000, OpenProgressForm);
                     }
                     else if (hasFailedUpdate)
                     {
@@ -181,33 +197,21 @@ namespace RedfurSync
                     }
                     else if (_batchHadSuccess || _batchHadError)
                     {
-                        if (failJobs.Count > 0)
+                        if (_batchHadError)
                         {
-                            string failNames = failJobs.Count <= 2 
-                                ? string.Join(" and ", failJobs.Select(j => j.FileName))
-                                : $"{failJobs.Count} files";
-                                
-                            string msg = $"Interference detected! {failNames} failed to reach the matrix.\nExpand the diagnostics panel for details.";
-                            
-                            if (doneJobs.Count > 0)
-                            {
-                                string doneNames = doneJobs.Count <= 2
-                                    ? string.Join(" & ", doneJobs.Select(j => j.FileName))
-                                    : $"{doneJobs.Count} files";
-                                msg += $"\n\n✦ However, {doneNames} transmitted successfully.";
-                            }
-
-                            ShowAlert("Sync Encountered Errors", msg, FissalAlert.AlertLevel.TotalError, 9000, OpenProgressForm);
+                            string msg = $"[SYNC SUMMARY]\n\n" +
+                                         $"✦ Verified: {totalSynced} files\n" +
+                                         $"✖ Errors: {totalErrors} files\n\n" +
+                                         $"Interference detected! Open diagnostics to review log anomalies.";
+                            ShowAlert("Sync Completed With Errors", msg, FissalAlert.AlertLevel.TotalError, 10000, OpenProgressForm);
                         }
-                        else if (doneJobs.Count > 0)
+                        else if (_batchHadSuccess)
                         {
-                            string doneNames = doneJobs.Count <= 2 
-                                ? string.Join(" and ", doneJobs.Select(j => j.FileName))
-                                : $"{doneJobs.Count} files";
-                                
-                            string msg = $"{doneNames} successfully delivered to the lattice!\nFissal has verified all transmissions!";
-
-                            ShowCustomAlert("Sync Complete!", msg, Color.FromArgb(60, 180, 220), 6, 5000, OpenProgressForm);
+                            string msg = $"[SYNC SUMMARY]\n\n" +
+                                         $"✦ Verified: {totalSynced} files\n" +
+                                         $"✦ Errors: 0\n\n" +
+                                         $"All data securely delivered to the lattice!";
+                            ShowCustomAlert("Sync Complete!", msg, Color.FromArgb(60, 180, 220), 6, 6000, OpenProgressForm);
                         }
                     }
                     _batchHadError   = false;
@@ -218,7 +222,7 @@ namespace RedfurSync
             }
             catch { }
         }
-
+        
         private ContextMenuStrip BuildMenu()
         {
             float sysScale = GetSystemScale();

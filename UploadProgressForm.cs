@@ -166,7 +166,7 @@ namespace RedfurSync
         private const int BaseExpandH = 125;  
         private const int BaseBarH    = 7;  
         private const int BasePad     = 12; 
-        private const int BaseBtnW    = 65;   
+        private const int BaseBtnW    = 50;   
         private const int BaseBtnH    = 20;   
         private const int BaseDiagH   = 20;   
         private const int BaseEmptyH  = 90;   
@@ -186,7 +186,7 @@ namespace RedfurSync
         private readonly Dictionary<string, string> _truncCache = new(); 
 
         private SolidBrush _bgBrush;
-        private Font _fTitle28Bold, _fTitle125Bold, _fTitle10Bold, _fTitle95;
+        private Font _fTitle28Bold, _fTitle125Bold, _fLogFont, _fTitle10Bold, _fTitle95;
         private Font _fBody95Italic, _fBody9Bold, _fBody8Bold, _fBody8Italic, _fBody8Reg, _fBody75Bold, _fBody75Italic, _fBody75Reg, _fBody7Bold;
         private Font _fMono9Bold, _fMono9, _fMono8Bold, _fMono8, _fMono75Bold;
         private StringFormat _sfCenter, _sfLeft;
@@ -211,7 +211,7 @@ namespace RedfurSync
         private UploadJob? _purgingJobRef = null; 
         
         private int _purgeAnimFrames = 10;
-        private const int MaxPurgeFrames = 4; 
+        private const int MaxPurgeFrames = 10; 
         private const int MaxJobPurgeFrames = 4;
         
         private float _slideOffset = 0f;
@@ -252,7 +252,7 @@ namespace RedfurSync
         
         private Rectangle CloseBtnRect => new Rectangle(Width - Pad - S(20), (HeaderH - S(20)) / 2, S(25), S(25));
         
-        private int RightGutterW => S(6);
+        private int RightGutterW => S(3);
         private int WorkingAreaW => Width - RightGutterW;
         private int RightBtnX => WorkingAreaW - Pad - BtnW;
 
@@ -287,12 +287,14 @@ namespace RedfurSync
             _bgBrush = new SolidBrush(CBg);
             _fTitle28Bold = Title(28f, _scale, FontStyle.Bold); _fTitle125Bold = Title(12.5f, _scale, FontStyle.Bold);
             _fTitle10Bold = Title(10f, _scale, FontStyle.Bold); _fTitle95 = Title(9.5f, _scale);
+        
             _fBody95Italic = Body(9.5f, _scale, FontStyle.Italic); _fBody9Bold = Body(9f, _scale, FontStyle.Bold);
             _fBody8Bold = Body(8f, _scale, FontStyle.Bold); _fBody8Reg = Body(8f, _scale, FontStyle.Regular);
             _fBody8Italic = Body(8f, _scale, FontStyle.Italic); _fBody75Bold = Body(7.5f, _scale, FontStyle.Bold);
             _fBody75Italic = Body(7.5f, _scale, FontStyle.Italic); _fBody75Reg = Body(7.5f, _scale, FontStyle.Regular);
             _fBody7Bold = Body(7f, _scale, FontStyle.Bold);
             
+            _fLogFont = Mono(10f, _scale, FontStyle.Regular);
             _fMono9Bold = Mono(9f, _scale, FontStyle.Bold); _fMono9 = Mono(9f, _scale);
             _fMono8Bold = Mono(8f, _scale, FontStyle.Bold); _fMono8 = Mono(8f, _scale); _fMono75Bold = Mono(7.5f, _scale, FontStyle.Bold);
 
@@ -333,12 +335,12 @@ namespace RedfurSync
             
             foreach(var job in _jobs) {
                 bool isNewGroup = currentGroupAnchor == null
-                                || Math.Abs((job.QueuedAt - currentGroupAnchor.Value).TotalSeconds) > 60
+                                || job.QueuedAt.Date != currentGroupAnchor.Value.Date // [Req 4]
                                 || (lastWasUpdate.HasValue && lastWasUpdate.Value != job.IsUpdate);
                 
                 if (isNewGroup) {
                     currentGroupAnchor = job.QueuedAt;
-                    currentGroupText = job.QueuedAt.ToString("MMM dd, h:mm:ss tt");
+                    currentGroupText = job.QueuedAt.ToString("MMM dd, yyyy").ToUpper(); // [Req 4]
                 }
                 if (job == jobToRemove) targetGroupText = currentGroupText;
                 lastWasUpdate = job.IsUpdate;
@@ -349,11 +351,11 @@ namespace RedfurSync
             currentGroupAnchor = null;
             foreach(var job in _jobs) {
                 bool isNewGroup = currentGroupAnchor == null
-                                || Math.Abs((job.QueuedAt - currentGroupAnchor.Value).TotalSeconds) > 60
+                                || job.QueuedAt.Date != currentGroupAnchor.Value.Date
                                 || (lastWasUpdate.HasValue && lastWasUpdate.Value != job.IsUpdate);
                 if (isNewGroup) {
                     currentGroupAnchor = job.QueuedAt;
-                    currentGroupText = job.QueuedAt.ToString("MMM dd, h:mm:ss tt");
+                    currentGroupText = job.QueuedAt.ToString("MMM dd, yyyy").ToUpper();
                 }
                 if (currentGroupText == targetGroupText && job != jobToRemove) {
                     peerJobs.Add(job);
@@ -368,11 +370,11 @@ namespace RedfurSync
                 string newGroupText = null;
                 foreach(var job in _jobs) {
                     bool isNewGroup = currentGroupAnchor == null
-                                    || Math.Abs((job.QueuedAt - currentGroupAnchor.Value).TotalSeconds) > 60
+                                    || job.QueuedAt.Date != currentGroupAnchor.Value.Date
                                     || (lastWasUpdate.HasValue && lastWasUpdate.Value != job.IsUpdate);
                     if (isNewGroup) {
                         currentGroupAnchor = job.QueuedAt;
-                        currentGroupText = job.QueuedAt.ToString("MMM dd, h:mm:ss tt");
+                        currentGroupText = job.QueuedAt.ToString("MMM dd, yyyy").ToUpper();
                     }
                     if (job == peerJobs[0]) {
                         newGroupText = currentGroupText;
@@ -419,11 +421,17 @@ namespace RedfurSync
                         }
                         _slideStartY = startY; _slideOffset = purgedHeight;
                         
-                        if (job.CanCancel && (job.Status == UploadStatus.Uploading || job.Status == UploadStatus.Queued)) 
-                            _onCancel(job);
-                            
-                        SafeRemoveJob(job);
+                        // Purge the entire sync batch, not just the anchor file
+                        var batchJobs = _jobs.Where(j => Math.Abs((j.QueuedAt - job.QueuedAt).TotalSeconds) <= 60 && j.IsUpdate == job.IsUpdate).ToList();
+                        foreach(var j in batchJobs) {
+                            if (j.CanCancel && (j.Status == UploadStatus.Uploading || j.Status == UploadStatus.Queued)) 
+                                _onCancel(j);
+                            _jobs.Remove(j);
+                        }
+                        
                         _purgingJobRef = null;
+                        _layoutNeedsUpdate = true;
+                        EnsureLayoutUpdated();
                     }
                     else if (_purgingGroupText != null)
                     {
@@ -460,13 +468,13 @@ namespace RedfurSync
             foreach(var thisJob in _jobs) 
             {
                 bool isNewGroup = currentGroupAnchor == null
-                                || Math.Abs((thisJob.QueuedAt - currentGroupAnchor.Value).TotalSeconds) > 60
+                                || thisJob.QueuedAt.Date != currentGroupAnchor.Value.Date
                                 || (lastWasUpdate.HasValue && lastWasUpdate.Value != thisJob.IsUpdate);
                 
                 if (isNewGroup) 
                 {
                     currentGroupAnchor = thisJob.QueuedAt;
-                    currentGroupText = thisJob.QueuedAt.ToString("MMM dd, h:mm:ss tt");
+                    currentGroupText = thisJob.QueuedAt.ToString("MMM dd, yyyy").ToUpper(); // Fixed format to match the Day headers
                 }
                 
                 if (currentGroupText == groupText) jobsToDelete.Add(thisJob);
@@ -485,7 +493,7 @@ namespace RedfurSync
             _expandedLogs.Remove(groupText);
             _layoutNeedsUpdate = true; EnsureLayoutUpdated();
         }
-
+        
         private bool ProcessVisualMath()
         {
             _shimmer = (_shimmer + AppConfig.ShimmerSpeed) % 500f;
@@ -555,18 +563,38 @@ namespace RedfurSync
             return prevAlpha != _glowAlpha;
         }
 
-        private string GetDiagContent(UploadJob job)
+        private string GetDiagContent(UploadJob job, List<UploadJob> syncBatch = null)
         {
-            return job.Status switch {
-                UploadStatus.Failed or UploadStatus.Cancelled => string.IsNullOrWhiteSpace(job.ErrorMessage) ? "No error detail was captured in this transmission." : job.ErrorMessage,
-                UploadStatus.Done => "[ OK ] Signal verified. No anomalies in the transmission log.", 
-                UploadStatus.Uploading => $"[ >> ] Active transmission in progress -- {job.Progress * 100:0}% complete.",
-                UploadStatus.Queued => "[ -- ] Awaiting open transmission slot. Standing by.", 
-                UploadStatus.UpdateReady => $"[ OK ] Matrix downloaded and verified. Fissal is ready to deplay this new module at your will!\n • Current Build : v{job.CurrentVersion}\n • Target Build  : v{job.UpdateVersion}\n • Payload Size  : {job.FileSizeDisplay}\n\n[ CHANGELOG ] :\n{job.Changelog}\n\n[ OK ] Ready for integration!",                _ => "[ ?? ] Signal state unknown."
-            };
+            if (syncBatch == null || syncBatch.Count <= 1)
+            {
+                return job.Status switch {
+                    UploadStatus.Failed or UploadStatus.Cancelled => string.IsNullOrWhiteSpace(job.ErrorMessage) ? "No error detail was captured in this transmission." : job.ErrorMessage,
+                    UploadStatus.Done => "[ OK ] Signal verified. No anomalies in the transmission log.", 
+                    UploadStatus.Uploading => $"[ >> ] Active transmission in progress -- {job.Progress * 100:0}% complete.",
+                    UploadStatus.Queued => "[ -- ] Awaiting open transmission slot. Standing by.", 
+                    UploadStatus.UpdateReady => $"[ OK ] Matrix downloaded and verified. Fissal is ready to deplay this new module at your will!\n • Current Build : v{job.CurrentVersion}\n • Target Build  : v{job.UpdateVersion}\n • Payload Size  : {job.FileSizeDisplay}\n\n[ CHANGELOG ] :\n{job.Changelog}\n\n[ OK ] Ready for integration!",
+                    _ => "[ ?? ] Signal state unknown."
+                };
+            }
+
+            // Aggregate errors for copy-paste
+            string output = $"--- SYNC DIAGNOSTICS ({syncBatch.Count} FILES) ---\n";
+            foreach (var j in syncBatch)
+            {
+                if (j.Status is UploadStatus.Failed or UploadStatus.Cancelled)
+                {
+                    output += $"\n[X] {j.FileName}:\n    {(string.IsNullOrWhiteSpace(j.ErrorMessage) ? "Unknown Error" : j.ErrorMessage)}";
+                }
+            }
+            if (!syncBatch.Any(j => j.Status is UploadStatus.Failed or UploadStatus.Cancelled))
+            {
+                output += "\n[ OK ] All signals in this batch verified. No anomalies.";
+            }
+
+            return output;
         }
 
-        private void EnsureLayoutUpdated()
+private void EnsureLayoutUpdated()
         {
             if (!_layoutNeedsUpdate) return;
 
@@ -581,8 +609,10 @@ namespace RedfurSync
             for (int i = 0; i < _jobs.Count; i++)
             {
                 var job = _jobs[i];
-                bool isNewGroup = groupStartTime == null || Math.Abs((job.QueuedAt - groupStartTime.Value).TotalSeconds) > 60 || (lastWasUpdate.HasValue && lastWasUpdate.Value != job.IsUpdate);
-                
+                bool isNewGroup = groupStartTime == null 
+                        || job.QueuedAt.Date != groupStartTime.Value.Date // [Req 4] Group by Day
+                        || (lastWasUpdate.HasValue && lastWasUpdate.Value != job.IsUpdate);
+        
                 if (isNewGroup || currentGroup == null) 
                 { 
                     currentGroup = new List<int>(); 
@@ -592,8 +622,14 @@ namespace RedfurSync
                 currentGroup.Add(i);
                 lastWasUpdate = job.IsUpdate;
                 currentGroup.Sort((a, b) => {
-                    string nameA = _jobs[a].FileName ?? "";
-                    string nameB = _jobs[b].FileName ?? "";
+                    var jobA = _jobs[a];
+                    var jobB = _jobs[b];
+                    
+                    int timeCmp = jobB.QueuedAt.CompareTo(jobA.QueuedAt);
+                    if (timeCmp != 0) return timeCmp;
+
+                    string nameA = jobA.FileName ?? "";
+                    string nameB = jobB.FileName ?? "";
                     
                     bool isGsA = nameA.StartsWith("GS") && nameA.Contains("Data");
                     bool isGsB = nameB.StartsWith("GS") && nameB.Contains("Data");
@@ -629,8 +665,8 @@ namespace RedfurSync
                 var group = groupedJobs[g];
                 if (group.Count == 0) continue;
 
-                var groupAnchorJob = group.Select(idx => _jobs[idx]).OrderBy(j => j.QueuedAt).First();
-                string currentGroupText = groupAnchorJob.QueuedAt.ToString("MMM dd, h:mm:ss tt");
+                var groupAnchorJob = group.Select(idx => _jobs[idx]).OrderByDescending(j => j.QueuedAt).First();
+                string currentGroupText = groupAnchorJob.QueuedAt.ToString("MMM dd, yyyy").ToUpper(); 
                 bool isExpanded = _expandedLogs.Contains(currentGroupText);
                 
                 bool isUpdateGrp = false;
@@ -658,27 +694,58 @@ namespace RedfurSync
 
                 if (isExpanded)
                 {
-                    for (int j = 0; j < group.Count; j++)
+                    // Sub-group files into "Syncs" (Files queued within 60 seconds of each other)
+                    var syncBatches = new List<List<int>>();
+                    List<int> currentSync = null;
+                    DateTime? syncAnchor = null;
+
+                    foreach (int jIdx in group)
                     {
-                        int jobIndex = group[j];
-                        var job = _jobs[jobIndex];
-                        int childW = WorkingAreaW - (Pad + S(18)) - Pad;
-                        
-                        int calculatedExpandH = ExpandH;
-                        if (job.IsExpanded)
+                        var job = _jobs[jIdx];
+                        if (syncAnchor == null || Math.Abs((job.QueuedAt - syncAnchor.Value).TotalSeconds) > 60 || job.IsUpdate)
                         {
-                            float textWNoScroll = childW - S(48);
-                            var sz = dummyG.MeasureString(GetDiagContent(job), _fMono9, (int)textWNoScroll);
-                            int neededH = (int)sz.Height + S(38);
-                            calculatedExpandH = Math.Clamp(neededH, S(50), ExpandH);
+                            currentSync = new List<int>();
+                            syncBatches.Add(currentSync);
+                            syncAnchor = job.QueuedAt;
+                        }
+                        currentSync.Add(jIdx);
+                    }
+
+                    for (int s = 0; s < syncBatches.Count; s++)
+                    {
+                        var syncBatch = syncBatches[s];
+                        int firstJobIdx = syncBatch[0];
+                        var anchorJob = _jobs[firstJobIdx];
+
+                        int childW = WorkingAreaW - (Pad + S(18)) - Pad;
+                        int calculatedExpandH = ExpandH;
+
+                        if (anchorJob.IsExpanded)
+                        {
+                            // Calculate height needed for DIAG panel to fit all files in this sync
+                            int filesHeight = syncBatch.Count * S(22); // 22px per file row
+                            int errorsHeight = 0;
+                            
+                            foreach(var idx in syncBatch) {
+                                if (!string.IsNullOrWhiteSpace(_jobs[idx].ErrorMessage)) {
+                                    float textWNoScroll = childW - S(48);
+                                    var sz = dummyG.MeasureString(_jobs[idx].ErrorMessage, _fBody75Reg, (int)textWNoScroll);
+                                    errorsHeight += (int)sz.Height + S(15);
+                                }
+                            }
+
+                            int neededH = filesHeight + errorsHeight + S(45);
+                            calculatedExpandH = Math.Clamp(neededH, S(50), S(350)); // Allow larger diag panel
                         }
 
-                        int h = RowH + (job.IsExpanded ? calculatedExpandH : 0);
-                        bool isLast = (j == group.Count - 1);
+                        int h = RowH + (anchorJob.IsExpanded ? calculatedExpandH : 0);
+                        bool isLast = (s == syncBatches.Count - 1);
 
+                        // We store the FIRST job of the sync as the representative index for the row, 
+                        // but we will draw all of them inside the DIAG panel.
                         _layout.Add(new RowLayout
                         {
-                            IsSeparator = false, GroupText = currentGroupText, JobIndex = jobIndex,
+                            IsSeparator = false, GroupText = currentGroupText, JobIndex = firstJobIdx,
                             Y = currentY, Height = h, IsLastChild = isLast,
                             ExpandedHeight = calculatedExpandH
                         });
@@ -728,21 +795,32 @@ namespace RedfurSync
             _expandedLogs.Clear(); 
             _truncCache.Clear(); 
 
-            DateTime activeLogTime = DateTime.Now.AddMinutes(-2);
-            DateTime updateLogTime = DateTime.Now.AddMinutes(-1); 
-            
-            var activeUploadJob = new UploadJob { FileName = "GS01Store.lua", Status = UploadStatus.Uploading, Progress = 0.15f, QueuedAt = activeLogTime.AddSeconds(5) };
+            DateTime today = DateTime.Now;
+            DateTime yesterday = today.AddDays(-1);
+            DateTime twoDaysAgo = today.AddDays(-2);
+            DateTime threeDaysAgo = today.AddDays(-3);
 
-            _jobs.Add(new UploadJob { FileName = "TexturePack_Vol1.zip", Status = UploadStatus.Queued, Progress = 0f, QueuedAt = activeLogTime });
+            // Today's jobs (Active + Pending + Error)
+            var activeUploadJob = new UploadJob { FileName = "GS01Store.lua", Status = UploadStatus.Uploading, Progress = 0.45f, QueuedAt = today.AddSeconds(-5) };
             _jobs.Add(activeUploadJob);
-            _jobs.Add(new UploadJob { FileName = "GS02Store.lua", Status = UploadStatus.Failed, Progress = 0.6f, QueuedAt = activeLogTime.AddSeconds(15), ErrorMessage = "Connection severed by lunar interference. Database returned mismatch logic sequence out of bounds.", IsExpanded = true });
-            _jobs.Add(new UploadJob { FileName = "GS03Store.lua", Status = UploadStatus.Done, Progress = 1f, QueuedAt = activeLogTime.AddSeconds(15), ErrorMessage = "Connection severed by lunar interference. Database returned mismatch logic sequence out of bounds.", IsExpanded = false });
-            _jobs.Add(new UploadJob { FileName = "GS04Store.lua", Status = UploadStatus.Cancelled, Progress = 1f, QueuedAt = activeLogTime.AddSeconds(15), ErrorMessage = "Connection severed by lunar interference. Database returned mismatch logic sequence out of bounds.", IsExpanded = false });
-            _jobs.Add(new UploadJob { FileName = "GS05Store.lua", Status = UploadStatus.UpdateReady, Progress = 1f, QueuedAt = activeLogTime.AddSeconds(15), ErrorMessage = "Connection severed by lunar interference. Database returned mismatch logic sequence out of bounds.", IsExpanded = false });
-            _jobs.Add(new UploadJob { FileName = "Fissal Matrix v1.2.0", IsUpdate = true, UpdateVersion = "1.2.0", Status = UploadStatus.UpdateReady, Progress = 1f, FileSizeBytes = 148500000, QueuedAt = updateLogTime, IsExpanded = true });
+            _jobs.Add(new UploadJob { FileName = "TexturePack_Vol1.zip", Status = UploadStatus.Queued, Progress = 0f, QueuedAt = today.AddSeconds(-10) });
+            _jobs.Add(new UploadJob { FileName = "GS02Store.lua", Status = UploadStatus.Failed, Progress = 0.8f, QueuedAt = today.AddSeconds(-15), ErrorMessage = "Lunar interference detected. Sequence out of bounds.", IsExpanded = true });
 
-            _expandedLogs.Add(activeLogTime.ToString("MMM dd, h:mm:ss tt"));
-            _expandedLogs.Add(updateLogTime.ToString("MMM dd, h:mm:ss tt"));
+            // Yesterday's jobs (Done + Cancelled)
+            _jobs.Add(new UploadJob { FileName = "GS03Store.lua", Status = UploadStatus.Done, Progress = 1f, QueuedAt = yesterday.AddHours(-2), IsExpanded = false });
+            _jobs.Add(new UploadJob { FileName = "GS04Store.lua", Status = UploadStatus.Cancelled, Progress = 1f, QueuedAt = yesterday.AddHours(-2), ErrorMessage = "Sync manually aborted by user.", IsExpanded = false });
+
+            // 2 Days ago (All Done - tests the solid green bar)
+            _jobs.Add(new UploadJob { FileName = "GS05Store.lua", Status = UploadStatus.Done, Progress = 1f, QueuedAt = twoDaysAgo.AddHours(-5), IsExpanded = false });
+            _jobs.Add(new UploadJob { FileName = "GS06Store.lua", Status = UploadStatus.Done, Progress = 1f, QueuedAt = twoDaysAgo.AddHours(-5), IsExpanded = false });
+
+            // 3 Days ago (Updates)
+            _jobs.Add(new UploadJob { FileName = "Fissal Matrix v1.3.0", IsUpdate = true, UpdateVersion = "1.3.0", Status = UploadStatus.UpdateReady, Progress = 1f, FileSizeBytes = 148500000, QueuedAt = threeDaysAgo, IsExpanded = true });
+
+            _expandedLogs.Add(today.ToString("MMM dd, yyyy").ToUpper());
+            _expandedLogs.Add(yesterday.ToString("MMM dd, yyyy").ToUpper());
+            _expandedLogs.Add(twoDaysAgo.ToString("MMM dd, yyyy").ToUpper());
+            _expandedLogs.Add(threeDaysAgo.ToString("MMM dd, yyyy").ToUpper());
 
             _layoutNeedsUpdate = true; 
             EnsureLayoutUpdated(); 
@@ -807,7 +885,7 @@ namespace RedfurSync
             }
         }
 
-        protected override void OnPaint(PaintEventArgs e)
+protected override void OnPaint(PaintEventArgs e)
         {
             EnsureLayoutUpdated();
             var g = e.Graphics;
@@ -824,19 +902,19 @@ namespace RedfurSync
                 g.SetClip(clipRect); 
                 g.TranslateTransform(_globalGlitchX, HeaderH - _scrollY + _globalGlitchY);
 
+                // PASS 1: Draw regular rows and the separator's background layer
                 for (int i = 0; i < _layout.Count; i++)
                 {
                     var row = _layout[i];
                     float effectiveHeight = row.IsSeparator && row.GroupIsExpanded ? row.Height + row.GroupTotalHeight : row.Height;
                     
-                    if (row.Y + effectiveHeight < _scrollY - _slideOffset) continue;
+                    if (row.Y + effectiveHeight < _scrollY - _slideOffset && !row.IsSeparator) continue;
                     if (row.Y > _scrollY + viewHeight) break;
 
                     var gState = g.Save();
 
                     bool isPurgingGroup = _purgingGroupText != null && row.GroupText == _purgingGroupText;
                     bool isPurgingJob = !row.IsSeparator && _jobs.Count > row.JobIndex && _jobs[row.JobIndex] == _purgingJobRef;
-                    
                     float purgeIntensity = 0f;
                     
                     if (isPurgingGroup || isPurgingJob)
@@ -860,7 +938,7 @@ namespace RedfurSync
                         g.TranslateTransform(0, _slideOffset);
                     }
 
-                    if (row.IsSeparator) DrawSeparator(g, row, i, i == _hoverLayoutIdx);
+                    if (row.IsSeparator) DrawSeparatorBg(g, row, i, i == _hoverLayoutIdx);
                     else DrawRow(g, row, i, _jobs[row.JobIndex], row.JobIndex, row.Y);
                         
                     if (isPurgingGroup || isPurgingJob)
@@ -874,18 +952,77 @@ namespace RedfurSync
                         g.FillRectangle(flashBrush, itemX - S(5), row.Y - S(5), itemW + S(10), row.Height + S(10));
 
                         using var cutPen = new Pen(Color.Cyan, S(1));
-                            using var cutPen2 = new Pen(Color.Magenta, S(1));
+                        using var cutPen2 = new Pen(Color.Magenta, S(1));
                             
-                            int linesToDraw = (int)(10 * purgeIntensity); 
-                            
-                            for(int l = 0; l < linesToDraw; l++) {
-                                int cy = row.Y + _rand.Next(row.Height);
-                                int startX = itemX + _rand.Next(itemW - S(20)); 
-                                int maxSafeLen = (itemX + itemW) - startX;
-                                int lineLen = _rand.Next(S(10), Math.Min(maxSafeLen, itemW / 3)); 
-                                g.DrawLine(l % 2 == 0 ? cutPen : cutPen2, startX, cy, startX + lineLen, cy);
-                            }
+                        int linesToDraw = (int)(10 * purgeIntensity); 
+                        for(int l = 0; l < linesToDraw; l++) {
+                            int cy = row.Y + _rand.Next(row.Height);
+                            int startX = itemX + _rand.Next(itemW - S(20)); 
+                            int maxSafeLen = (itemX + itemW) - startX;
+                            int lineLen = _rand.Next(S(10), Math.Min(maxSafeLen, itemW / 3)); 
+                            g.DrawLine(l % 2 == 0 ? cutPen : cutPen2, startX, cy, startX + lineLen, cy);
+                        }
                     }
+                    g.Restore(gState);
+                }
+
+                // PASS 2: Draw the Sticky Headers over top of the rows
+                for (int i = 0; i < _layout.Count; i++)
+                {
+                    var row = _layout[i];
+                    if (!row.IsSeparator) continue;
+
+                    float effectiveHeight = row.Height + (row.GroupIsExpanded ? row.GroupTotalHeight : 0);
+                    if (row.Y + effectiveHeight < _scrollY - _slideOffset) continue;
+                    if (row.Y > _scrollY + viewHeight) break;
+
+                    var gState = g.Save();
+
+                    int drawY = row.Y;
+                    bool isSticky = false;
+                    if (row.GroupIsExpanded)
+                    {
+                        int scrollTop = (int)_scrollY;
+                        if (drawY < scrollTop && drawY + row.GroupTotalHeight - row.Height > scrollTop)
+                        {
+                            drawY = scrollTop;
+                            isSticky = true;
+                        }
+                    }
+
+                    // [Req 1] Faint background mask if sticky
+                    if (isSticky)
+                    {
+                        using var stickyBg = new SolidBrush(Color.FromArgb(240, CBg));
+                        g.FillRectangle(stickyBg, 0, drawY, Width, row.Height);
+                        using var stickyShadow = new LinearGradientBrush(new Rectangle(0, drawY + row.Height, Width, S(6)), Color.FromArgb(100, 0, 0, 0), Color.Transparent, LinearGradientMode.Vertical);
+                        g.FillRectangle(stickyShadow, 0, drawY + row.Height, Width, S(6));
+                    }
+
+                    bool isPurgingGroup = _purgingGroupText != null && row.GroupText == _purgingGroupText;
+                    if (isPurgingGroup)
+                    {
+                        float purgeRatio = _purgeAnimFrames / (float)MaxPurgeFrames; 
+                        float purgeIntensity = 1f - purgeRatio; 
+                        
+                        float pGlitchX = _rand.Next(-S(3), S(3)) * purgeIntensity; 
+                        float pGlitchY = _rand.Next(-S(1), S(1)) * purgeIntensity; 
+                        
+                        float scaleY = Math.Max(0.15f, purgeRatio);
+                        float centerY = drawY + (row.Height / 2f);
+                        
+                        g.TranslateTransform(pGlitchX, centerY + pGlitchY);
+                        g.ScaleTransform(1f, scaleY);
+                        g.TranslateTransform(0, -centerY);
+                    }
+                    else if (drawY >= _slideStartY && _slideOffset > 0)
+                    {
+                        g.TranslateTransform(0, _slideOffset);
+                    }
+
+                    var stickyRow = row;
+                    stickyRow.Y = drawY;
+                    DrawSeparatorHeader(g, stickyRow, i, i == _hoverLayoutIdx);
                     g.Restore(gState);
                 }
 
@@ -1022,10 +1159,9 @@ namespace RedfurSync
             }
         }
 
-        private void DrawSeparator(Graphics g, RowLayout row, int layoutIdx, bool isHovered)
+        private void DrawSeparatorBg(Graphics g, RowLayout row, int layoutIdx, bool isHovered)
         {
-            bool isExpanded = row.GroupIsExpanded, delHover = _hoverDeleteGroupIdx == layoutIdx, textHover = isHovered && !delHover; 
-
+            bool isExpanded = row.GroupIsExpanded; 
             if (layoutIdx > 0)
             {
                 int lineY = row.Y - S(10);
@@ -1038,7 +1174,6 @@ namespace RedfurSync
             }
 
             int boxX = Pad, boxY = row.Y + S(5), boxW = WorkingAreaW - Pad * 2, boxH = isExpanded ? row.Height - S(8) : row.Height - S(8);
-
             if (isExpanded && row.GroupTotalHeight > 0)
             {
                 int bgX = boxX + S(10), bgY = boxY + boxH, bgW = boxW - S(16), bgH = row.GroupTotalHeight;
@@ -1048,40 +1183,104 @@ namespace RedfurSync
                 using var groupBorderPen = new Pen(Color.FromArgb(100, treeColor.R, treeColor.G, treeColor.B), 2);
                 g.DrawLine(groupBorderPen, bgX, bgY, bgX, bgY + bgH); g.DrawLine(groupBorderPen, bgX + bgW, bgY, bgX + bgW, bgY + bgH); g.DrawLine(groupBorderPen, bgX, bgY + bgH, bgX + bgW, bgY + bgH); 
             }
+        }
 
-            if (row.IsUpdateGroup && AppConfig.FX.UpdateReadyPulse)
-            {
+        private void DrawSeparatorHeader(Graphics g, RowLayout row, int layoutIdx, bool isHovered)
+        {
+            bool isExpanded = row.GroupIsExpanded, delHover = _hoverDeleteGroupIdx == layoutIdx, textHover = isHovered && !delHover; 
+            int boxX = Pad, boxY = row.Y + S(5), boxW = WorkingAreaW - Pad * 2, boxH = isExpanded ? row.Height - S(8) : row.Height - S(8);
+
+            if (row.IsUpdateGroup && AppConfig.FX.UpdateReadyPulse) {
                 int pulseAlpha = (int)(Math.Sin(_shimmer * 0.20f) * 100 + 100); 
                 for (int i = 1; i <= 3; i++) DrawFadingGlow(g, boxX - S(1), boxY - S(1), boxW + S(2), boxH + S(2), Color.FromArgb(pulseAlpha / i, 180, 100, 240), S(i * 3), isExpanded);
             }
-            else if (!row.IsUpdateGroup && AppConfig.FX.LogHeaderPulse)
-            {
+            else if (!row.IsUpdateGroup && AppConfig.FX.LogHeaderPulse) {
                 int pulseAlpha = (int)(Math.Sin(_shimmer * 0.04f) * 20 + 50); 
                 DrawFadingGlow(g, boxX - S(1), boxY - S(1), boxW + S(2), boxH + S(2), Color.FromArgb(textHover ? 90 : pulseAlpha, row.GroupColor), S(4), isExpanded);
             }
             
             using var bgBrush = new SolidBrush(Color.FromArgb(6, 6, 8)); g.FillRectangle(bgBrush, boxX, boxY, boxW, boxH);
 
-            Color borderColor = row.IsUpdateGroup ? Color.FromArgb(textHover ? 220 : 140, 160, 80, 220) : Color.FromArgb(textHover ? 220 : 140, row.GroupColor);
-            using var borderPen = new Pen(borderColor, S(1));
+            // [Req 1] Dynamic Header Progress Bar Priorities (Current Sync Only)
+            float totalProg = 0f; int count = 0;
+            bool hasError = false; bool hasPending = false; bool hasUpdateDownloading = false;
+            bool hasUpdateReady = false; bool hasUploading = false; bool allDone = true;
+
+            DateTime newestTime = DateTime.MinValue;
+            bool newestIsUpdate = false;
+            bool foundAny = false;
+
+            // Safe index-based enumeration to avoid InvalidOperationException on background updates
+            for (int k = 0; k < _jobs.Count; k++) {
+                try {
+                    var j = _jobs[k];
+                    if (j.QueuedAt.ToString("MMM dd, yyyy").ToUpper() == row.GroupText) {
+                        if (!foundAny || j.QueuedAt >= newestTime) {
+                            newestTime = j.QueuedAt;
+                            newestIsUpdate = j.IsUpdate;
+                            foundAny = true;
+                        }
+                    }
+                } catch { break; } // Failsafe if collection shrinks during iteration
+            }
+
+            if (foundAny)
+            {
+                for (int k = 0; k < _jobs.Count; k++) {
+                    try {
+                        var j = _jobs[k];
+                        if (j.QueuedAt.ToString("MMM dd, yyyy").ToUpper() == row.GroupText) {
+                            if (Math.Abs((j.QueuedAt - newestTime).TotalSeconds) <= 60 && j.IsUpdate == newestIsUpdate) {
+                                totalProg += (j.Status == UploadStatus.Done || j.Status == UploadStatus.UpdateReady) ? 1f : j.Progress;
+                                count++;
+                                
+                                if (j.Status == UploadStatus.Failed || j.Status == UploadStatus.Cancelled) hasError = true;
+                                else if (j.Status == UploadStatus.Queued) hasPending = true;
+                                else if (j.Status == UploadStatus.Uploading && j.IsUpdate) hasUpdateDownloading = true;
+                                else if (j.Status == UploadStatus.Uploading && !j.IsUpdate) hasUploading = true;
+                                else if (j.Status == UploadStatus.UpdateReady) hasUpdateReady = true;
+
+                                if (j.Status != UploadStatus.Done && j.Status != UploadStatus.UpdateReady) allDone = false;
+                            }
+                        }
+                    } catch { break; } 
+                }
+            }
             
+            if (count > 0) {
+                float avgProg = totalProg / count;
+                Color progColor;
+                
+                // Priority: Error > Pending/Aborted > Update Ready > Update Downloading > Job Uploading > All Done
+                if (hasError) progColor = Color.FromArgb(95, 200, 0, 0);
+                else if (hasPending) progColor = Color.FromArgb(20, 180, 180, 180);
+                else if (hasUpdateReady) progColor = Color.FromArgb(20, 180, 100, 220);
+                else if (hasUpdateDownloading) progColor = Color.FromArgb(20, 180, 100, 220);
+                else if (hasUploading) progColor = Color.FromArgb(20, CGoldBrt.R, CGoldBrt.G, CGoldBrt.B);
+                else progColor = Color.FromArgb(20, CGreen.R, CGreen.G, CGreen.B);
+
+                using var avgProgBrush = new SolidBrush(progColor);
+                g.FillRectangle(avgProgBrush, boxX, boxY, boxW * Math.Max(0.05f, avgProg), boxH);
+            }
+
+            Color borderColor = row.IsUpdateGroup ? Color.FromArgb(textHover ? 220 : 140, 160, 80, 220) : Color.FromArgb(textHover ? 220 : 140, row.GroupColor);
+            using var borderPen = new Pen(borderColor, 1.5f);
             g.DrawRectangle(borderPen, boxX, boxY, boxW, boxH); 
 
-            var sf = _fTitle10Bold;
-            string text = row.IsUpdateGroup ? $"!! UPDATE AWAITING   {(isExpanded ? "[-]" : "[+]")}" : $"> LOG: {row.SepText.ToUpper()}   {(isExpanded ? "[-]" : "[+]")}";
+            var sf = _fLogFont;
+            string text = row.IsUpdateGroup ? $"!! UPDATE READY" : $"{(isExpanded ? " -" : " + ")} LOG: {row.SepText}";
             Color mainColor = row.IsUpdateGroup ? (textHover ? Color.FromArgb(240, 180, 255) : Color.FromArgb(200, 130, 240)) : (textHover ? Color.White : CGoldBrt);
             
             var sz = g.MeasureString(text, sf);
-            DrawGlowingText(g, text, sf, mainColor, boxX + S(8), boxY + (boxH - sz.Height) / 2f + S(1), AppConfig.FX.LogHeaderPulse || AppConfig.FX.UpdateReadyPulse ? (textHover ? 90 : 40) : 0);
+            DrawGlowingText(g, text, sf, mainColor, boxX + S(3), boxY + (boxH - sz.Height) / 2f + S(1), AppConfig.FX.LogHeaderPulse || AppConfig.FX.UpdateReadyPulse ? (textHover ? 90 : 40) : 0);
 
-            if (AppConfig.FX.GroupSepScanlines)
-            {
+            if (AppConfig.FX.GroupSepScanlines) {
                 using var scanlinePen = new Pen(row.IsUpdateGroup ? Color.FromArgb(20, 180, 100, 220) : Color.FromArgb(15, CGreen), 1);
                 for (int i = boxY + 2; i < boxY + boxH; i += 3) g.DrawLine(scanlinePen, boxX + 1, i, boxX + boxW - 1, i);
             }
 
             bool showResend = row.GroupHasResend;
-            string btnText = showResend ? "[ RE-SEND ]" : "[ PURGE ]";
+            string btnText = showResend ? "[RE-SEND]" : "[PURGE]";
             Color btnBaseColor = showResend ? CGreen : CBarFail;
 
             var delRect = DeleteBtnRect(row);
@@ -1091,21 +1290,65 @@ namespace RedfurSync
             using var delTextBrush = new SolidBrush(delHover ? Color.White : Color.FromArgb(200, btnBaseColor)); 
             g.DrawString(btnText, _fMono8, delTextBrush, delRect, _sfCenter);
         }
-
         private Color GetJobStatusColor(UploadJob j) => j.Status switch {
             UploadStatus.Queued => CTextSub, UploadStatus.Uploading => j.IsUpdate ? Color.FromArgb(180, 100, 220) : CGoldBrt,
             UploadStatus.Done => CGreen, UploadStatus.Failed => CBarFail, UploadStatus.Cancelled => CBarCancel,
             UploadStatus.UpdateReady => Color.FromArgb(180, 100, 220), _ => CTextSub
         };
-
-        private void DrawRow(Graphics g, RowLayout rowInfo, int layoutIdx, UploadJob job, int idx, int y)
+private void DrawRow(Graphics g, RowLayout rowInfo, int layoutIdx, UploadJob job, int idx, int y)
         {
-            int childPad = Pad + S(18), childW = WorkingAreaW - childPad - Pad, totalH = RowH + (job.IsExpanded ? rowInfo.ExpandedHeight : 0);
+            // Establish the unified properties of this specific sync batch using a safe index loop
+            var syncBatch = new List<UploadJob>();
+            for (int k = 0; k < _jobs.Count; k++) {
+                try {
+                    var j = _jobs[k];
+                    if (Math.Abs((j.QueuedAt - job.QueuedAt).TotalSeconds) <= 60 && j.IsUpdate == job.IsUpdate) {
+                        syncBatch.Add(j);
+                    }
+                } catch { break; }
+            }
+            syncBatch.Sort((a, b) => {
+                int timeCmp = b.QueuedAt.CompareTo(a.QueuedAt);
+                if (timeCmp != 0) return timeCmp;
+                
+                string nameA = a.FileName ?? "";
+                string nameB = b.FileName ?? "";
+                
+                bool isGsA = nameA.StartsWith("GS") && nameA.Contains("Data");
+                bool isGsB = nameB.StartsWith("GS") && nameB.Contains("Data");
+                
+                if (!isGsA && isGsB) return -1;
+                if (isGsA && !isGsB) return 1;
+                
+                return string.Compare(nameA, nameB, StringComparison.OrdinalIgnoreCase);
+            });
 
-            (string glyph, Color gc) = job.Status switch {
-                UploadStatus.Queued => ("[--]", CTextSub), UploadStatus.Uploading => (job.IsUpdate ? "[ v]" : "[>>]", job.IsUpdate ? Color.FromArgb(180, 100, 220) : CGoldBrt),
-                UploadStatus.Done => ("[✓]", CGreen), UploadStatus.Failed => ("[!!]", CBarFail), UploadStatus.Cancelled => ("[//]", CBarCancel), UploadStatus.UpdateReady => ("[^]", Color.FromArgb(180, 100, 220)), _ => ("[??]", CTextSub)
-            };
+            long totalBytes = syncBatch.Sum(j => j.FileSizeBytes);
+            string totalSizeDisplay = totalBytes >= 1048576 ? $"{totalBytes / 1048576.0:0.0} MB" : totalBytes >= 1024 ? $"{totalBytes / 1024.0:0} KB" : $"{totalBytes} B";
+            string syncTimeName = job.IsUpdate ? "UPDATE FISSAL" : $"SYNC @ {job.QueuedAt:h:mm:ss tt}";
+            
+            int childPad = Pad + S(15), childW = WorkingAreaW - childPad - Pad, totalH = RowH + (job.IsExpanded ? rowInfo.ExpandedHeight : 0);
+
+            // [Req 2 & 3] Calculate sync batch averages and states
+            bool batchUploading = syncBatch.Any(j => j.Status == UploadStatus.Uploading || j.Status == UploadStatus.Queued);
+            bool batchHasError = syncBatch.Any(j => j.Status == UploadStatus.Failed || j.Status == UploadStatus.Cancelled);
+            bool batchDone = syncBatch.Count > 0 && syncBatch.All(j => j.Status == UploadStatus.Done || j.Status == UploadStatus.UpdateReady);
+            float batchAvgProgress = syncBatch.Count > 0 ? syncBatch.Average(j => (j.Status == UploadStatus.Done || j.Status == UploadStatus.UpdateReady) ? 1f : j.Progress) : 0f;
+
+            (string glyph, Color gc) = ("[??]", CTextSub);
+            if (job.IsUpdate) {
+                glyph = job.Status == UploadStatus.UpdateReady ? "[^]" : "[ v]";
+                gc = Color.FromArgb(180, 100, 220);
+            } else if (batchHasError && batchUploading) {
+                glyph = "[!!]"; gc = Color.FromArgb(255, 140, 40); // Reddish orange
+            } else if (batchHasError && !batchUploading) {
+                glyph = "[!!]"; gc = CBarFail; // Completely red
+            } else if (batchDone) {
+                glyph = "[✓]"; gc = CGreen; // Light green
+            } else if (batchUploading) {
+                glyph = syncBatch.Any(j => j.Status == UploadStatus.Uploading) ? "[>>]" : "[--]";
+                gc = CGoldBrt;
+            }
 
             int lineX = Pad + S(1), midY = y + S(14); 
             
@@ -1158,28 +1401,83 @@ namespace RedfurSync
                     g.FillRectangle(drawerShadow, childPad + 1, ey, childW - 2, S(10));
                 }
 
-                using var diagTitleBrush = new SolidBrush(diagTitleColor); g.DrawString("// DIAGNOSTICS:", _fBody75Italic, diagTitleBrush, new PointF(childPad + S(4), ey + S(2)));
+                using var diagTitleBrush = new SolidBrush(diagTitleColor); g.DrawString("// DIAGNOSTICS:", _fBody75Italic, diagTitleBrush, new PointF(childPad + S(5), ey));
 
-                string diagContent = GetDiagContent(job);
-
+                string diagContent = GetDiagContent(job, syncBatch);
                 using var errMsgBrush = new SolidBrush(diagTextColor);
                 
-                float textWNoScroll = childW - S(48);
-                float textWWithScroll = childW - S(66); 
+                float textWNoScroll = childW - S(10);
+                float textWWithScroll = childW - S(35);
                 
-                var testSz = g.MeasureString(diagContent, _fBody9Bold, (int)textWNoScroll);
-                bool willScroll = testSz.Height > (rowInfo.ExpandedHeight - S(38));
-                
+                int requiredDrawH = S(20);
+                foreach (var sj in syncBatch) {
+                    requiredDrawH += S(22);
+                    if (sj.Status is UploadStatus.Failed or UploadStatus.Cancelled && !string.IsNullOrWhiteSpace(sj.ErrorMessage)) {
+                        requiredDrawH += (int)g.MeasureString(sj.ErrorMessage, _fBody75Reg, (int)textWWithScroll).Height + S(10);
+                    }
+                }
+
+                bool willScroll = requiredDrawH > (rowInfo.ExpandedHeight - S(38));
                 float actualTextW = willScroll ? textWWithScroll : textWNoScroll;
-                var diagTextRect = new RectangleF(childPad + S(5), ey + S(20), actualTextW, rowInfo.ExpandedHeight - S(25));
-                var sz = g.MeasureString(diagContent, _fBody75Reg, (int)actualTextW);
                 
-                float maxScroll = Math.Max(0, sz.Height - diagTextRect.Height); _diagMaxScrolls[idx] = maxScroll; 
+                var diagTextRect = new RectangleF(childPad + S(5), ey + S(20), actualTextW, rowInfo.ExpandedHeight - S(25));
+                
+                float maxScroll = Math.Max(0, requiredDrawH - diagTextRect.Height); _diagMaxScrolls[idx] = maxScroll; 
                 float currentScroll = _diagScrolls.TryGetValue(idx, out float ds) ? ds : 0f;
                 if (currentScroll > maxScroll) currentScroll = maxScroll; _diagScrolls[idx] = currentScroll; 
 
                 var prevClip = g.Clip; g.SetClip(diagTextRect, CombineMode.Intersect); 
-                g.DrawString(diagContent, _fBody75Reg, errMsgBrush, new RectangleF(diagTextRect.X, diagTextRect.Y - currentScroll, diagTextRect.Width, sz.Height), StringFormat.GenericDefault); g.Clip = prevClip;
+
+                float currentFileY = diagTextRect.Y - currentScroll;
+                
+                if (job.IsUpdate) {
+                     g.DrawString(diagContent, _fBody75Reg, errMsgBrush, new RectangleF(diagTextRect.X, currentFileY, diagTextRect.Width, 9999), StringFormat.GenericDefault); 
+                }
+                else {
+                    foreach (var sj in syncBatch)
+                    {
+                        if (currentFileY > ey + rowInfo.ExpandedHeight) break; // Culling
+
+                        string checkGlyph = sj.Status switch { UploadStatus.Done => "✓", UploadStatus.Failed or UploadStatus.Cancelled => "X", _ => "-" };
+                        Color sCol = sj.Status switch { UploadStatus.Done => CGreen, UploadStatus.Failed or UploadStatus.Cancelled => CBarFail, UploadStatus.Uploading => CGoldBrt, _ => CTextSub };
+                        
+                        using var sBrush = new SolidBrush(sCol);
+                        g.DrawString($"[{checkGlyph}] {sj.FileName}", _fBody75Bold, sBrush, diagTextRect.X, currentFileY);
+                        
+                        double totalMB = sj.FileSizeBytes / 1048576.0;
+                        double totalKB = sj.FileSizeBytes / 1024.0;
+                        string sSizeStr = sj.FileSizeBytes >= 1048576 ? $"{totalMB:0.0}MB" : $"{totalKB:0}KB";
+                        string uploadedStr = sj.FileSizeBytes >= 1048576 ? $"{totalMB * sj.Progress:0.0}MB" : $"{totalKB * sj.Progress:0}KB";
+                        
+                        if (sj.Status == UploadStatus.Queued) uploadedStr = sj.FileSizeBytes >= 1048576 ? "0.0MB" : "0KB";
+                        if (sj.Status == UploadStatus.Done) uploadedStr = sSizeStr;
+                        
+                        string sizeProgressTxt = $"{uploadedStr} / {sSizeStr}";
+                        var szFont = _fBody75Reg; 
+                        var txtSz = g.MeasureString(sizeProgressTxt, szFont);
+                        
+                        float miniBarW = S(65);
+                        float rightEdge = diagTextRect.X + actualTextW;
+                        float textX = rightEdge - txtSz.Width;
+                        float barX = textX - miniBarW - S(8);
+                        
+                        using var miniBg = new SolidBrush(Color.FromArgb(40, sCol)); g.FillRectangle(miniBg, barX, currentFileY + S(6), miniBarW, S(3));
+                        using var miniFg = new SolidBrush(sCol); g.FillRectangle(miniFg, barX, currentFileY + S(6), miniBarW * sj.Progress, S(3));
+
+                        using var sizeBrush = new SolidBrush(sCol);
+                        g.DrawString(sizeProgressTxt, szFont, sizeBrush, textX, currentFileY);
+                        currentFileY += S(22);
+
+                        if (sj.Status is UploadStatus.Failed or UploadStatus.Cancelled && !string.IsNullOrWhiteSpace(sj.ErrorMessage))
+                        {
+                            var errSz = g.MeasureString(sj.ErrorMessage, _fBody75Reg, (int)actualTextW - S(15));
+                            using var errTxtBrush = new SolidBrush(Color.FromArgb(215, 118, 100));
+                            g.DrawString(sj.ErrorMessage, _fBody75Reg, errTxtBrush, new RectangleF(diagTextRect.X + S(15), currentFileY, actualTextW - S(15), errSz.Height));
+                            currentFileY += errSz.Height + S(10);
+                        }
+                    }
+                }
+                g.Clip = prevClip;
 
                 bool hasScroll = maxScroll > 0;
                 if (hasScroll)
@@ -1192,7 +1490,7 @@ namespace RedfurSync
                     float trackBottom = botBoxY - S(3);
                     float trackH = trackBottom - trackY;
 
-                    float thumbH = Math.Max(S(15), trackH * (diagTextRect.Height / sz.Height)), thumbY = trackY + (trackH - thumbH) * (currentScroll / maxScroll);
+                    float thumbH = Math.Max(S(15), trackH * (diagTextRect.Height / requiredDrawH)), thumbY = trackY + (trackH - thumbH) * (currentScroll / maxScroll);
 
                     if (currentScroll < maxScroll - 1)
                     {
@@ -1250,16 +1548,19 @@ namespace RedfurSync
                     float arrowBaseX = btn.Value.X - S(5), arrowY = btn.Value.Y + btn.Value.Height / 2, ah = S(14) * Math.Abs((float)Math.Cos(_spinPhase));
                     if (ah > 0.5f) { using var arrowBrush = new SolidBrush(Color.GreenYellow); g.FillPolygon(arrowBrush, new PointF[] { new PointF(arrowBaseX - S(10), arrowY - ah/2), new PointF(arrowBaseX, arrowY), new PointF(arrowBaseX - S(10), arrowY + ah/2) }); }
                 }
-                DrawBtn(g, btn.Value, canApply ? "Apply" : (canResend ? "Re-send" : "Abort"), btnColor, btnColor, hoverAction, glow: (canApply && AppConfig.FX.ButtonGlows));
+                DrawBtn(g, btn.Value, canApply ? "Apply" : (canResend ? "Resend" : "Abort"), btnColor, btnColor, hoverAction, glow: (canApply && AppConfig.FX.ButtonGlows));
             }
 
-            DrawBtn(g, DiagToggleBtnRect(job, y), job.IsExpanded ? "[X]  DIAG" : "[-]  DIAG", job.IsExpanded ? gc : CGoldDim, job.IsExpanded ? gc : CGoldDim, _hoverDiagJobIdx == idx, glow: (job.IsExpanded && AppConfig.FX.ButtonGlows));
+            DrawBtn(g, DiagToggleBtnRect(job, y), job.IsExpanded ? "X DIAG" : "- DIAG", job.IsExpanded ? gc : CGoldDim, job.IsExpanded ? gc : CGoldDim, _hoverDiagJobIdx == idx, glow: (job.IsExpanded && AppConfig.FX.ButtonGlows));
 
-            DrawHazyText(g, "> " + Trunc(job.FileName, g, _fTitle95, RightBtnX - (childPad + S(34)) - S(40)), _fTitle95, job.Status == UploadStatus.UpdateReady ? Color.FromArgb(210, 160, 240) : CText, childPad + S(33), y + S(6));
+            DrawHazyText(g, "|" + Trunc(syncTimeName, g, _fTitle95, RightBtnX - (childPad + S(34)) - S(40)), _fTitle95, job.Status == UploadStatus.UpdateReady ? Color.FromArgb(210, 160, 240) : CText, childPad + S(33), y + S(6));
             
-            string detailText = job.IsUpdate ? $"> size: {job.FileSizeDisplay}\n> version: v{job.UpdateVersion}" : $"> size: {job.FileSizeDisplay}\n> synced at {job.QueuedAt:h:mm tt}";
+            int finishedCount = syncBatch.Count(j => j.Status == UploadStatus.Done || j.Status == UploadStatus.UpdateReady || j.Status == UploadStatus.Failed || j.Status == UploadStatus.Cancelled);
+            string filesText = batchDone ? $"total synced: {syncBatch.Count}" : $"total files: {finishedCount} / {syncBatch.Count}";
+            string detailText = job.IsUpdate ? $"size      {totalSizeDisplay}\nversion   v{job.UpdateVersion}" : $"size: {totalSizeDisplay}\n>{filesText}";
+            
             var detailSz = g.MeasureString(detailText, _fBody8Italic);
-            var detailRect = new RectangleF(childPad + S(4), y + S(27), detailSz.Width + S(35), detailSz.Height + S(2));
+            var detailRect = new RectangleF(childPad + S(8), y + S(30), detailSz.Width + S(35), detailSz.Height + S(2));
             
             using var infoBgPath = RoundRect(detailRect.X, detailRect.Y, detailRect.Width, detailRect.Height, S(2));
             using var infoBgBrush = new SolidBrush(Color.FromArgb(240, 12, 8, 16));
@@ -1267,32 +1568,52 @@ namespace RedfurSync
             using var infoBorder = new Pen(Color.FromArgb(120, 55, 45, 135), 1.3f);
             g.DrawPath(infoBorder, infoBgPath);
             using var detailTextBrush = new SolidBrush(Color.FromArgb(210, 120, 120, 120));
-            g.DrawString(detailText, _fBody8Italic, detailTextBrush, new PointF(detailRect.X + S(5), detailRect.Y + S(1)));
+            g.DrawString(detailText, _fMono8, detailTextBrush, new PointF(detailRect.X + S(2), detailRect.Y));
 
             int actionBtnSize = S(20);
-            int actionBtnY = y + RowH - actionBtnSize - S(6);
+            int actionBtnY = y + RowH - actionBtnSize - S(4);
             
             float bw = childW - S(20) - (actionBtnSize * 2 + S(20));
-            float bx = childPad + S(4);
+            float bx = childPad + S(10);
             float by = actionBtnY + (actionBtnSize - BarH) / 1f; 
 
-            string statusText = job.Status switch { UploadStatus.UpdateReady => "[RDY!] CLICK APPLY TO UPDATE", UploadStatus.Done => "[DONE] DATA VERIFIED", UploadStatus.Failed => "[ERR!] LUNAR STATIC", UploadStatus.Cancelled => "[VOID] SYNC ABORTED", UploadStatus.Queued => "[PEND] AWAITING ALIGNMENT", UploadStatus.Uploading => job.IsUpdate ? "[XMIT] PULLING NEW MATRIX..." : "[XMIT] TRANSMITTING...", _ => "[ ?? ] UNKNOWN SIGNAL" };
+            string statusText = "[ ?? ] UNKNOWN SIGNAL";
+            if (job.IsUpdate) {
+                statusText = job.Status == UploadStatus.UpdateReady ? "[RDY!] CLICK APPLY TO UPDATE" : "[XMIT] PULLING NEW MATRIX...";
+            } else if (batchHasError && !batchUploading) {
+                statusText = "[ERR!] CHECK DIAG!";
+            } else if (batchHasError && batchUploading) {
+                statusText = "[WARN] FILE ERROR! CHECK DIAG!";
+            } else if (batchDone) {
+                statusText = "[DONE] ALL FILES SYNCED!";
+            } else if (syncBatch.All(j => j.Status == UploadStatus.Queued)) {
+                statusText = "[PEND] AWAITING CONNECTION...";
+            } else {
+                statusText = "[XMIT] SYNCING FILES...";
+            }
 
-            using var statBrush = new SolidBrush(gc); g.DrawString(statusText, job.Status switch { UploadStatus.Done or UploadStatus.UpdateReady => _fBody75Reg, UploadStatus.Failed or UploadStatus.Cancelled => _fBody75Reg, _ => _fBody75Reg }, statBrush, new PointF(bx-7, by - S(13)));
-            string pct = job.Status switch { UploadStatus.Done or UploadStatus.UpdateReady => "100%", UploadStatus.Failed => "ERR", UploadStatus.Cancelled => "N/A", UploadStatus.Queued => "0%", _ => $"{job.Progress * 100:0}%" };
-            g.DrawString(pct, _fBody75Reg, statBrush, new PointF(bx + 8 + bw - g.MeasureString(pct, _fBody75Reg).Width, by - S(13)));
+            using var statBrush = new SolidBrush(gc); 
+            g.DrawString(statusText, job.Status switch { UploadStatus.Done or UploadStatus.UpdateReady => _fBody75Reg, UploadStatus.Failed or UploadStatus.Cancelled => _fBody75Reg, _ => _fBody75Reg }, statBrush, new PointF(bx - S(3), by - S(13)));
+
+            string pct = batchDone ? "100%" : (batchHasError && !batchUploading ? "ERR" : $"{batchAvgProgress * 100:0}%");
+            
+            float pctY = y + S(25);
+            using var pctBrush = new SolidBrush(Color.FromArgb(100, gc));
+            Font digitalFont = _fTitle125Bold; 
+            var pctSz = g.MeasureString(pct, digitalFont);
+            g.DrawString(pct, digitalFont, pctBrush, new PointF(RightBtnX - pctSz.Width - S(25), pctY + S(10)));
 
             using var track = RoundRect(bx, by, bw, BarH, S(1));
 
-            if (job.Status == UploadStatus.Queued && AppConfig.FX.BarPulseQueued)
+            if (syncBatch.All(j => j.Status == UploadStatus.Queued) && AppConfig.FX.BarPulseQueued)
             {
                 using var pulseBrush = new SolidBrush(Color.FromArgb((int)(30 + ((float)(Math.Sin(_shimmer * 0.15f) + 1f) / 2f) * 100), Color.White)); g.FillPath(pulseBrush, track);
             }
 
-            float fill = job.Status == UploadStatus.Done || job.Status == UploadStatus.UpdateReady ? bw : bw * job.Progress;
-            if (fill > 1f && job.Status != UploadStatus.Queued)
+            float fill = batchDone ? bw : bw * batchAvgProgress;
+            if (fill > 1f && !syncBatch.All(j => j.Status == UploadStatus.Queued))
             {
-                Color fc = job.Status switch { UploadStatus.Done or UploadStatus.UpdateReady => CBarDone, UploadStatus.Failed => CBarFail, UploadStatus.Cancelled => CBarCancel, _ => CBarActive };
+                Color fc = gc;
                 using var fp = RoundRect(bx, by, fill, BarH, S(3));
                 
                 if (job.Status == UploadStatus.UpdateReady) { using var updateFill = new SolidBrush(Color.FromArgb(180, 100, 220)); g.FillPath(updateFill, fp); }
@@ -1300,19 +1621,19 @@ namespace RedfurSync
 
                 var prevClip = g.Clip; g.SetClip(fp, CombineMode.Intersect); 
 
-                if (job.Status == UploadStatus.Uploading && AppConfig.FX.BarEnergyUpload)
+                if (batchUploading && AppConfig.FX.BarEnergyUpload)
                 {
                     using var energyPen = new Pen(Color.FromArgb(180, 255, 255, 255), S(3)); float offset = (_shimmer * 2.0f) % S(50);
                     for (float ex = bx - S(70) + offset; ex < bx + fill + S(100); ex += S(10)) g.DrawLine(energyPen, ex, by + BarH + S(2), ex + S(2), by - S(25));
                     using var leadGlow = new LinearGradientBrush(new RectangleF(bx + fill - S(20), by, S(20), BarH), Color.Transparent, Color.FromArgb(255, Color.Orange), LinearGradientMode.Horizontal);
                     if (fill > S(20)) g.FillRectangle(leadGlow, bx + fill - S(20), by, S(20), BarH);
                 }
-                else if ((job.Status == UploadStatus.Failed || job.Status == UploadStatus.Cancelled) && AppConfig.FX.BarStaticFailed)
+                else if (batchHasError && !batchUploading && AppConfig.FX.BarStaticFailed)
                 {
                     using var staticPen = new Pen(Color.FromArgb(30, 0, 0, 0), 4f);
                     for (float ex = bx; ex < bx + fill; ex += S(1)) if (_rand.Next(3) > 1) g.DrawLine(staticPen, ex, by, ex, by + BarH);
                 }
-                else if ((job.Status == UploadStatus.Done || job.Status == UploadStatus.UpdateReady) && AppConfig.FX.BarCoolGlowDone)
+                else if (batchDone && AppConfig.FX.BarCoolGlowDone)
                 {
                     float offset = (_shimmer * 4.0f) % (bw + S(150));
                     if (offset < bw) { using var coolGlow = new LinearGradientBrush(new RectangleF(bx + offset, by, S(7), BarH), Color.Transparent, Color.FromArgb(255, 255, 255), LinearGradientMode.Horizontal); g.FillRectangle(coolGlow, bx + offset, by, S(10), BarH); }
@@ -1434,7 +1755,7 @@ namespace RedfurSync
         private Rectangle? BtnRect(UploadJob job, int y)
         {
             if (!job.CanRetry && !job.CanCancel && job.Status != UploadStatus.Done && job.Status != UploadStatus.UpdateReady) return null;
-            return new Rectangle(RightBtnX, y + S(4), BtnW, BtnH);
+            return new Rectangle(RightBtnX - S(6), y + S(6), BtnW, BtnH);
         }
 
         private Rectangle? TrashBtnRect(UploadJob job, int y, int childPad, int childW)
@@ -1458,11 +1779,11 @@ namespace RedfurSync
             float bw = childW - S(10) - (actionBtnSize * 2 + S(10));
             float bx = childPad + S(5);
             
-            int trashW = actionBtnSize + S(4);  
+            int trashW = actionBtnSize + S(3);  
             return new Rectangle((int)(bx + bw + S(5) + trashW), actionBtnY, actionBtnSize, actionBtnSize);
         }
 
-        private Rectangle DiagToggleBtnRect(UploadJob job, int y) => new Rectangle(RightBtnX, (job.CanRetry || job.CanCancel || job.Status == UploadStatus.Done || job.Status == UploadStatus.UpdateReady) ? y + S(4) + BtnH + S(5) : y + S(9), BtnW, DiagH);
+        private Rectangle DiagToggleBtnRect(UploadJob job, int y) => new Rectangle(RightBtnX, (job.CanRetry || job.CanCancel || job.Status == UploadStatus.Done || job.Status == UploadStatus.UpdateReady) ? y + S(5) + BtnH + S(6) : y + S(9), BtnW, DiagH);
 
         private void DrawHeader(Graphics g)
         {
@@ -1545,7 +1866,14 @@ namespace RedfurSync
 
             if (hasError) statuses.Add(($"!! ERROR IN {errorFile.ToUpper()} !!", Color.FromArgb(255, 255, 40, 40), 2));
             if (hasReadyUpdate) statuses.Add(("!! UPDATE AVAILABLE! CHECK LOGS TO APPLY", Color.FromArgb(255, 200, 60, 255), 3));
-            if (active > 0) statuses.Add(($"> {active} FILES SYNCING", Color.FromArgb(255, 255, 200, 0), 1));
+            
+            // [Req 8] Dynamic files syncing text
+            if (active > 0) 
+            {
+                var activeJobs = _jobs.Where(j => j.Status == UploadStatus.Uploading).ToList();
+                string text = active == 1 ? $"> {activeJobs[0].FileName.ToUpper()} SYNCING" : $"> {active} FILES SYNCING";
+                statuses.Add((text, Color.FromArgb(255, 255, 200, 0), 1));
+            }
             else if (pending > 0) statuses.Add(($"# {pending} FILES PENDING", Color.FromArgb(255, 180, 255, 50), 1));
             
             if (statuses.Count == 0)
@@ -1579,12 +1907,14 @@ namespace RedfurSync
             var currentStatus = statuses[_dispStatusIdx];
             string displayBadge = currentStatus.text; Color badgeColor = currentStatus.color;
 
+            // ... (keep the light drawing loop exactly as it was) ...
             int lightDia = S(9), lightSpacing = S(20), lightsY = (mcY - lightDia+15) / 2, leftLightsStartX = mcX + S(25); 
             Color[] lightColors = { Color.FromArgb(60, 20, 220, 20), Color.FromArgb(50, 250, 190, 0), Color.FromArgb(60, 255, 30, 30), Color.FromArgb(60, 190, 50, 240) };
 
             for (int i = 0; i < 4; i++)
             {
-                bool isActive = statuses.Exists(s => s.type == i), isCurrent = currentStatus.type == i;
+                bool isActive = statuses.Exists(s => s.type == i) && !(_dispState == DisplayState.Glitching && _dispWait < 10);
+                bool isCurrent = currentStatus.type == i;
                 int cx = leftLightsStartX + (i * lightSpacing);
                 if (i == 3) cx += S(18); 
                 
@@ -1613,16 +1943,20 @@ namespace RedfurSync
                 using var glintBrush = new SolidBrush(Color.FromArgb(isActive ? 255 : 180, 255, 255, 255)); g.FillEllipse(glintBrush, cx + S(2), lightsY + S(1), S(3), S(2)); 
             }
 
-            var textSz = g.MeasureString(displayBadge, _fMono9Bold);
+            var textSz = g.MeasureString(displayBadge, _fBody8Reg);
             float maxScroll = Math.Max(0, textSz.Width - (mcW - S(12)));
 
             if (AppConfig.FX.MarqueeTextAnim)
             {
                 if (_dispState == DisplayState.Glitching)
                 {
-                    char[] chars = displayBadge.ToCharArray();
-                    for(int i = 0; i < chars.Length; i++) if (_rand.Next(100) < 12) chars[i] = "░▒_-"[_rand.Next(4)];
-                    displayBadge = new string(chars);
+                    if (_dispWait < 10) { 
+                        displayBadge = ""; 
+                    } else {
+                        char[] chars = displayBadge.ToCharArray();
+                        for(int i = 0; i < chars.Length; i++) if (_rand.Next(100) < 12) chars[i] = "░▒_-"[_rand.Next(4)];
+                        displayBadge = new string(chars);
+                    }
 
                     _dispWait--;
                     if (_dispWait <= 0) { _dispStatusIdx = (_dispStatusIdx + 1) % statuses.Count; _dispState = DisplayState.HoldStart; _marqueeWait = AppConfig.MarqueePause; _marqueeX = 0; }
@@ -1630,7 +1964,19 @@ namespace RedfurSync
                 else if (_dispState == DisplayState.HoldStart)
                 {
                     _marqueeX = 0; _marqueeWait--;
-                    if (_marqueeWait <= 0) { if (maxScroll > 0) _dispState = DisplayState.Scrolling; else { _dispState = DisplayState.Glitching; _dispWait = 25; } }
+                    if (_marqueeWait <= 0) 
+                    { 
+                        if (maxScroll > 0) 
+                        {
+                            _dispState = DisplayState.Scrolling; 
+                        } 
+                        else 
+                        { 
+                            // Skip scrolling and pause without glitching
+                            _dispState = DisplayState.HoldEnd; 
+                            _marqueeWait = 150; 
+                        } 
+                    }
                 }
                 else if (_dispState == DisplayState.Scrolling)
                 {
@@ -1736,6 +2082,48 @@ namespace RedfurSync
             for (int i = -1; i <= 1; i++) { float yPos = midY + (i * S(4)); g.DrawLine(gripDark, sbX + S(2), yPos, sbX + sbWidth - S(3), yPos); g.DrawLine(gripLight, sbX + S(2), yPos + 1, sbX + sbWidth - S(3), yPos + 1); }
         }
 
+private bool GetHitRow(float contentY, out int layoutIdx, out RowLayout hitRow)
+        {
+            layoutIdx = -1;
+            hitRow = default;
+
+            // Pass 1: Headers (Sticky and Normal)
+            for (int i = 0; i < _layout.Count; i++)
+            {
+                var row = _layout[i];
+                if (!row.IsSeparator) continue;
+                
+                int drawY = row.Y;
+                if (row.GroupIsExpanded) {
+                    int scrollTop = (int)_scrollY;
+                    if (drawY < scrollTop && drawY + row.GroupTotalHeight - row.Height > scrollTop) {
+                        drawY = scrollTop;
+                    }
+                }
+                
+                if (contentY >= drawY && contentY < drawY + row.Height) {
+                    layoutIdx = i;
+                    hitRow = row;
+                    hitRow.Y = drawY; // Map the virtual Y so rect bounds check works
+                    return true;
+                }
+            }
+
+            // Pass 2: Jobs
+            for (int i = 0; i < _layout.Count; i++)
+            {
+                var row = _layout[i];
+                if (row.IsSeparator) continue;
+                if (contentY >= row.Y && contentY < row.Y + row.Height) {
+                    layoutIdx = i;
+                    hitRow = row;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         private void OnMouseDown(object? sender, MouseEventArgs e)
         {
             if (e.Button != MouseButtons.Left || CloseBtnRect.Contains(e.Location)) return;
@@ -1760,26 +2148,28 @@ namespace RedfurSync
                 float contentY = e.Y - HeaderH + _scrollY;
                 if (_slideOffset > 0 && contentY >= _slideStartY) contentY -= _slideOffset;
 
-                foreach (var row in _layout)
+                if (GetHitRow(contentY, out int li, out RowLayout row))
                 {
-                    if (row.IsSeparator) continue;
-                    var job = _jobs[row.JobIndex];
-                    if (job.IsExpanded && contentY >= row.Y + RowH && contentY <= row.Y + RowH + row.ExpandedHeight)
+                    if (!row.IsSeparator && row.JobIndex >= 0 && row.JobIndex < _jobs.Count)
                     {
-                        float diagMaxScroll = _diagMaxScrolls.TryGetValue(row.JobIndex, out float ms) ? ms : 0f;
-                        if (diagMaxScroll > 0) 
+                        var job = _jobs[row.JobIndex];
+                        if (job.IsExpanded && contentY >= row.Y + RowH && contentY <= row.Y + RowH + row.ExpandedHeight)
                         {
-                            float sbW = S(AppConfig.DiagScrollWidth);
-                            float trackY = (row.Y + RowH) + S(AppConfig.DiagScrollTopPad) + sbW + S(2); 
-                            float trackH = row.ExpandedHeight - S(AppConfig.DiagScrollTopPad) - S(AppConfig.DiagScrollBottomPad) - (sbW * 2) - S(4);
-                            float currentScroll = _diagScrolls.TryGetValue(row.JobIndex, out float ds) ? ds : 0f;
-                            float thumbH = Math.Max(S(12), trackH * ((row.ExpandedHeight - S(38)) / (row.ExpandedHeight - S(38) + diagMaxScroll))), screenThumbY = HeaderH - _scrollY + trackY + (trackH - thumbH) * (currentScroll / diagMaxScroll);
-
-                            if (_slideOffset > 0 && row.Y >= _slideStartY) screenThumbY += _slideOffset;
-
-                            if (new RectangleF(WorkingAreaW - Pad - sbW - S(AppConfig.DiagScrollRightOffset), screenThumbY, sbW, thumbH).Contains(e.Location))
+                            float diagMaxScroll = _diagMaxScrolls.TryGetValue(row.JobIndex, out float ms) ? ms : 0f;
+                            if (diagMaxScroll > 0) 
                             {
-                                _isDraggingDiagIdx = row.JobIndex; _dragStartY = e.Y; _dragStartScrollY = currentScroll; return; 
+                                float sbW = S(AppConfig.DiagScrollWidth);
+                                float trackY = (row.Y + RowH) + S(AppConfig.DiagScrollTopPad) + sbW + S(2); 
+                                float trackH = row.ExpandedHeight - S(AppConfig.DiagScrollTopPad) - S(AppConfig.DiagScrollBottomPad) - (sbW * 2) - S(4);
+                                float currentScroll = _diagScrolls.TryGetValue(row.JobIndex, out float ds) ? ds : 0f;
+                                float thumbH = Math.Max(S(12), trackH * ((row.ExpandedHeight - S(38)) / (row.ExpandedHeight - S(38) + diagMaxScroll))), screenThumbY = HeaderH - _scrollY + trackY + (trackH - thumbH) * (currentScroll / diagMaxScroll);
+
+                                if (_slideOffset > 0 && row.Y >= _slideStartY) screenThumbY += _slideOffset;
+
+                                if (new RectangleF(WorkingAreaW - Pad - sbW - S(AppConfig.DiagScrollRightOffset), screenThumbY, sbW, thumbH).Contains(e.Location))
+                                {
+                                    _isDraggingDiagIdx = row.JobIndex; _dragStartY = e.Y; _dragStartScrollY = currentScroll; return; 
+                                }
                             }
                         }
                     }
@@ -1832,29 +2222,32 @@ namespace RedfurSync
                 float contentY = e.Y - HeaderH + _scrollY;
                 if (_slideOffset > 0 && contentY >= _slideStartY) contentY -= _slideOffset;
 
-                for (int li = 0; li < _layout.Count; li++)
+                if (GetHitRow(contentY, out int li, out RowLayout row))
                 {
-                    var row = _layout[li];
-                    if (contentY < row.Y || contentY >= row.Y + row.Height) continue;
+                    if (row.IsSeparator) { 
+                        if (DeleteBtnRect(row).Contains(e.X, (int)contentY)) _hoverDeleteGroupIdx = li; 
+                        else _hoverLayoutIdx = li; 
+                    }
+                    else if (row.JobIndex >= 0 && row.JobIndex < _jobs.Count)
+                    {
+                        var job = _jobs[row.JobIndex];
+                        int childPad = Pad + S(18);
+                        int childW = WorkingAreaW - childPad - Pad;
 
-                    if (row.IsSeparator) { if (DeleteBtnRect(row).Contains(e.X, (int)contentY)) _hoverDeleteGroupIdx = li; else _hoverLayoutIdx = li; break; }
-
-                    if (row.JobIndex < 0 || row.JobIndex >= _jobs.Count) continue;
-
-                    var job = _jobs[row.JobIndex];
-                    int childPad = Pad + S(18);
-                    int childW = WorkingAreaW - childPad - Pad;
-
-                    var copyBtn = CopyBtnRect(job, row.Y, childPad, childW);
-                    if (copyBtn.HasValue && copyBtn.Value.Contains(e.X, (int)contentY)) { _hoverCopyJobIdx = row.JobIndex; break; }
-
-                    var trashBtn = TrashBtnRect(job, row.Y, childPad, childW);
-                    if (trashBtn.HasValue && trashBtn.Value.Contains(e.X, (int)contentY)) { _hoverTrashJobIdx = row.JobIndex; break; }
-                    
-                    if (DiagToggleBtnRect(job, row.Y).Contains(e.X, (int)contentY)) { _hoverDiagJobIdx = row.JobIndex; break; }
-                    
-                    var b = BtnRect(job, row.Y); if (b.HasValue && b.Value.Contains(e.X, (int)contentY)) { _hoverLayoutIdx = li; break; }
-                    break;
+                        var copyBtn = CopyBtnRect(job, row.Y, childPad, childW);
+                        if (copyBtn.HasValue && copyBtn.Value.Contains(e.X, (int)contentY)) { _hoverCopyJobIdx = row.JobIndex; }
+                        else
+                        {
+                            var trashBtn = TrashBtnRect(job, row.Y, childPad, childW);
+                            if (trashBtn.HasValue && trashBtn.Value.Contains(e.X, (int)contentY)) { _hoverTrashJobIdx = row.JobIndex; }
+                            else if (DiagToggleBtnRect(job, row.Y).Contains(e.X, (int)contentY)) { _hoverDiagJobIdx = row.JobIndex; }
+                            else
+                            {
+                                var b = BtnRect(job, row.Y); 
+                                if (b.HasValue && b.Value.Contains(e.X, (int)contentY)) { _hoverLayoutIdx = li; }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1875,10 +2268,8 @@ namespace RedfurSync
                 float contentY = e.Y - HeaderH + _scrollY;
                 if (_slideOffset > 0 && contentY >= _slideStartY) contentY -= _slideOffset;
 
-                foreach (var row in _layout)
+                if (GetHitRow(contentY, out int li, out RowLayout row))
                 {
-                    if (contentY < row.Y || contentY >= row.Y + row.Height) continue;
-
                     if (row.IsSeparator)
                     {
                         if (DeleteBtnRect(row).Contains(e.X, (int)contentY))
@@ -1892,13 +2283,13 @@ namespace RedfurSync
                                 foreach(var thisJob in _jobs) 
                                 {
                                     bool isNewGroup = currentGroupAnchor == null
-                                                    || Math.Abs((thisJob.QueuedAt - currentGroupAnchor.Value).TotalSeconds) > 60
+                                                    || thisJob.QueuedAt.Date != currentGroupAnchor.Value.Date
                                                     || (lastWasUpdate.HasValue && lastWasUpdate.Value != thisJob.IsUpdate);
                                     
                                     if (isNewGroup) 
                                     {
                                         currentGroupAnchor = thisJob.QueuedAt;
-                                        currentGroupText = thisJob.QueuedAt.ToString("MMM dd, h:mm:ss tt");
+                                        currentGroupText = thisJob.QueuedAt.ToString("MMM dd, yyyy").ToUpper();
                                     }
                                     
                                     if (currentGroupText == row.GroupText && thisJob.CanRetry) 
@@ -1914,45 +2305,46 @@ namespace RedfurSync
                                 _purgeAnimFrames = MaxPurgeFrames;
                                 Invalidate(); 
                             }
+                        }
+                        else
+                        {
+                            if (_expandedLogs.Contains(row.SepText)) _expandedLogs.Remove(row.SepText); else _expandedLogs.Add(row.SepText);
+                            _layoutNeedsUpdate = true; EnsureLayoutUpdated(); Invalidate(); return;
+                        }
+                    }
+                    else if (row.JobIndex >= 0 && row.JobIndex < _jobs.Count)
+                    {
+                        var job = _jobs[row.JobIndex];
+                        int childPad = Pad + S(18);
+                        int childW = WorkingAreaW - childPad - Pad;
+
+                        var copyBtn = CopyBtnRect(job, row.Y, childPad, childW);
+                        if (copyBtn.HasValue && copyBtn.Value.Contains(e.X, (int)contentY))
+                        {
+                            string diagContent = GetDiagContent(job);
+                            try { Clipboard.SetText(diagContent); } catch { /* silent */ }
+                            Color thC = job.Status switch { UploadStatus.Failed or UploadStatus.Cancelled => CBarFail, UploadStatus.Done => CGreen, UploadStatus.UpdateReady => Color.FromArgb(180, 100, 220), _ => CGoldBrt };
+                            _copyBubbles.Add(new CopyBubble { X = e.X, Y = e.Y, Alpha = 255f, ThemeColor = thC }); Invalidate(); return;
+                        }
+
+                        var trashBtn = TrashBtnRect(job, row.Y, childPad, childW);
+                        if (trashBtn.HasValue && trashBtn.Value.Contains(e.X, (int)contentY))
+                        {
+                            _purgingJobRef = job; 
+                            _purgeAnimFrames = MaxJobPurgeFrames;
+                            Invalidate();
                             return;
                         }
 
-                        if (_expandedLogs.Contains(row.SepText)) _expandedLogs.Remove(row.SepText); else _expandedLogs.Add(row.SepText);
-                        _layoutNeedsUpdate = true; EnsureLayoutUpdated(); Invalidate(); return;
-                    }
+                        if (DiagToggleBtnRect(job, row.Y).Contains(e.X, (int)contentY)) { job.IsExpanded = !job.IsExpanded; _layoutNeedsUpdate = true; EnsureLayoutUpdated(); Invalidate(); return; }
 
-                    if (row.JobIndex < 0 || row.JobIndex >= _jobs.Count) continue;
-
-                    var job = _jobs[row.JobIndex];
-                    int childPad = Pad + S(18);
-                    int childW = WorkingAreaW - childPad - Pad;
-
-                    var copyBtn = CopyBtnRect(job, row.Y, childPad, childW);
-                    if (copyBtn.HasValue && copyBtn.Value.Contains(e.X, (int)contentY))
-                    {
-                        string diagContent = GetDiagContent(job);
-                        try { Clipboard.SetText(diagContent); } catch { /* silent */ }
-                        Color thC = job.Status switch { UploadStatus.Failed or UploadStatus.Cancelled => CBarFail, UploadStatus.Done => CGreen, UploadStatus.UpdateReady => Color.FromArgb(180, 100, 220), _ => CGoldBrt };
-                        _copyBubbles.Add(new CopyBubble { X = e.X, Y = e.Y, Alpha = 255f, ThemeColor = thC }); Invalidate(); return;
-                    }
-
-                    var trashBtn = TrashBtnRect(job, row.Y, childPad, childW);
-                    if (trashBtn.HasValue && trashBtn.Value.Contains(e.X, (int)contentY))
-                    {
-                        _purgingJobRef = job; 
-                        _purgeAnimFrames = MaxJobPurgeFrames;
-                        Invalidate();
-                        return;
-                    }
-
-                    if (DiagToggleBtnRect(job, row.Y).Contains(e.X, (int)contentY)) { job.IsExpanded = !job.IsExpanded; _layoutNeedsUpdate = true; EnsureLayoutUpdated(); Invalidate(); return; }
-
-                    var b = BtnRect(job, row.Y);
-                    if (b.HasValue && b.Value.Contains(e.X, (int)contentY))
-                    {
-                        if (job.IsUpdate && job.Status == UploadStatus.UpdateReady) _onApply(job);
-                        else { if (job.CanRetry || job.Status == UploadStatus.Done) _onRetry(job); else if (job.CanCancel) _onCancel(job); }
-                        Invalidate(); return;
+                        var b = BtnRect(job, row.Y);
+                        if (b.HasValue && b.Value.Contains(e.X, (int)contentY))
+                        {
+                            if (job.IsUpdate && job.Status == UploadStatus.UpdateReady) _onApply(job);
+                            else { if (job.CanRetry || job.Status == UploadStatus.Done) _onRetry(job); else if (job.CanCancel) _onCancel(job); }
+                            Invalidate(); return;
+                        }
                     }
                 }
             }

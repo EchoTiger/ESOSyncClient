@@ -36,6 +36,7 @@ namespace RedfurSync
         private readonly object _jobLock   = new();
         private readonly object _hashLock  = new();
         private readonly System.Timers.Timer _updateTimer = new();
+        private readonly SemaphoreSlim _uploadThrottle = new SemaphoreSlim(3, 3); // Max 3 concurrent uploads
 
         public FileWatcherService(Action<string> onStatus)
         {
@@ -258,7 +259,7 @@ namespace RedfurSync
             _ = ProcessUploadAsync(job);
         }
 
-        private async Task ProcessUploadAsync(UploadJob job)
+private async Task ProcessUploadAsync(UploadJob job)
         {
             _onStatus($"Dispatching {job.FileName}...");
             bool success = false;
@@ -267,16 +268,32 @@ namespace RedfurSync
 
             while (uploadRetries < maxUploadRetries && !success && !job.Cts.Token.IsCancellationRequested)
             {
-                job.Status = UploadStatus.Uploading;
+                job.Status = UploadStatus.Queued;
                 NotifyChanged();
 
-                success = await _uploader.UploadAsync(job);
+                await _uploadThrottle.WaitAsync(job.Cts.Token);
+                try
+                {
+                    if (job.Cts.Token.IsCancellationRequested) break;
+
+                    job.Status = UploadStatus.Uploading;
+                    NotifyChanged();
+
+                    success = await _uploader.UploadAsync(job);
+                }
+                finally
+                {
+                    _uploadThrottle.Release();
+                }
 
                 if (!success && !job.Cts.Token.IsCancellationRequested)
                 {
                     uploadRetries++;
                     job.Status = UploadStatus.Queued;
-                    job.ErrorMessage = $"Failed. Retrying {uploadRetries}/{maxUploadRetries}...";
+                    // [Req 2] Do not overwrite the actual error message
+                    if (string.IsNullOrWhiteSpace(job.ErrorMessage))
+                        job.ErrorMessage = _uploader.LastError ?? "Transmission failed.";
+                    
                     NotifyChanged();
                     
                     try { await Task.Delay(3000 * uploadRetries, job.Cts.Token); }
@@ -313,7 +330,7 @@ namespace RedfurSync
                 _onStatus($"Transmission failed: {job.FileName}");
             }
         }
-
+        
         private bool IsFileLocked(string filePath)
         {
             try
@@ -339,8 +356,9 @@ namespace RedfurSync
 
             foreach (var job in sortedJobs)
             {
+                // [Req 4] Group by Day
                 bool isNewGroup = groupStartTime == null || 
-                                  Math.Abs((job.QueuedAt - groupStartTime.Value).TotalSeconds) > 60 || 
+                                  job.QueuedAt.Date != groupStartTime.Value.Date || 
                                   (lastWasUpdate.HasValue && lastWasUpdate.Value != job.IsUpdate);
 
                 if (isNewGroup || currentGroup == null)
