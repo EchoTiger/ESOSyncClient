@@ -32,6 +32,9 @@ namespace RedfurSync
         [JsonPropertyName("RunOnStartup")]
         public bool   RunOnStartup { get; set; } = true;
         
+        [JsonPropertyName("AppScale")]
+        public float  AppScale { get; set; } = 1.0f;
+        
         [JsonPropertyName("LastUpdatePrompt")]
         public DateTime LastUpdatePrompt { get; set; } = DateTime.MinValue;
         
@@ -42,14 +45,19 @@ namespace RedfurSync
         public int VisualFidelityInt 
         { 
             get => (int)VisualFidelity; 
-            set => VisualFidelity = (UploadProgressForm.AppConfig.FidelityMode)value; 
+            set 
+            {
+                if (Enum.IsDefined(typeof(UploadProgressForm.AppConfig.FidelityMode), value) && value != 0)
+                    VisualFidelity = (UploadProgressForm.AppConfig.FidelityMode)value;
+                else
+                    VisualFidelity = UploadProgressForm.AppConfig.FidelityMode.Medium;
+            }
         }
         
     private static readonly JsonSerializerOptions _opts = new() 
     { 
         WriteIndented = true,
         PropertyNameCaseInsensitive = true,
-        //Converters = { new JsonStringEnumConverter() }, 
         IncludeFields = true 
     };
 
@@ -138,7 +146,6 @@ namespace RedfurSync
             }
             catch (Exception ex)
             {
-                // 🐾 A sharp cry so we know why she cannot write!
                 System.Windows.Forms.MessageBox.Show($"Fissal's claws slipped while writing memory:\n\n{ex.Message}\n\n{ex.StackTrace}", "Save Error");
             }
         }

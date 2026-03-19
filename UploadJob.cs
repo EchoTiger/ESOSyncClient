@@ -32,7 +32,7 @@ namespace RedfurSync
         public bool IsUpdate { get; init; } = false;
         public string CurrentVersion { get; init; } = string.Empty;
         public string UpdateVersion { get; init; } = string.Empty;
-        public string Changelog { get; init; } = string.Empty;
+        public string Changelog { get; set; } = string.Empty;
         public string DownloadUrl { get; init; } = string.Empty;
 
         public CancellationTokenSource Cts { get; set; } = new();

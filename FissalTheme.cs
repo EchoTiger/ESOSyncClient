@@ -153,13 +153,9 @@ namespace RedfurSync
         }
 
         // ── The Translation Magic
-        // Converts your original "Points" to "Pixels" (1 Point = 1.333 Pixels)
-        // This ensures the text stays exactly the size you designed it to be,
-        // while snapping to whole pixels so the 8-bit aesthetic stays perfectly sharp!
-// ── The Translation Magic
         // Tweak this number to grow or shrink all text across the entire app!
-        // 1.0f is default. 1.15f makes everything 15% larger.
-        public static float GlobalTextScale = 1.25f; 
+        public static float GlobalTextScale => AppConfig.Instance.AppScale * 1.25f;
+
         private static float PtToPx(float pt, float scale)
         {
             // Fissal now multiplies the final size by your global preference
