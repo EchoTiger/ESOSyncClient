@@ -30,9 +30,25 @@ namespace RedfurSync
                     PropertyNameCaseInsensitive = true 
                 });
                 
-                if (payload != null && !string.IsNullOrWhiteSpace(payload.Version) && payload.Version != currentVersion)
-                {                    
-                    return payload;
+                if (payload != null && !string.IsNullOrWhiteSpace(payload.Version))
+                {
+                    // Parse both strings into proper Version objects
+                    bool isServerVerValid = Version.TryParse(payload.Version, out Version serverVersion);
+                    bool isLocalVerValid = Version.TryParse(currentVersion, out Version localVersion);
+
+                    if (isServerVerValid && isLocalVerValid)
+                    {
+                        // Now it truly checks if the server is offering a BIGGER number
+                        if (serverVersion > localVersion)
+                        {
+                            return payload;
+                        }
+                    }
+                    else if (payload.Version != currentVersion)
+                    {
+                        // A soft fallback just in case non-standard strings (like "1.1a") are used
+                        return payload;
+                    }
                 }
             }
             catch (Exception ex) 

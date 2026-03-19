@@ -795,20 +795,33 @@ private void EnsureLayoutUpdated()
 
                         if (anchorJob.IsExpanded)
                         {
-                            // Calculate height needed for DIAG panel to fit all files in this sync
-                            int filesHeight = syncBatch.Count * S(15); // Matched to actual drawing height
-                            int errorsHeight = 0;
+                            int neededH;
                             
-                            foreach(var idx in syncBatch) {
-                                if (!string.IsNullOrWhiteSpace(_jobs[idx].ErrorMessage)) {
-                                    float textWNoScroll = childW - S(48);
-                                    var sz = dummyG.MeasureString(_jobs[idx].ErrorMessage, _fBody75Reg, (int)textWNoScroll);
-                                    errorsHeight += (int)sz.Height + S(10); // Matched to actual drawing padding
+                            if (anchorJob.IsUpdate)
+                            {
+                                // Fissal measures the full weight of the patch notes
+                                string diagText = GetDiagContent(anchorJob);
+                                float textWNoScroll = childW - S(48);
+                                var sz = dummyG.MeasureString(diagText, _fBody75Reg, (int)textWNoScroll);
+                                neededH = (int)sz.Height + S(60); 
+                            }
+                            else
+                            {
+                                // Standard file and error measurement
+                                int filesHeight = syncBatch.Count * S(15);
+                                int errorsHeight = 0;
+                                
+                                foreach(var idx in syncBatch) {
+                                    if (!string.IsNullOrWhiteSpace(_jobs[idx].ErrorMessage)) {
+                                        float textWNoScroll = childW - S(48);
+                                        var sz = dummyG.MeasureString(_jobs[idx].ErrorMessage, _fBody75Reg, (int)textWNoScroll);
+                                        errorsHeight += (int)sz.Height + S(10); 
+                                    }
                                 }
+                                neededH = filesHeight + errorsHeight + S(45);
                             }
 
-                            int neededH = filesHeight + errorsHeight + S(45);
-                            calculatedExpandH = Math.Clamp(neededH, S(50), S(350)); // Allow larger diag panel
+                            calculatedExpandH = Math.Clamp(neededH, S(50), S(350)); 
                         }
 
                         int h = RowH + (anchorJob.IsExpanded ? calculatedExpandH : 0);
@@ -1572,10 +1585,19 @@ private void EnsureLayoutUpdated()
                 float textWWithScroll = childW - S(35);
                 
                 int requiredDrawH = 0; 
-                foreach (var sj in syncBatch) {
-                    requiredDrawH += S(15); 
-                    if (sj.Status is UploadStatus.Failed or UploadStatus.Cancelled && !string.IsNullOrWhiteSpace(sj.ErrorMessage)) {
-                        requiredDrawH += (int)g.MeasureString(sj.ErrorMessage, _fBody75Reg, (int)textWWithScroll).Height + S(10);
+
+                if (job.IsUpdate)
+                {
+                    // The scrollbar must feel the full height of the changelog
+                    requiredDrawH = (int)g.MeasureString(diagContent, _fBody75Reg, (int)textWWithScroll).Height + S(20);
+                }
+                else
+                {
+                    foreach (var sj in syncBatch) {
+                        requiredDrawH += S(15); 
+                        if (sj.Status is UploadStatus.Failed or UploadStatus.Cancelled && !string.IsNullOrWhiteSpace(sj.ErrorMessage)) {
+                            requiredDrawH += (int)g.MeasureString(sj.ErrorMessage, _fBody75Reg, (int)textWWithScroll).Height + S(10);
+                        }
                     }
                 }
 
@@ -1951,7 +1973,7 @@ private void EnsureLayoutUpdated()
             else
             {
                 string iconChar = iconType switch {
-                "RESEND" => "↻", "ABORT" => "✖", "APPLY" => "⇪", _ => "?"
+                "RESEND" => "↻", "ABORT" => "X", "APPLY" => "⇪", _ => "?"
                 };
                 using var textBrush = new SolidBrush(activeColor);
                 

@@ -8,6 +8,7 @@ namespace RedfurSync
 {
     public enum UploadStatus { Queued, Uploading, Done, Failed, Cancelled, UpdateReady }
 
+    [Obfuscation(Exclude = true, ApplyToMembers = true)]
     public class UpdatePayload
     {
         public string Version { get; set; } = string.Empty;
