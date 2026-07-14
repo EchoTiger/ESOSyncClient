@@ -15,7 +15,7 @@ namespace RedfurSync
 
         public RelayPairingForm(string currentCode)
         {
-            AutoScaleMode = AutoScaleMode.None;
+            AutoScaleMode = AutoScaleMode.Dpi;
             FormBorderStyle = FormBorderStyle.FixedDialog;
             MaximizeBox = false;
             MinimizeBox = false;
@@ -48,7 +48,7 @@ namespace RedfurSync
                 Size = new Size(385, 48),
                 ForeColor = CTextSub,
                 Font = Body(10f, _scale),
-                Text = "Open the Redfur dashboard, create a pairing code, then enter it below.\nThe code expires after ten minutes.",
+                Text = "Open the Redfur dashboard, create a pairing code, then enter it below.\nNo API key is needed. The code expires after ten minutes.",
             };
             Controls.Add(copy);
 

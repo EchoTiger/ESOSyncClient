@@ -290,6 +290,7 @@ private void CheckBatchCompletion()
 
             menu.Items.Add("📝  Register Your Name",      null, OnSetDisplayName);
             menu.Items.Add("🔗  Pair Fissal Relay",       null, OnPairRelay);
+            menu.Items.Add("💬  Ask Fissal",              null, OnAskFissal);
             menu.Items.Add("📡  Fissal Config",          null, (_, _) => OpenConfigFile());
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("🔌  Cut Connection",          null, OnShutdown);
@@ -356,6 +357,17 @@ private void CheckBatchCompletion()
             {
                 _ = _watcher.StartAsync();
             }
+        }
+
+        private void OnAskFissal(object? sender, EventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken))
+            {
+                ShowAlert("Pairing Required", "Pair Fissal Relay before opening the assistant.", FissalAlert.AlertLevel.TotalError);
+                return;
+            }
+            using var form = new RelayAssistantForm(_watcher.AskFissalAsync);
+            form.ShowDialog();
         }
 
         private void OnShutdown(object? sender, EventArgs e)

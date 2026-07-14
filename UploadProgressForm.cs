@@ -642,7 +642,7 @@ namespace RedfurSync
                     UploadStatus.Done => "[ OK ] Signal verified. No anomalies in the transmission log.", 
                     UploadStatus.Uploading => $"[ >> ] Active transmission in progress -- {job.Progress * 100:0}% complete.",
                     UploadStatus.Queued => "[ -- ] Awaiting open transmission slot. Standing by.", 
-                    UploadStatus.UpdateReady => $"[ OK ] Matrix downloaded and verified. Fissal is ready to deplay this new module at your will!\n • Current Build : v{job.CurrentVersion}\n • Target Build  : v{job.UpdateVersion}\n • Payload Size  : {job.FileSizeDisplay}\n\n[ CHANGELOG ] :\n{job.Changelog}\n\n[ OK ] Ready for integration!",
+                    UploadStatus.UpdateReady => $"[ OK ] Matrix downloaded; its hash matches the update manifest. Publisher signing is not configured.\n • Current Build : v{job.CurrentVersion}\n • Target Build  : v{job.UpdateVersion}\n • Payload Size  : {job.FileSizeDisplay}\n\n[ CHANGELOG ] :\n{job.Changelog}\n\n[ OK ] Ready for integration!",
                     _ => "[ ?? ] Signal state unknown."
                 };
             }

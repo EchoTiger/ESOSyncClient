@@ -26,6 +26,8 @@ namespace RedfurSync
         private bool _isExpanded = false;
 
         public string FilePath    { get; init; } = string.Empty;
+        public string SourcePath  { get; init; } = string.Empty;
+        public bool   IsSnapshot  { get; init; } = false;
         public string FileName    { get; init; } = string.Empty;
         public long   FileSizeBytes { get; init; } = 0;
         public DateTime QueuedAt  { get; init; } = DateTime.Now;

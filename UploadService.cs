@@ -101,7 +101,7 @@ namespace RedfurSync
                 if (!CryptographicOperations.FixedTimeEquals(
                     Convert.FromHexString(actualHash), Convert.FromHexString(job.UpdateSha256)))
                 {
-                    throw new InvalidOperationException("Downloaded update hash did not match the signed manifest.");
+                    throw new InvalidOperationException("Downloaded update hash did not match the update manifest.");
                 }
 
                 job.Progress = 1f;
@@ -192,6 +192,78 @@ namespace RedfurSync
             catch (Exception ex)
             {
                 return (false, $"Pairing failed: {ex.Message}");
+            }
+        }
+
+        public async Task<(bool ok, string message, string model)> AskFissalAsync(string prompt)
+        {
+            if (string.IsNullOrWhiteSpace(_config.DeviceToken))
+                return (false, "Pair Fissal Relay before using the assistant.", string.Empty);
+            if (string.IsNullOrWhiteSpace(prompt) || prompt.Trim().Length > 1200)
+                return (false, "Enter a question between 1 and 1,200 characters.", string.Empty);
+
+            try
+            {
+                var payload = JsonSerializer.Serialize(new { prompt = prompt.Trim() });
+                using var request = CreateSyncRequest(HttpMethod.Post, BuildRelayUri("/assistant"),
+                    new StringContent(payload, System.Text.Encoding.UTF8, "application/json"));
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(90));
+                using var response = await _syncHttp.SendAsync(request, cts.Token);
+                var json = await response.Content.ReadAsStringAsync(cts.Token);
+                using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json);
+                if (!response.IsSuccessStatusCode)
+                {
+                    var error = document.RootElement.TryGetProperty("error", out var errorValue)
+                        ? errorValue.GetString()
+                        : null;
+                    return (false, error ?? $"Fissal returned HTTP {(int)response.StatusCode}.", string.Empty);
+                }
+                var text = document.RootElement.TryGetProperty("text", out var textValue) ? textValue.GetString() : null;
+                var model = document.RootElement.TryGetProperty("model", out var modelValue) ? modelValue.GetString() : null;
+                return string.IsNullOrWhiteSpace(text)
+                    ? (false, "Fissal returned an empty response.", string.Empty)
+                    : (true, text, model ?? string.Empty);
+            }
+            catch (TaskCanceledException)
+            {
+                return (false, "Fissal did not answer before the request timed out.", string.Empty);
+            }
+            catch (Exception ex)
+            {
+                return (false, $"Could not reach Fissal: {ex.Message}", string.Empty);
+            }
+        }
+
+        public async Task<HashSet<string>?> GetMissingSaleIdsAsync(IReadOnlyList<string> saleIds, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(_config.DeviceToken)) return null;
+            var missing = new HashSet<string>(StringComparer.Ordinal);
+            try
+            {
+                for (int offset = 0; offset < saleIds.Count; offset += 400)
+                {
+                    var count = Math.Min(400, saleIds.Count - offset);
+                    var batch = saleIds.Skip(offset).Take(count).ToArray();
+                    var payload = JsonSerializer.Serialize(new { saleIds = batch });
+                    using var request = CreateSyncRequest(HttpMethod.Post, BuildRelayUri("/mm/known"),
+                        new StringContent(payload, System.Text.Encoding.UTF8, "application/json"));
+                    using var response = await _syncHttp.SendAsync(request, cancellationToken);
+                    if (!response.IsSuccessStatusCode) return null;
+                    using var document = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cancellationToken));
+                    if (!document.RootElement.TryGetProperty("missingSaleIds", out var values)
+                        || values.ValueKind != JsonValueKind.Array)
+                        return null;
+                    foreach (var value in values.EnumerateArray())
+                    {
+                        var saleId = value.GetString();
+                        if (!string.IsNullOrWhiteSpace(saleId)) missing.Add(saleId);
+                    }
+                }
+                return missing;
+            }
+            catch
+            {
+                return null;
             }
         }
 

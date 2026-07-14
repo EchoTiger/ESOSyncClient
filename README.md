@@ -160,6 +160,11 @@ finished downloading.
 
 ### Stage 5: Package and release safely
 
+Current release blocker: no code-signing certificate or signing secret is
+configured in GitHub Actions. The tag workflow verifies SHA-256 and size and
+publishes from a draft only after artifact checks pass, but the executable,
+zip, and manifest remain unsigned. Do not describe them as publisher-verified.
+
 - Versioned configuration migrations
 - Windows Credential Manager or DPAPI for secrets
 - Signed installer and executable

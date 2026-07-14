@@ -29,6 +29,9 @@ namespace RedfurSync
         public event Action?               JobsChanged;
         public event Action<bool, string>? ConnectionChecked;
 
+        public Task<(bool ok, string message, string model)> AskFissalAsync(string prompt)
+            => _uploader.AskFissalAsync(prompt);
+
         private readonly List<FileSystemWatcher>               _watchers       = new();
         private readonly Dictionary<string, System.Timers.Timer> _debounceTimers = new();
         private readonly Dictionary<string, string>            _lastFileHashes = new();
@@ -218,12 +221,30 @@ namespace RedfurSync
         {
             try
             {
-                using var md5 = MD5.Create();
-                using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                var hash = md5.ComputeHash(stream);
+                using var sha256 = SHA256.Create();
+                using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+                var hash = sha256.ComputeHash(stream);
                 return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
             }
             catch { return string.Empty; }
+        }
+
+        private static string CreateSnapshot(string sourcePath)
+        {
+            var spoolDirectory = Path.Combine(AppConfig.ConfigDirectory, "spool");
+            Directory.CreateDirectory(spoolDirectory);
+            var snapshotPath = Path.Combine(spoolDirectory, $"{Guid.NewGuid():N}-{Path.GetFileName(sourcePath)}");
+            using var source = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var destination = new FileStream(snapshotPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
+            source.CopyTo(destination);
+            destination.Flush(true);
+            return snapshotPath;
+        }
+
+        private static void CleanupSnapshot(UploadJob job)
+        {
+            if (!job.IsSnapshot || string.IsNullOrWhiteSpace(job.FilePath)) return;
+            try { File.Delete(job.FilePath); } catch { }
         }
 
         private async Task EnqueueUploadAsync(string filePath)
@@ -244,7 +265,18 @@ namespace RedfurSync
                 return;
             }
 
-            string currentHash = GetFileHash(filePath);
+            string snapshotPath;
+            try
+            {
+                snapshotPath = CreateSnapshot(filePath);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[RedfurSync] Could not snapshot {Path.GetFileName(filePath)}: {ex.Message}");
+                return;
+            }
+
+            string currentHash = GetFileHash(snapshotPath);
             lock (_hashLock)
             {
                 if (!string.IsNullOrEmpty(currentHash))
@@ -252,6 +284,7 @@ namespace RedfurSync
                     if (_lastFileHashes.TryGetValue(filePath, out var lastHash) && lastHash == currentHash)
                     {
                         Console.WriteLine($"[RedfurSync] {Path.GetFileName(filePath)} contents have not changed. Ignoring.");
+                        try { File.Delete(snapshotPath); } catch { }
                         return; 
                     }
                     _lastFileHashes[filePath] = currentHash;
@@ -262,16 +295,22 @@ namespace RedfurSync
             {
                 foreach (var ex in Jobs)
                 {
-                    if (ex.FilePath == filePath && ex.Status is UploadStatus.Queued or UploadStatus.Uploading)
-                    { ex.Progress = 0f; return; }
+                    if (ex.SourcePath == filePath && ex.Status is UploadStatus.Queued or UploadStatus.Uploading)
+                    {
+                        ex.Progress = 0f;
+                        try { File.Delete(snapshotPath); } catch { }
+                        return;
+                    }
                 }
 
                 long size = 0;
-                try { size = new FileInfo(filePath).Length; } catch { }
+                try { size = new FileInfo(snapshotPath).Length; } catch { }
 
                 job = new UploadJob
                 {
-                    FilePath       = filePath,
+                    FilePath       = snapshotPath,
+                    SourcePath     = filePath,
+                    IsSnapshot     = true,
                     FileName       = Path.GetFileName(filePath),
                     FileSizeBytes  = size,
                     QueuedAt       = DateTime.Now,
@@ -293,6 +332,35 @@ private async Task ProcessUploadAsync(UploadJob job)
             bool success = false;
             int uploadRetries = 0;
             const int maxUploadRetries = 3; 
+
+            if (MasterMerchantSaleScanner.IsSalesFile(job.FileName))
+            {
+                try
+                {
+                    var saleIds = MasterMerchantSaleScanner.ReadSaleIds(job.FilePath);
+                    if (saleIds.Count > 0)
+                    {
+                        _onStatus($"Comparing {saleIds.Count:N0} sales in {job.FileName}...");
+                        var missing = await _uploader.GetMissingSaleIdsAsync(saleIds, job.Cts.Token);
+                        if (missing is { Count: 0 })
+                        {
+                            job.Progress = 1f;
+                            job.Status = UploadStatus.Done;
+                            job.ErrorMessage = "No upload needed; every sale is already stored by Redfur.";
+                            NotifyChanged();
+                            _onStatus($"{job.FileName} is already synchronized.");
+                            CleanupSnapshot(job);
+                            return;
+                        }
+                        if (missing != null)
+                            _onStatus($"{missing.Count:N0} new sale(s) found; sending the source file safely...");
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[RedfurSync] MM comparison skipped for {job.FileName}: {ex.Message}");
+                }
+            }
 
             while (uploadRetries < maxUploadRetries && !success && !job.Cts.Token.IsCancellationRequested)
             {
@@ -348,6 +416,7 @@ private async Task ProcessUploadAsync(UploadJob job)
             {
                 Console.WriteLine($"[RedfurSync] ✦ {job.FileName} uploaded successfully.");
                 _onStatus($"{job.FileName} delivered!");
+                CleanupSnapshot(job);
             }
             else if (job.Status == UploadStatus.Cancelled)
             {
@@ -410,6 +479,7 @@ private async Task ProcessUploadAsync(UploadJob job)
                     {
                         if (jobToRemove.Status is UploadStatus.Done or UploadStatus.Failed or UploadStatus.Cancelled)
                         {
+                            CleanupSnapshot(jobToRemove);
                             Jobs.Remove(jobToRemove);
                         }
                     }
