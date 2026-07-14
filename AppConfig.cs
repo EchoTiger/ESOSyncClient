@@ -11,7 +11,7 @@ namespace RedfurSync
     {
         // Network variables
         [JsonPropertyName("ServerUrl")]
-        public string ServerUrl    { get; set; } = string.Empty;
+        public string ServerUrl    { get; set; } = "https://redfur.ech-o.net";
         
         [JsonPropertyName("UpdateUrl")]
         public string UpdateUrl    { get; set; } = string.Empty;
@@ -140,6 +140,8 @@ namespace RedfurSync
                     return d;
                 }
                 var config = JsonSerializer.Deserialize<AppConfig>(json, _opts) ?? new AppConfig();
+                if (string.IsNullOrWhiteSpace(config.ServerUrl))
+                    config.ServerUrl = "https://redfur.ech-o.net";
                 
                 // Immediately re-save so defaults are stamped
                 SaveInternal(config);
@@ -189,7 +191,7 @@ namespace RedfurSync
 
         public bool IsConfigured()
         {
-            if ((string.IsNullOrWhiteSpace(DeviceToken) && string.IsNullOrWhiteSpace(ApiKey) && string.IsNullOrWhiteSpace(PairingCode)) || !IsSecureEndpoint(ServerUrl))
+            if (!IsSecureEndpoint(ServerUrl))
                 return false;
 
             return string.IsNullOrWhiteSpace(UpdateUrl) || IsSecureEndpoint(UpdateUrl);

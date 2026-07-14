@@ -84,6 +84,16 @@ namespace RedfurSync
                 form.ShowDialog();
             }
 
+            if (string.IsNullOrWhiteSpace(config.DeviceToken))
+            {
+                bool pairingStarted = RelayPairingForm.ShowFor(config);
+                if (!pairingStarted && string.IsNullOrWhiteSpace(config.PairingCode))
+                {
+                    UpdateStatus("Waiting for a Relay pairing code");
+                    return;
+                }
+            }
+
             bool on = StartupHelper.IsStartupEnabled();
             if (config.RunOnStartup && !on) StartupHelper.SetStartup(true);
             UpdateStartupText(config.RunOnStartup || on);
@@ -279,6 +289,7 @@ private void CheckBatchCompletion()
             menu.Items.Add(new ToolStripSeparator());
 
             menu.Items.Add("📝  Register Your Name",      null, OnSetDisplayName);
+            menu.Items.Add("🔗  Pair Fissal Relay",       null, OnPairRelay);
             menu.Items.Add("📡  Fissal Config",          null, (_, _) => OpenConfigFile());
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("🔌  Cut Connection",          null, OnShutdown);
@@ -335,6 +346,15 @@ private void CheckBatchCompletion()
                     $"Confirmed!\n\nFissal will address you as \"{config.DisplayName}\" in the logs!",
                     CGreen,
                     5);
+            }
+        }
+
+        private void OnPairRelay(object? sender, EventArgs e)
+        {
+            var config = AppConfig.Instance;
+            if (RelayPairingForm.ShowFor(config))
+            {
+                _ = _watcher.StartAsync();
             }
         }
 

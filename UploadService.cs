@@ -169,7 +169,8 @@ namespace RedfurSync
 
         public async Task<(bool ok, string message)> PairAsync()
         {
-            if (string.IsNullOrWhiteSpace(_config.PairingCode)) return (true, "Already paired");
+            if (!string.IsNullOrWhiteSpace(_config.DeviceToken)) return (true, "Already paired");
+            if (string.IsNullOrWhiteSpace(_config.PairingCode)) return (false, "A pairing code is required.");
             try
             {
                 var payload = JsonSerializer.Serialize(new { code = _config.PairingCode, deviceName = Environment.MachineName });
