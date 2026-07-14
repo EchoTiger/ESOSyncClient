@@ -14,7 +14,7 @@ namespace RedfurSync
         public string ServerUrl    { get; set; } = "https://redfur.ech-o.net/upload";
         
         [JsonPropertyName("UpdateUrl")]
-        public string UpdateUrl    { get; set; } = string.Empty;
+        public string UpdateUrl    { get; set; } = "https://redfur.ech-o.net/api/relay/v1/update-manifest";
         
         [JsonPropertyName("ApiKey")]
         public string ApiKey       { get; set; } = string.Empty;
@@ -142,6 +142,8 @@ namespace RedfurSync
                 var config = JsonSerializer.Deserialize<AppConfig>(json, _opts) ?? new AppConfig();
                 if (string.IsNullOrWhiteSpace(config.ServerUrl))
                     config.ServerUrl = "https://redfur.ech-o.net/upload";
+                if (string.IsNullOrWhiteSpace(config.UpdateUrl))
+                    config.UpdateUrl = "https://redfur.ech-o.net/api/relay/v1/update-manifest";
                 
                 // Immediately re-save so defaults are stamped
                 SaveInternal(config);
