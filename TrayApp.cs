@@ -84,7 +84,7 @@ namespace RedfurSync
                 form.ShowDialog();
             }
 
-            if (string.IsNullOrWhiteSpace(config.DeviceToken))
+            if (string.IsNullOrWhiteSpace(config.DeviceToken) && string.IsNullOrWhiteSpace(config.ApiKey))
             {
                 bool pairingStarted = RelayPairingForm.ShowFor(config);
                 if (!pairingStarted && string.IsNullOrWhiteSpace(config.PairingCode))

@@ -170,6 +170,7 @@ namespace RedfurSync
         public async Task<(bool ok, string message)> PairAsync()
         {
             if (!string.IsNullOrWhiteSpace(_config.DeviceToken)) return (true, "Already paired");
+            if (!string.IsNullOrWhiteSpace(_config.ApiKey)) return (true, "Legacy API key mode");
             if (string.IsNullOrWhiteSpace(_config.PairingCode)) return (false, "A pairing code is required.");
             try
             {

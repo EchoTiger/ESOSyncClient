@@ -11,7 +11,7 @@ namespace RedfurSync
     {
         // Network variables
         [JsonPropertyName("ServerUrl")]
-        public string ServerUrl    { get; set; } = "https://redfur.ech-o.net";
+        public string ServerUrl    { get; set; } = "https://redfur.ech-o.net/upload";
         
         [JsonPropertyName("UpdateUrl")]
         public string UpdateUrl    { get; set; } = string.Empty;
@@ -141,7 +141,7 @@ namespace RedfurSync
                 }
                 var config = JsonSerializer.Deserialize<AppConfig>(json, _opts) ?? new AppConfig();
                 if (string.IsNullOrWhiteSpace(config.ServerUrl))
-                    config.ServerUrl = "https://redfur.ech-o.net";
+                    config.ServerUrl = "https://redfur.ech-o.net/upload";
                 
                 // Immediately re-save so defaults are stamped
                 SaveInternal(config);
