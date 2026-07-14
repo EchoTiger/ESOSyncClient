@@ -67,27 +67,17 @@ namespace RedfurSync
         private void CheckFirstRun()
         {
             var config = AppConfig.Instance;
-            if (!config.IsConfigured())
-            {
-                ShowAlert("Fissal needs to tune her vocal coils!",
-                    "This one cannot hear without a server address and key.\n" +
-                    "Please fill in config.json and restart the matrix.",
-                    FissalAlert.AlertLevel.TotalError);
-                OpenConfigFile();
-                return;
-            }
 
-            // [Req 6] Show DisplayNameForm if it's the default or empty
-            if (string.IsNullOrWhiteSpace(config.DisplayName) || config.DisplayName == "Redfur Trader")
+            bool needsName = string.IsNullOrWhiteSpace(config.DisplayName) || config.DisplayName == "Redfur Trader";
+            bool needsPairing = string.IsNullOrWhiteSpace(config.DeviceToken) && string.IsNullOrWhiteSpace(config.ApiKey);
+
+            if (needsName || needsPairing)
             {
                 using var form = new DisplayNameForm(config.DisplayName);
                 form.ShowDialog();
-            }
-
-            if (string.IsNullOrWhiteSpace(config.DeviceToken) && string.IsNullOrWhiteSpace(config.ApiKey))
-            {
-                bool pairingStarted = RelayPairingForm.ShowFor(config);
-                if (!pairingStarted && string.IsNullOrWhiteSpace(config.PairingCode))
+                
+                // If they still didn't pair or enter a pairing code, we log it
+                if (string.IsNullOrWhiteSpace(config.DeviceToken) && string.IsNullOrWhiteSpace(config.ApiKey) && string.IsNullOrWhiteSpace(config.PairingCode))
                 {
                     UpdateStatus("Waiting for a Relay pairing code");
                     return;
