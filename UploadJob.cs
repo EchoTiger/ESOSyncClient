@@ -15,6 +15,7 @@ namespace RedfurSync
         public string DownloadUrl { get; set; } = string.Empty;
         public string Changelog { get; set; } = string.Empty;
         public long SizeBytes { get; set; } = 0;
+        public string Sha256 { get; set; } = string.Empty;
     }
 
     public class UploadJob : INotifyPropertyChanged
@@ -35,6 +36,7 @@ namespace RedfurSync
         public string UpdateVersion { get; init; } = string.Empty;
         public string Changelog { get; set; } = string.Empty;
         public string DownloadUrl { get; init; } = string.Empty;
+        public string UpdateSha256 { get; init; } = string.Empty;
 
         public CancellationTokenSource Cts { get; set; } = new();
 
@@ -89,6 +91,7 @@ namespace RedfurSync
                 Changelog = payload.Changelog,        
                 FileSizeBytes = payload.SizeBytes,    
                 DownloadUrl = payload.DownloadUrl,    
+                UpdateSha256 = payload.Sha256,
                 Status = UploadStatus.UpdateReady,
                 QueuedAt = DateTime.Now,
                 IsExpanded = true

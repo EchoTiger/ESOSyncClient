@@ -11,13 +11,50 @@ namespace RedfurSync
     {
         // Network variables
         [JsonPropertyName("ServerUrl")]
-        public string ServerUrl    { get; set; } = "http://47.135.77.158:3000/upload";
+        public string ServerUrl    { get; set; } = string.Empty;
         
         [JsonPropertyName("UpdateUrl")]
-        public string UpdateUrl    { get; set; } = "http://47.135.77.158:3000/update/check";
+        public string UpdateUrl    { get; set; } = string.Empty;
         
         [JsonPropertyName("ApiKey")]
-        public string ApiKey       { get; set; } = "872615399f313ef9920a4b4a51df66d51f2c179ee4c3c70fb289df7178479180";
+        public string ApiKey       { get; set; } = string.Empty;
+
+        [JsonIgnore]
+        public string DeviceToken  { get; set; } = string.Empty;
+
+        [JsonPropertyName("DeviceTokenProtected")]
+        public string DeviceTokenProtected
+        {
+            get
+            {
+                if (string.IsNullOrWhiteSpace(DeviceToken)) return string.Empty;
+                try
+                {
+                    var encrypted = System.Security.Cryptography.ProtectedData.Protect(
+                        System.Text.Encoding.UTF8.GetBytes(DeviceToken),
+                        optionalEntropy: null,
+                        System.Security.Cryptography.DataProtectionScope.CurrentUser);
+                    return Convert.ToBase64String(encrypted);
+                }
+                catch { return string.Empty; }
+            }
+            set
+            {
+                if (string.IsNullOrWhiteSpace(value)) { DeviceToken = string.Empty; return; }
+                try
+                {
+                    var decrypted = System.Security.Cryptography.ProtectedData.Unprotect(
+                        Convert.FromBase64String(value),
+                        optionalEntropy: null,
+                        System.Security.Cryptography.DataProtectionScope.CurrentUser);
+                    DeviceToken = System.Text.Encoding.UTF8.GetString(decrypted);
+                }
+                catch { DeviceToken = string.Empty; }
+            }
+        }
+
+        [JsonPropertyName("PairingCode")]
+        public string PairingCode  { get; set; } = string.Empty;
         
         [JsonPropertyName("DisplayName")]
         public string DisplayName  { get; set; } = "Redfur Trader";
@@ -150,8 +187,25 @@ namespace RedfurSync
             }
         }
 
-        public bool IsConfigured() =>
-            !string.IsNullOrWhiteSpace(ServerUrl)  && ServerUrl  != "http://YOUR_SERVER_URL/upload" &&
-            !string.IsNullOrWhiteSpace(ApiKey)     && ApiKey     != "YOUR_API_KEY_HERE";
+        public bool IsConfigured()
+        {
+            if ((string.IsNullOrWhiteSpace(DeviceToken) && string.IsNullOrWhiteSpace(ApiKey) && string.IsNullOrWhiteSpace(PairingCode)) || !IsSecureEndpoint(ServerUrl))
+                return false;
+
+            return string.IsNullOrWhiteSpace(UpdateUrl) || IsSecureEndpoint(UpdateUrl);
+        }
+
+        public static bool IsSecureEndpoint(string value)
+        {
+            if (!Uri.TryCreate(value, UriKind.Absolute, out var uri))
+                return false;
+
+            if (uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+                return string.IsNullOrEmpty(uri.UserInfo);
+
+            return uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase)
+                && uri.IsLoopback
+                && string.IsNullOrEmpty(uri.UserInfo);
+        }
     }
 }

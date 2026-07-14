@@ -47,6 +47,8 @@ namespace RedfurSync
 
         private async Task CheckForUpdatesAsync()
         {
+            if (string.IsNullOrWhiteSpace(_config.UpdateUrl)) return;
+
             Console.WriteLine("[RedfurSync] Checking for updates...");
             
             if (Jobs.Any(j => j.Status == UploadStatus.Uploading)) return; 
@@ -56,9 +58,17 @@ namespace RedfurSync
             
             if (payload == null) return;
 
+            UploadJob? existingUpdate;
             lock (_jobLock)
             {
-                if (Jobs.Any(j => j.IsUpdate && j.UpdateVersion == payload.Version)) return;
+                existingUpdate = Jobs.LastOrDefault(j => j.IsUpdate && j.UpdateVersion == payload.Version);
+            }
+
+            if (existingUpdate != null)
+            {
+                if (existingUpdate.Status is not (UploadStatus.Failed or UploadStatus.Cancelled)) return;
+                RetryJob(existingUpdate);
+                return;
             }
 
             string tmpPath = Path.Combine(AppConfig.ConfigDirectory, "Update.tmp");
@@ -70,6 +80,7 @@ namespace RedfurSync
                 UpdateVersion  = payload.Version,
                 Changelog      = payload.Changelog,
                 DownloadUrl    = payload.DownloadUrl,
+                UpdateSha256   = payload.Sha256,
                 FilePath       = tmpPath,
                 FileName       = $"RedfurSync v{payload.Version}",
                 FileSizeBytes  = payload.SizeBytes, 
@@ -85,12 +96,19 @@ namespace RedfurSync
             }
             NotifyChanged();
 
+            await ProcessUpdateDownloadAsync(job);
+        }
+
+        private async Task ProcessUpdateDownloadAsync(UploadJob job)
+        {
             job.Status = UploadStatus.Uploading;
             NotifyChanged();
 
             bool success = await _uploader.DownloadUpdateAsync(job);
-            
-            job.Status = success ? UploadStatus.UpdateReady : UploadStatus.Failed;
+
+            job.Status = job.Cts.Token.IsCancellationRequested
+                ? UploadStatus.Cancelled
+                : success ? UploadStatus.UpdateReady : UploadStatus.Failed;
             NotifyChanged();
         }
 
@@ -103,6 +121,13 @@ namespace RedfurSync
             }
 
             _onStatus("Establishing connection...");
+            var (paired, pairingMessage) = await _uploader.PairAsync();
+            if (!paired)
+            {
+                _onStatus(pairingMessage);
+                ConnectionChecked?.Invoke(false, pairingMessage);
+                return;
+            }
             var (ok, msg) = await _uploader.PingAsync();
 
             _onStatus(ok ? "Connection established!" : $"Signal lost: {msg}");
@@ -175,8 +200,11 @@ namespace RedfurSync
             original.ErrorMessage = string.Empty;
             original.RetryCount++;
             NotifyChanged();
-            
-            _ = ProcessUploadAsync(original);
+
+            if (original.IsUpdate)
+                _ = ProcessUpdateDownloadAsync(original);
+            else
+                _ = ProcessUploadAsync(original);
         }
 
         public void CancelJob(UploadJob job)
