@@ -278,8 +278,7 @@ private void CheckBatchCompletion()
             menu.Items.Add(_startupItem);
             menu.Items.Add(new ToolStripSeparator());
 
-            menu.Items.Add("📝  Register Your Name",      null, OnSetDisplayName);
-            menu.Items.Add("🔗  Pair Fissal Relay",       null, OnPairRelay);
+            menu.Items.Add("🛠️  Setup Fissal Sync",       null, OnSetDisplayName);
             menu.Items.Add("💬  Ask Fissal",              null, OnAskFissal);
             menu.Items.Add("📡  Fissal Config",          null, (_, _) => OpenConfigFile());
             menu.Items.Add(new ToolStripSeparator());
@@ -331,20 +330,16 @@ private void CheckBatchCompletion()
             if (form.ShowDialog() == DialogResult.OK)
             {
                 // 🐾 Fissal's memory was already updated and saved inside the form itself!
-                // We no longer overwrite it here. We simply celebrate the new name.
+                
+                string msg = string.IsNullOrWhiteSpace(config.DisplayName) 
+                    ? "Confirmed!\n\nFissal Sync is now configured!" 
+                    : $"Confirmed!\n\nFissal will address you as \"{config.DisplayName}\" in the logs!";
 
-                ShowCustomAlert("Registry Updated!",
-                    $"Confirmed!\n\nFissal will address you as \"{config.DisplayName}\" in the logs!",
+                ShowCustomAlert("Sync Configured!",
+                    msg,
                     CGreen,
                     5);
-            }
-        }
-
-        private void OnPairRelay(object? sender, EventArgs e)
-        {
-            var config = AppConfig.Instance;
-            if (RelayPairingForm.ShowFor(config))
-            {
+                    
                 _ = _watcher.StartAsync();
             }
         }

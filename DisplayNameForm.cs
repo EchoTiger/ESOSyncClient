@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
@@ -70,7 +71,7 @@ namespace RedfurSync
         {
             AutoScaleMode   = AutoScaleMode.None;
             FormBorderStyle = FormBorderStyle.None;
-            ShowInTaskbar   = false;
+            ShowInTaskbar   = true;
             TopMost         = true;
             BackColor       = CBg;
             DoubleBuffered  = true;
@@ -90,7 +91,7 @@ namespace RedfurSync
             var inputHousing = new Panel
             {
                 Location  = new Point(_pad, _headerH + S(55)), 
-                Width     = S(BaseW) - _pad * 2,
+                Width     = S(210),
                 Height    = S(28), 
                 BackColor = CGoldDark, 
             };
@@ -118,6 +119,34 @@ namespace RedfurSync
             };
 
             inputHousing.Controls.Add(_input);
+            
+            var _checkNameBtn = MakeBtn("Check Format", Color.FromArgb(60, 180, 220), new Point(inputHousing.Right + S(10), inputHousing.Top - S(2)));
+            _checkNameBtn.Width = S(100);
+            _checkNameBtn.Click += async (_, _) => 
+            {
+                if (string.IsNullOrWhiteSpace(_input.Text))
+                {
+                    _checkNameBtn.Text = "Empty";
+                    _checkNameBtn.ForeColor = Color.IndianRed;
+                    _checkNameBtn.FlatAppearance.BorderColor = Color.IndianRed;
+                    AddConsoleLine("# [FIS-DBG] Name cannot be empty.", Color.IndianRed);
+                }
+                else
+                {
+                    _checkNameBtn.Text = "Format OK";
+                    _checkNameBtn.ForeColor = CGreen;
+                    _checkNameBtn.FlatAppearance.BorderColor = CGreen;
+                    AddConsoleLine($"# [FIS-DBG] Name format looks valid locally: {_input.Text.Trim()}", CGreen);
+                }
+                
+                await System.Threading.Tasks.Task.Delay(2000);
+                if (!IsDisposed)
+                {
+                    _checkNameBtn.Text = "Check Format";
+                    _checkNameBtn.ForeColor = Color.FromArgb(60, 180, 220);
+                    _checkNameBtn.FlatAppearance.BorderColor = Color.FromArgb(60, 180, 220);
+                }
+            };
             _input.KeyDown += (_, e) =>
             {
                 if (e.KeyCode == Keys.Enter)  { e.SuppressKeyPress = true; TrySave(); }
