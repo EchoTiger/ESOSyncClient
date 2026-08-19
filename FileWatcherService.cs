@@ -17,7 +17,7 @@ namespace RedfurSync
             "GS04Data.lua",  "GS05Data.lua",  "GS06Data.lua",  "GS07Data.lua",
             "GS08Data.lua",  "GS09Data.lua",  "GS10Data.lua",  "GS11Data.lua",
             "GS12Data.lua",  "GS13Data.lua",  "GS14Data.lua",  "GS15Data.lua",
-            "GS16Data.lua",  "GS17Data.lua",  "RaffleGold.lua",
+            "GS16Data.lua",  "GS17Data.lua",  "RaffleGold.lua", "RaffleGoldRTP.lua", "RaffleGoldRD.lua",
             "PriceTableNA.lua", "ItemLookUpTable_EN.lua"
         };
 
