@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -11,14 +12,21 @@ namespace RedfurSync
 {
     internal sealed class RelayAssistantForm : Form
     {
+        [DllImport("user32.dll")]
+        private static extern int SendMessage(IntPtr hWnd, int message, int wParam, int lParam);
+        [DllImport("user32.dll")]
+        private static extern bool ReleaseCapture();
+
         private readonly Func<string, Task<(bool ok, string message, string model)>> _ask;
         private readonly Func<string> _getHarnessContext;
+        private readonly FissalHarnessService _harnessService;
         private readonly FlowLayoutPanel _transcript;
         private readonly TextBox _prompt;
         private readonly Label _status;
         private Label _model = null!;
         private readonly Button _send;
         private CheckBox _harness = null!;
+        private CheckBox _writePermissions = null!;
         private readonly float _scale;
         private readonly List<(string role, string text)> _history = new();
 
@@ -28,8 +36,9 @@ namespace RedfurSync
         {
             _ask = ask;
             _getHarnessContext = getHarnessContext;
+            _harnessService = new FissalHarnessService(AppConfig.Instance);
             AutoScaleMode = AutoScaleMode.Dpi;
-            FormBorderStyle = FormBorderStyle.Sizable;
+            FormBorderStyle = FormBorderStyle.None;
             MinimumSize = new Size(680, 560);
             Size = new Size(880, 720);
             StartPosition = FormStartPosition.CenterScreen;
@@ -44,7 +53,7 @@ namespace RedfurSync
                 Dock = DockStyle.Fill,
                 Padding = new Padding(20),
                 ColumnCount = 1,
-                RowCount = 5,
+                RowCount = 6,
                 BackColor = CBg,
             };
             shell.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -53,6 +62,7 @@ namespace RedfurSync
             shell.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             shell.RowStyles.Add(new RowStyle(SizeType.AutoSize));
 
+            shell.Controls.Add(BuildWindowBar());
             shell.Controls.Add(BuildHeader());
             shell.Controls.Add(BuildQuickActions());
 
@@ -128,11 +138,99 @@ namespace RedfurSync
 
             Controls.Add(shell);
             CancelButton = close;
+            Paint += (_, args) =>
+            {
+                using var border = new Pen(CBorder, 1);
+                args.Graphics.DrawRectangle(border, 0, 0, ClientSize.Width - 1, ClientSize.Height - 1);
+            };
             Shown += (_, _) =>
             {
-                AddMessage(false, "Hello! I can help verify Relay setup, explain sync activity, and troubleshoot files. Enable **Fissal Harness** when you want me to inspect read-only Relay diagnostics. 🛠️");
+                AddMessage(false, "Hello! I can help verify Relay setup, explain sync activity, and troubleshoot files. The **Fissal Harness** is an optional bridge that gives me local Relay diagnostics for the current conversation. It starts read-only; you can separately allow carefully limited Relay settings changes.");
                 _prompt.Focus();
             };
+        }
+
+        protected override void WndProc(ref Message message)
+        {
+            const int WmNcHitTest = 0x0084;
+            const int resizeGrip = 8;
+            base.WndProc(ref message);
+            if (message.Msg != WmNcHitTest || WindowState == FormWindowState.Maximized) return;
+
+            var cursor = PointToClient(new Point(message.LParam.ToInt32()));
+            var left = cursor.X <= resizeGrip;
+            var right = cursor.X >= ClientSize.Width - resizeGrip;
+            var top = cursor.Y <= resizeGrip;
+            var bottom = cursor.Y >= ClientSize.Height - resizeGrip;
+            if (left && top) message.Result = (IntPtr)13;
+            else if (right && top) message.Result = (IntPtr)14;
+            else if (left && bottom) message.Result = (IntPtr)16;
+            else if (right && bottom) message.Result = (IntPtr)17;
+            else if (left) message.Result = (IntPtr)10;
+            else if (right) message.Result = (IntPtr)11;
+            else if (top) message.Result = (IntPtr)12;
+            else if (bottom) message.Result = (IntPtr)15;
+        }
+
+        private Control BuildWindowBar()
+        {
+            var bar = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                Height = 34,
+                ColumnCount = 3,
+                Margin = new Padding(0, 0, 0, 12),
+                BackColor = Color.FromArgb(18, 14, 8),
+            };
+            bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            bar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 42));
+            bar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 42));
+            var title = new Label
+            {
+                Dock = DockStyle.Fill,
+                Text = "  FISSAL // LOCAL RELAY TERMINAL",
+                TextAlign = ContentAlignment.MiddleLeft,
+                ForeColor = CGoldMid,
+                Font = Mono(8f, _scale, FontStyle.Bold),
+            };
+            title.MouseDown += DragWindow;
+            bar.MouseDown += DragWindow;
+            bar.Controls.Add(title, 0, 0);
+
+            var minimize = MakeWindowButton("_", "Minimize Ask Fissal");
+            minimize.Click += (_, _) => WindowState = FormWindowState.Minimized;
+            bar.Controls.Add(minimize, 1, 0);
+            var close = MakeWindowButton("X", "Close Ask Fissal");
+            close.ForeColor = CBarFail;
+            close.Click += (_, _) => Close();
+            bar.Controls.Add(close, 2, 0);
+            return bar;
+        }
+
+        private Button MakeWindowButton(string text, string accessibleName)
+        {
+            var button = new Button
+            {
+                Dock = DockStyle.Fill,
+                Text = text,
+                AccessibleName = accessibleName,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(18, 14, 8),
+                ForeColor = CTextSub,
+                Font = Mono(9f, _scale, FontStyle.Bold),
+                TabStop = true,
+                Margin = new Padding(0),
+            };
+            button.FlatAppearance.BorderSize = 0;
+            button.FlatAppearance.MouseOverBackColor = CBarBg;
+            return button;
+        }
+
+        private void DragWindow(object? sender, MouseEventArgs eventArgs)
+        {
+            if (eventArgs.Button != MouseButtons.Left || WindowState == FormWindowState.Maximized) return;
+            ReleaseCapture();
+            SendMessage(Handle, 0xA1, 0x2, 0);
         }
 
         private Control BuildHeader()
@@ -174,21 +272,57 @@ namespace RedfurSync
             _harness = new CheckBox
             {
                 AutoSize = true,
-                Text = "Fissal Harness (read-only)",
+                Text = "Enable Fissal Harness",
                 ForeColor = CText,
                 Font = Body(8f, _scale),
                 FlatStyle = FlatStyle.Flat,
-                AccessibleName = "Enable read-only Fissal Harness",
+                Checked = AppConfig.Instance.FissalHarnessEnabled,
+                AccessibleName = "Enable Fissal Harness diagnostics",
             };
             _harness.CheckedChanged += (_, _) =>
             {
+                AppConfig.Instance.FissalHarnessEnabled = _harness.Checked;
+                if (!_harness.Checked) _writePermissions.Checked = false;
+                AppConfig.Instance.Save();
+                _writePermissions.Enabled = _harness.Checked;
                 _status.Text = _harness.Checked
-                    ? "Harness enabled. Relay diagnostics will be included with your next request."
+                    ? "Harness enabled. Read-only Relay diagnostics will accompany requests."
                     : "Harness disabled. No local diagnostics will be shared.";
+            };
+            _writePermissions = new CheckBox
+            {
+                AutoSize = true,
+                Text = "Allow Relay settings changes",
+                ForeColor = CWarn,
+                Font = Body(8f, _scale),
+                FlatStyle = FlatStyle.Flat,
+                Checked = AppConfig.Instance.FissalHarnessEnabled && AppConfig.Instance.FissalWritePermissions,
+                Enabled = AppConfig.Instance.FissalHarnessEnabled,
+                AccessibleName = "Allow Fissal to change approved Relay settings",
+            };
+            _writePermissions.CheckedChanged += (_, _) =>
+            {
+                AppConfig.Instance.FissalWritePermissions = _writePermissions.Checked;
+                AppConfig.Instance.Save();
+                _status.Text = _writePermissions.Checked
+                    ? "Write permission enabled for approved Relay settings only. Changes still require confirmation."
+                    : "Write permission disabled. Fissal cannot change local settings.";
             };
             controls.Controls.Add(_model);
             controls.Controls.Add(_harness);
+            controls.Controls.Add(_writePermissions);
             header.Controls.Add(controls, 1, 0);
+
+            var explanation = new Label
+            {
+                AutoSize = true,
+                MaximumSize = new Size(390, 0),
+                Text = "Harness means a controlled connection to this Relay. Read mode shares file names, sizes, dates, sync state, and errors, never file contents. Write mode can only change approved Relay settings and creates a recovery backup.",
+                ForeColor = CTextSub,
+                Font = Body(7.5f, _scale),
+                Margin = new Padding(0, 8, 0, 0),
+            };
+            controls.Controls.Add(explanation);
             return header;
         }
 
@@ -269,13 +403,17 @@ namespace RedfurSync
                 var request = BuildConversationRequest();
                 if (_harness.Checked)
                 {
-                    request += "\n\n[LOCAL RELAY HARNESS - read-only diagnostics supplied with explicit user consent]\n"
+                    request += "\n\n[LOCAL RELAY HARNESS - diagnostics supplied with explicit user consent]\n"
+                        + _harnessService.DescribePermissions(_writePermissions.Checked) + "\n"
                         + _getHarnessContext();
+                    if (_writePermissions.Checked) request += "\n" + _harnessService.GetCommandContract();
                 }
 
                 var result = await _ask(request);
-                AddMessage(false, result.message, !result.ok);
-                if (result.ok) _history.Add(("Fissal", result.message));
+                var responseText = result.message;
+                if (result.ok) responseText = ProcessHarnessAction(responseText);
+                AddMessage(false, responseText, !result.ok);
+                if (result.ok) _history.Add(("Fissal", responseText));
                 _model.Text = result.ok && !string.IsNullOrWhiteSpace(result.model)
                     ? $"● {result.model.ToUpperInvariant()}"
                     : result.ok ? "● CONNECTED" : "● ATTENTION";
@@ -292,6 +430,27 @@ namespace RedfurSync
                 SetBusy(false);
                 _prompt.Focus();
             }
+        }
+
+        private string ProcessHarnessAction(string response)
+        {
+            const string pattern = @"<fissal-action>(.*?)</fissal-action>";
+            var match = Regex.Match(response, pattern, RegexOptions.Singleline | RegexOptions.IgnoreCase);
+            if (!match.Success) return response;
+
+            var visibleResponse = Regex.Replace(response, pattern, string.Empty, RegexOptions.Singleline | RegexOptions.IgnoreCase).Trim();
+            if (!_harness.Checked || !_writePermissions.Checked)
+                return visibleResponse + "\n\n**Local action blocked:** Write permission is disabled.";
+
+            var confirmation = FissalBox.Show(
+                "Fissal requested a change to an approved Relay setting. The Relay will validate it, create a recovery backup, and restore the previous configuration if anything fails. Apply this change?",
+                "Confirm Local Change",
+                MessageBoxButtons.YesNo);
+            if (confirmation != DialogResult.Yes)
+                return visibleResponse + "\n\n**Local action cancelled:** No settings were changed.";
+
+            var execution = _harnessService.Execute(match.Groups[1].Value);
+            return visibleResponse + $"\n\n**Local action {(execution.ok ? "complete" : "failed")}:** {execution.message}";
         }
 
         private string BuildConversationRequest()

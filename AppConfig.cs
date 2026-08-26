@@ -79,6 +79,12 @@ namespace RedfurSync
         
         [JsonPropertyName("RunOnStartup")]
         public bool   RunOnStartup { get; set; } = true;
+
+        [JsonPropertyName("FissalHarnessEnabled")]
+        public bool FissalHarnessEnabled { get; set; } = false;
+
+        [JsonPropertyName("FissalWritePermissions")]
+        public bool FissalWritePermissions { get; set; } = false;
         
         [JsonPropertyName("AppScale")]
         public float  AppScale { get; set; } = 1.0f;
@@ -198,7 +204,9 @@ namespace RedfurSync
             {
                 Directory.CreateDirectory(ConfigDirectory);
                 string json = JsonSerializer.Serialize(cfg, _opts);
-                File.WriteAllText(ConfigPath, json);
+                string tempPath = ConfigPath + ".tmp";
+                File.WriteAllText(tempPath, json);
+                File.Move(tempPath, ConfigPath, true);
             }
             catch (Exception ex)
             {
