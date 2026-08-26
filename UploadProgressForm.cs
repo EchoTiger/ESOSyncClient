@@ -188,11 +188,11 @@ namespace RedfurSync
         private readonly Dictionary<string, string> _truncCache = new(); 
         private readonly Dictionary<DateTime, string> _phantomHeaders = new();
 
-        private SolidBrush _bgBrush;
-        private Font _fTitle28Bold, _fTitle125Bold, _fLogFont, _fTitle10Bold, _fTitle95;
-        private Font _fBody95Italic, _fBody9Bold, _fBody8Bold, _fBody8Italic, _fBody8Reg, _fBody75Bold, _fBody75Italic, _fBody75Reg, _fBody7Bold;
-        private Font _fMono9Bold, _fMono9, _fMono8Bold, _fMono8, _fMono75Bold;
-        private StringFormat _sfCenter, _sfLeft;
+        private SolidBrush _bgBrush = null!;
+        private Font _fTitle28Bold = null!, _fTitle125Bold = null!, _fLogFont = null!, _fTitle10Bold = null!, _fTitle95 = null!;
+        private Font _fBody95Italic = null!, _fBody9Bold = null!, _fBody8Bold = null!, _fBody8Italic = null!, _fBody8Reg = null!, _fBody75Bold = null!, _fBody75Italic = null!, _fBody75Reg = null!, _fBody7Bold = null!;
+        private Font _fMono9Bold = null!, _fMono9 = null!, _fMono8Bold = null!, _fMono8 = null!, _fMono75Bold = null!;
+        private StringFormat _sfCenter = null!, _sfLeft = null!;
 
         private int   _hoverLayoutIdx      = -1;   
         private int   _hoverDeleteGroupIdx = -1;   
@@ -373,7 +373,7 @@ namespace RedfurSync
 
         private void SafeRemoveJob(UploadJob jobToRemove)
         {
-            string targetGroupText = null;
+            string? targetGroupText = null;
             var peerJobs = new List<UploadJob>();
             
             DateTime? currentGroupAnchor = null;
@@ -414,7 +414,7 @@ namespace RedfurSync
 
             if (wasExpanded && peerJobs.Count > 0) {
                 currentGroupAnchor = null;
-                string newGroupText = null;
+                string? newGroupText = null;
                 foreach(var job in _jobs) {
                     bool isNewGroup = currentGroupAnchor == null
                                     || job.QueuedAt.Date != currentGroupAnchor.Value.Date
@@ -649,7 +649,7 @@ namespace RedfurSync
             return prevAlpha != _glowAlpha;
         }
 
-        private string GetDiagContent(UploadJob job, List<UploadJob> syncBatch = null)
+        private string GetDiagContent(UploadJob job, List<UploadJob>? syncBatch = null)
         {
             if (syncBatch == null || syncBatch.Count <= 1)
             {
@@ -756,7 +756,7 @@ private void EnsureLayoutUpdated()
                 bool isExpanded = _expandedLogs.Contains(currentGroupText);
                 
                 // Allow our Phantom Data to override the display text
-                string displaySepText = _phantomHeaders.TryGetValue(groupAnchorJob.QueuedAt.Date, out string custom) ? custom : currentGroupText;
+                string displaySepText = _phantomHeaders.TryGetValue(groupAnchorJob.QueuedAt.Date, out string? custom) ? custom : currentGroupText;
 
                 bool isUpdateGrp = false;
                 bool hasResend = false;
@@ -785,7 +785,7 @@ private void EnsureLayoutUpdated()
                 {
                     // Sub-group files into "Syncs" (Files queued within 60 seconds of each other)
                     var syncBatches = new List<List<int>>();
-                    List<int> currentSync = null;
+                    List<int>? currentSync = null;
                     DateTime? syncAnchor = null;
 
                     foreach (int jIdx in group)
@@ -797,7 +797,7 @@ private void EnsureLayoutUpdated()
                             syncBatches.Add(currentSync);
                             syncAnchor = job.QueuedAt;
                         }
-                        currentSync.Add(jIdx);
+                        currentSync!.Add(jIdx);
                     }
 
                     for (int s = 0; s < syncBatches.Count; s++)
@@ -1405,7 +1405,7 @@ private void EnsureLayoutUpdated()
             // [Req 1] Dynamic Header Progress Bar Priorities (Current Sync Only)
             float totalProg = 0f; int count = 0;
             bool hasError = false; bool hasPending = false; bool hasUpdateDownloading = false;
-            bool hasUpdateReady = false; bool hasUploading = false; bool allDone = true;
+            bool hasUpdateReady = false; bool hasUploading = false;
 
             DateTime newestTime = DateTime.MinValue;
             bool newestIsUpdate = false;
@@ -1441,7 +1441,6 @@ private void EnsureLayoutUpdated()
                                 else if (j.Status == UploadStatus.Uploading && !j.IsUpdate) hasUploading = true;
                                 else if (j.Status == UploadStatus.UpdateReady) hasUpdateReady = true;
 
-                                if (j.Status != UploadStatus.Done && j.Status != UploadStatus.UpdateReady) allDone = false;
                             }
                         }
                     } catch { break; } 
@@ -1543,9 +1542,18 @@ private void EnsureLayoutUpdated()
 
             int lineX = Pad, midY = y + S(14), prevMidY = y - S(20); 
             Color prevColor = rowInfo.GroupColor;
-            for(int k = layoutIdx - 1; k >= 0; k--) {
-                if (_layout[k].IsSeparator) { prevMidY = _layout[k].Y + _layout[k].Height; break; }
-                prevMidY = _layout[k].Y + S(12); prevColor = GetJobStatusColor(_jobs[_layout[k].JobIndex]); break;
+            if (layoutIdx > 0)
+            {
+                var previousRow = _layout[layoutIdx - 1];
+                if (previousRow.IsSeparator)
+                {
+                    prevMidY = previousRow.Y + previousRow.Height;
+                }
+                else
+                {
+                    prevMidY = previousRow.Y + S(12);
+                    prevColor = GetJobStatusColor(_jobs[previousRow.JobIndex]);
+                }
             }
 
             int renderTop = (int)(_scrollY - _slideOffset), clampedPrevMidY = Math.Max(prevMidY, renderTop);
@@ -2715,7 +2723,7 @@ private bool GetHitRow(float contentY, out int layoutIdx, out RowLayout hitRow)
         private string Trunc(string text, Graphics g, Font f, float maxW)
         {
             if (_truncCache.Count > 200) _truncCache.Clear(); 
-            string cacheKey = text + "_" + maxW; if (_truncCache.TryGetValue(cacheKey, out string cachedVal)) return cachedVal;
+            string cacheKey = text + "_" + maxW; if (_truncCache.TryGetValue(cacheKey, out string? cachedVal)) return cachedVal;
             if (g.MeasureString(text, f).Width <= maxW) { _truncCache[cacheKey] = text; return text; }
             var ext = System.IO.Path.GetExtension(text); var noExt = System.IO.Path.GetFileNameWithoutExtension(text);
             while (noExt.Length > 3 && g.MeasureString(noExt + "…" + ext, f).Width > maxW) noExt = noExt[..^1];

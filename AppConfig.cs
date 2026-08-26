@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Reflection;
 using System.Text.Json;
@@ -84,6 +85,9 @@ namespace RedfurSync
         
         [JsonPropertyName("LastUpdatePrompt")]
         public DateTime LastUpdatePrompt { get; set; } = DateTime.MinValue;
+
+        [JsonPropertyName("SyncedFileHashes")]
+        public Dictionary<string, string> SyncedFileHashes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         
         [JsonIgnore]
         public UploadProgressForm.AppConfig.FidelityMode VisualFidelity { get; set; } = UploadProgressForm.AppConfig.FidelityMode.Medium;

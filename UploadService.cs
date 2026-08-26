@@ -4,6 +4,8 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Linq;
 using System.Security.Cryptography;
+using System.Diagnostics;
+using System.Reflection;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -46,10 +48,10 @@ namespace RedfurSync
                 if (payload != null && !string.IsNullOrWhiteSpace(payload.Version))
                 {
                     // Parse both strings into proper Version objects
-                    bool isServerVerValid = Version.TryParse(payload.Version, out Version serverVersion);
-                    bool isLocalVerValid = Version.TryParse(currentVersion, out Version localVersion);
+                    bool isServerVerValid = Version.TryParse(payload.Version, out Version? serverVersion);
+                    bool isLocalVerValid = Version.TryParse(currentVersion, out Version? localVersion);
 
-                    if (isServerVerValid && isLocalVerValid)
+                    if (isServerVerValid && isLocalVerValid && serverVersion != null && localVersion != null)
                     {
                         // Now it truly checks if the server is offering a BIGGER number
                         if (serverVersion > localVersion && IsValidUpdatePayload(payload))
@@ -115,6 +117,7 @@ namespace RedfurSync
                 }
 
                 job.Progress = 1f;
+                await ReportEventAsync("updated", targetVersion: job.UpdateVersion, bytes: totalRead);
                 return true;
             }
             catch (Exception ex)
@@ -210,8 +213,8 @@ namespace RedfurSync
         {
             if (string.IsNullOrWhiteSpace(_config.DeviceToken))
                 return (false, "Pair Fissal Relay before using the assistant.", string.Empty);
-            if (string.IsNullOrWhiteSpace(prompt) || prompt.Trim().Length > 1200)
-                return (false, "Enter a question between 1 and 1,200 characters.", string.Empty);
+            if (string.IsNullOrWhiteSpace(prompt) || prompt.Trim().Length > 12000)
+                return (false, "The assistant request is too large. Clear the chat and try a shorter question.", string.Empty);
 
             try
             {
@@ -332,11 +335,40 @@ namespace RedfurSync
         private HttpRequestMessage CreateSyncRequest(HttpMethod method, Uri uri, HttpContent? content = null)
         {
             var request = new HttpRequestMessage(method, uri) { Content = content };
+            request.Headers.Add("X-Relay-Version", CurrentVersion);
+            request.Headers.Add("X-Relay-Platform", "windows-x64");
             if (!string.IsNullOrWhiteSpace(_config.DeviceToken))
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _config.DeviceToken);
             else if (!string.IsNullOrWhiteSpace(_config.ApiKey))
                 request.Headers.Add("X-Api-Key", _config.ApiKey);
             return request;
+        }
+
+        private static string CurrentVersion => Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
+
+        private async Task ReportEventAsync(string type, string? targetVersion = null, string? filename = null,
+            long? bytes = null, long? durationMs = null, string? detail = null)
+        {
+            if (string.IsNullOrWhiteSpace(_config.DeviceToken)) return;
+            try
+            {
+                using var body = new StringContent(JsonSerializer.Serialize(new
+                {
+                    type,
+                    clientVersion = CurrentVersion,
+                    targetVersion,
+                    filename,
+                    bytes,
+                    durationMs,
+                    detail
+                }), System.Text.Encoding.UTF8, "application/json");
+                using var request = CreateSyncRequest(HttpMethod.Post, BuildRelayUri("/events"), body);
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                await _syncHttp.SendAsync(request, cts.Token);
+            }
+            catch
+            {
+            }
         }
 
         private static bool IsValidSha256(string value) => value.Length == 64 && value.All(Uri.IsHexDigit);
@@ -352,6 +384,7 @@ namespace RedfurSync
 
         public async Task<bool> UploadAsync(UploadJob job)
         {
+            var stopwatch = Stopwatch.StartNew();
             try
             {
                 LastError = null;
@@ -397,6 +430,8 @@ namespace RedfurSync
                 }
 
                 job.Progress = 1f;
+                await ReportEventAsync("sync_completed", filename: job.FileName,
+                    bytes: fileInfo.Length, durationMs: stopwatch.ElapsedMilliseconds);
                 return true;
             }
             catch (OperationCanceledException)
@@ -427,6 +462,14 @@ namespace RedfurSync
             {
                 LastError = job.ErrorMessage = ex.Message;
                 return false;
+            }
+            finally
+            {
+                if (!string.IsNullOrWhiteSpace(LastError))
+                {
+                    await ReportEventAsync("sync_failed", filename: job.FileName,
+                        durationMs: stopwatch.ElapsedMilliseconds, detail: LastError);
+                }
             }
         }
 

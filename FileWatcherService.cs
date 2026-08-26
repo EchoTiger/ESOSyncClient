@@ -32,6 +32,43 @@ namespace RedfurSync
         public Task<(bool ok, string message, string model)> AskFissalAsync(string prompt)
             => _uploader.AskFissalAsync(prompt);
 
+        public string GetAssistantContext()
+        {
+            var docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            var esoBase = Path.Combine(docs, "Elder Scrolls Online", "live");
+            var folders = new[]
+            {
+                Path.Combine(esoBase, "SavedVariables"),
+                Path.Combine(esoBase, "AddOns", "TamrielTradeCentre"),
+                Path.Combine(esoBase, "AddOns", "LibEsoHubPrices"),
+            };
+            var discovered = folders.Where(Directory.Exists).ToArray();
+            var files = discovered
+                .SelectMany(folder => WatchedFiles.Select(name => Path.Combine(folder, name)))
+                .Where(File.Exists)
+                .Select(path => new FileInfo(path))
+                .OrderByDescending(file => file.LastWriteTimeUtc)
+                .Take(20)
+                .ToArray();
+            UploadJob[] jobs;
+            lock (_jobLock) jobs = Jobs.OrderByDescending(job => job.QueuedAt).Take(8).ToArray();
+
+            var builder = new System.Text.StringBuilder();
+            builder.AppendLine($"Machine: {Environment.MachineName}");
+            builder.AppendLine($"Paired: {!string.IsNullOrWhiteSpace(_config.DeviceToken)}");
+            builder.AppendLine($"Watcher folders detected: {discovered.Length}/{folders.Length}");
+            foreach (var folder in folders)
+                builder.AppendLine($"- {(Directory.Exists(folder) ? "available" : "missing")}: {folder}");
+            builder.AppendLine($"Recognized data files found: {files.Length}");
+            foreach (var file in files)
+                builder.AppendLine($"- {file.Name}: {file.Length:N0} bytes, modified {file.LastWriteTime:O}");
+            builder.AppendLine($"Recent sync jobs: {jobs.Length}");
+            foreach (var job in jobs)
+                builder.AppendLine($"- {job.FileName}: {job.Status}, queued {job.QueuedAt:O}, error: {(string.IsNullOrWhiteSpace(job.ErrorMessage) ? "none" : job.ErrorMessage)}");
+            builder.AppendLine("Harness policy: read-only Relay metadata only; no file contents and no arbitrary file access.");
+            return builder.ToString();
+        }
+
         private readonly List<FileSystemWatcher>               _watchers       = new();
         private readonly Dictionary<string, System.Timers.Timer> _debounceTimers = new();
         private readonly Dictionary<string, string>            _lastFileHashes = new();
@@ -47,6 +84,8 @@ namespace RedfurSync
             _onStatus = onStatus;
             _config   = AppConfig.Instance; 
             _uploader = new UploadService(_config);
+            foreach (var entry in _config.SyncedFileHashes)
+                _lastFileHashes[entry.Key] = entry.Value;
         }
 
         private async Task CheckForUpdatesAsync()
@@ -155,6 +194,7 @@ namespace RedfurSync
             _onStatus(ok ? "Connection established!" : $"Signal lost: {msg}");
             ConnectionChecked?.Invoke(ok, msg);
             SetupWatchers();
+            if (ok) _ = ReconcileExistingFilesAsync();
             
             _updateTimer.Interval = TimeSpan.FromMinutes(60).TotalMilliseconds;
             _updateTimer.AutoReset = false;
@@ -180,6 +220,26 @@ namespace RedfurSync
             TryWatch(Path.Combine(esoBase, "AddOns", "LibEsoHubPrices"));
 
             _onStatus(count == 0 ? "Cannot find target directories!" : $"Monitoring {count} folder(s)");
+        }
+
+        private async Task ReconcileExistingFilesAsync()
+        {
+            var docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            var esoBase = Path.Combine(docs, "Elder Scrolls Online", "live");
+            var folders = new[]
+            {
+                Path.Combine(esoBase, "SavedVariables"),
+                Path.Combine(esoBase, "AddOns", "TamrielTradeCentre"),
+                Path.Combine(esoBase, "AddOns", "LibEsoHubPrices"),
+            };
+
+            foreach (var filePath in folders
+                .Where(Directory.Exists)
+                .SelectMany(folder => WatchedFiles.Select(name => Path.Combine(folder, name)))
+                .Where(File.Exists))
+            {
+                await EnqueueUploadAsync(filePath);
+            }
         }
 
         private void AddWatcher(string folder)
@@ -271,6 +331,21 @@ namespace RedfurSync
             try { File.Delete(job.FilePath); } catch { }
         }
 
+        private void RecordSuccessfulSync(UploadJob job)
+        {
+            if (string.IsNullOrWhiteSpace(job.SourcePath)) return;
+
+            var syncedHash = GetFileHash(job.FilePath);
+            if (string.IsNullOrEmpty(syncedHash)) return;
+
+            lock (_hashLock)
+            {
+                _lastFileHashes[job.SourcePath] = syncedHash;
+                _config.SyncedFileHashes[job.SourcePath] = syncedHash;
+            }
+            _config.Save();
+        }
+
         private async Task EnqueueUploadAsync(string filePath)
         {
             UploadJob job;
@@ -311,7 +386,6 @@ namespace RedfurSync
                         try { File.Delete(snapshotPath); } catch { }
                         return; 
                     }
-                    _lastFileHashes[filePath] = currentHash;
                 }
             }
 
@@ -373,6 +447,7 @@ private async Task ProcessUploadAsync(UploadJob job)
                             job.ErrorMessage = "No upload needed; every sale is already stored by Redfur.";
                             NotifyChanged();
                             _onStatus($"{job.FileName} is already synchronized.");
+                            RecordSuccessfulSync(job);
                             CleanupSnapshot(job);
                             return;
                         }
@@ -438,6 +513,7 @@ private async Task ProcessUploadAsync(UploadJob job)
 
             if (success)
             {
+                RecordSuccessfulSync(job);
                 Console.WriteLine($"[RedfurSync] ✦ {job.FileName} uploaded successfully.");
                 _onStatus($"{job.FileName} delivered!");
                 CleanupSnapshot(job);

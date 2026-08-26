@@ -352,7 +352,7 @@ private void CheckBatchCompletion()
                 ShowAlert("Pairing Required", "Pair Fissal Relay before opening the assistant.", FissalAlert.AlertLevel.TotalError);
                 return;
             }
-            using var form = new RelayAssistantForm(_watcher.AskFissalAsync);
+            using var form = new RelayAssistantForm(_watcher.AskFissalAsync, _watcher.GetAssistantContext);
             form.ShowDialog();
         }
 
