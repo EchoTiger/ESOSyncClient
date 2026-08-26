@@ -1,6 +1,7 @@
 name: Build Relay release
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
