@@ -69,6 +69,9 @@ namespace RedfurSync
         
         [JsonPropertyName("DisplayName")]
         public string DisplayName  { get; set; } = "Redfur Trader";
+
+        [JsonPropertyName("Theme")]
+        public string Theme { get; set; } = "fissal";
         
         // Polling and application state behavior variables
         [JsonPropertyName("DebounceMs")]

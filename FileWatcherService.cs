@@ -29,6 +29,12 @@ namespace RedfurSync
         public event Action?               JobsChanged;
         public event Action<bool, string>? ConnectionChecked;
 
+        public Task<(bool ok, string msg)> PingServerAsync()
+            => _uploader.PingAsync();
+
+        public Task<(bool ok, string msg)> PairDeviceAsync()
+            => _uploader.PairAsync();
+
         public Task<(bool ok, string message, string model)> AskFissalAsync(string prompt)
             => _uploader.AskFissalAsync(prompt);
 

@@ -25,6 +25,7 @@ namespace RedfurSync
         private ToolStripMenuItem _perfHighItem = null!;
 
         private UploadProgressForm? _progressForm;
+        private RelayMainWindow?    _mainWindow;
 
         // Mono glyphs derived from v2 tokens.css --theme-mark '◈' / '◆' — not emoji.
         private const string Checked   = "◆  ";
@@ -107,15 +108,29 @@ namespace RedfurSync
         {
             if (e.Button != MouseButtons.Left) return;
 
-            // If you click the tray while it's open, it neatly folds away
-            if (_progressForm != null && !_progressForm.IsDisposed)
+            if (_mainWindow != null && !_mainWindow.IsDisposed && _mainWindow.Visible)
             {
-                _progressForm.Close();
-                _progressForm = null;
+                _mainWindow.Hide();
                 return;
             }
 
-            OpenProgressForm();
+            OpenMainWindow("sync");
+        }
+
+        private void OpenMainWindow(string tabId = "sync")
+        {
+            if (_menu.InvokeRequired)
+            {
+                _menu.BeginInvoke(() => OpenMainWindow(tabId));
+                return;
+            }
+
+            if (_mainWindow == null || _mainWindow.IsDisposed)
+            {
+                _mainWindow = new RelayMainWindow(_watcher, ApplyUpdate);
+            }
+
+            _mainWindow.NavigateToTab(tabId);
         }
         
         private void OnJobsChanged()
@@ -279,9 +294,11 @@ private void CheckBatchCompletion()
             menu.Items.Add(_startupItem);
             menu.Items.Add(new ToolStripSeparator());
 
-            menu.Items.Add("🛠️  Setup Fissal Sync",       null, OnSetDisplayName);
-            menu.Items.Add("💬  Ask Fissal",              null, OnAskFissal);
-            menu.Items.Add("📡  Fissal Config",          null, (_, _) => OpenConfigFile());
+            menu.Items.Add("⚡  Open Relay Terminal",     null, (_, _) => OpenMainWindow("sync"));
+            menu.Items.Add("💬  Ask Fissal",              null, (_, _) => OpenMainWindow("assistant"));
+            menu.Items.Add("🛠️  Setup & Pairing",         null, (_, _) => OpenMainWindow("setup"));
+            menu.Items.Add("🎨  Terminal Themes",         null, (_, _) => OpenMainWindow("themes"));
+            menu.Items.Add("⚙️  Diagnostics",             null, (_, _) => OpenMainWindow("diagnostics"));
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("🔌  Cut Connection",          null, OnShutdown);
 
@@ -322,38 +339,6 @@ private void CheckBatchCompletion()
             _statusItem.Text = "⚙  " + msg;
             var full = "" + msg;
             _trayIcon.Text = full.Length > 63 ? full[..63] : full;
-        }
-
-        private void OnSetDisplayName(object? sender, EventArgs e)
-        {
-            var config = AppConfig.Instance; 
-            using var form = new DisplayNameForm(config.DisplayName);
-            if (form.ShowDialog() == DialogResult.OK)
-            {
-                // 🐾 Fissal's memory was already updated and saved inside the form itself!
-                
-                string msg = string.IsNullOrWhiteSpace(config.DisplayName) 
-                    ? "Confirmed!\n\nFissal Sync is now configured!" 
-                    : $"Confirmed!\n\nFissal will address you as \"{config.DisplayName}\" in the logs!";
-
-                ShowCustomAlert("Sync Configured!",
-                    msg,
-                    CGreen,
-                    5);
-                    
-                _ = _watcher.StartAsync();
-            }
-        }
-
-        private void OnAskFissal(object? sender, EventArgs e)
-        {
-            if (string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken))
-            {
-                ShowAlert("Pairing Required", "Pair Fissal Relay before opening the assistant.", FissalAlert.AlertLevel.TotalError);
-                return;
-            }
-            using var form = new RelayAssistantForm(_watcher.AskFissalAsync, _watcher.GetAssistantContext);
-            form.ShowDialog();
         }
 
         private void OnShutdown(object? sender, EventArgs e)

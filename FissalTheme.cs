@@ -1,49 +1,505 @@
 using System;
-using System.IO;
+using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Drawing.Text;
+using System.IO;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
-using System.Reflection;
 
 namespace RedfurSync
 {
     /// <summary>
-    /// Shared theme constants, DPI helpers, and font factories for all Fissal windows.
+    /// Shared theme constants, DPI helpers, palette repository, and font factories for all Fissal windows.
+    /// Synchronized with web/v2/src/styles/tokens.css & themeSwitcher.helper.js.
     /// </summary>
     internal static class FissalTheme
     {
-        // ── Palette ───────────────────────────────────────────────────────────
-        // Mirrors web/v2/src/styles/tokens.css :root tokens.
-        // --gold #d4a24e, --t-green #4ade80, --bad #ff6b6b, --warn #ffcb3a.
-        // Surface ladder intentionally separated (tokens.css --surface-sunken/
-        // --surface-muted/--surface-raised/--surface-action/--surface-selected)
-        // so buttons, category panes, cards and selected states no longer
-        // collapse into the same black tile (CBg vs CPanelBg vs CBarBg etc).
-        public static readonly Color CBg        = Color.FromArgb(15, 12, 6);
-        public static readonly Color CPanelBg   = Color.FromArgb(29, 22, 12);
-        public static readonly Color CBorder    = Color.FromArgb(90, 72, 36);
-        public static readonly Color CGoldBrt   = Color.FromArgb(212, 162, 78);  // #d4a24e — was 218,182,88
-        public static readonly Color CGoldMid   = Color.FromArgb(160, 128, 55);
-        public static readonly Color CGoldDim   = Color.FromArgb(95,  74, 30);
-        public static readonly Color CGoldDark   = Color.FromArgb(64, 50, 20);
-        public static readonly Color CGreen     = Color.FromArgb(74,  222, 128); // #4ade80 — was 85,220,100
-        public static readonly Color CGreenDim  = Color.FromArgb(28,  100,  50);
-        public static readonly Color CText      = Color.FromArgb(232, 215, 185);
-        public static readonly Color CTextSub   = Color.FromArgb(130, 112, 82);
-        public static readonly Color CBarBg     = Color.FromArgb(30,  24, 14);
-        public static readonly Color CBarDone   = Color.FromArgb(55,  185, 82);
-        public static readonly Color CBarFail   = Color.FromArgb(255, 107, 107); // #ff6b6b — was 170,55,42
-        public static readonly Color CWarn      = Color.FromArgb(255, 203, 58);  // #ffcb3a — warn/amber (NEW)
-        public static readonly Color CBarActive = Color.FromArgb(210, 175, 80);
-        public static readonly Color CBarCancel = Color.FromArgb(72,  65, 52);
-        public static readonly Color CBtnBg     = Color.FromArgb(32,  26, 14);
-        public static readonly Color CBtnBorder = Color.FromArgb(88,  70, 34);
-        public static readonly Color CErrBg     = Color.FromArgb(38,  16, 10);
-        public static readonly Color CErrBorder = Color.FromArgb(110,  40, 28);
-        public static readonly Color CSep       = Color.FromArgb(55,  44, 22);
+        public sealed class ThemePalette
+        {
+            public string Id { get; init; } = "fissal";
+            public string DisplayName { get; init; } = "Fissal";
+            public string Description { get; init; } = "Alfiq automaton emerald";
+            public string Mark { get; init; } = "◈";
+            public Color Bg { get; init; }
+            public Color PanelBg { get; init; }
+            public Color PanelBgAlt { get; init; }
+            public Color Border { get; init; }
+            public Color BorderSub { get; init; }
+            public Color GoldBrt { get; init; }
+            public Color GoldMid { get; init; }
+            public Color GoldDim { get; init; }
+            public Color GoldDark { get; init; }
+            public Color Green { get; init; }
+            public Color GreenDim { get; init; }
+            public Color Text { get; init; }
+            public Color TextSub { get; init; }
+            public Color BarBg { get; init; }
+            public Color BarDone { get; init; }
+            public Color BarFail { get; init; }
+            public Color Warn { get; init; }
+            public Color BarActive { get; init; }
+            public Color BarCancel { get; init; }
+            public Color BtnBg { get; init; }
+            public Color BtnBorder { get; init; }
+            public Color ErrBg { get; init; }
+            public Color ErrBorder { get; init; }
+            public Color Sep { get; init; }
+            public Color Accent { get; init; }
+            public Color FocusAccent { get; init; }
+        }
+
+        private static readonly Dictionary<string, ThemePalette> _palettes = new(StringComparer.OrdinalIgnoreCase)
+        {
+            // ── 1. Fissal (Default) ────────────────────────────────────────────────────────
+            ["fissal"] = new ThemePalette
+            {
+                Id          = "fissal",
+                DisplayName = "Fissal",
+                Description = "Alfiq automaton emerald & Dwemer brass",
+                Mark        = "◈",
+                Bg          = Color.FromArgb(10, 10, 8),      // #0a0a08
+                PanelBg     = Color.FromArgb(20, 24, 16),     // #141810
+                PanelBgAlt  = Color.FromArgb(29, 22, 12),     // #1d160c
+                Border      = Color.FromArgb(90, 72, 36),     // #5a4824
+                BorderSub   = Color.FromArgb(64, 50, 20),
+                GoldBrt     = Color.FromArgb(212, 162, 78),   // #d4a24e
+                GoldMid     = Color.FromArgb(160, 128, 55),
+                GoldDim     = Color.FromArgb(95, 74, 30),
+                GoldDark    = Color.FromArgb(64, 50, 20),
+                Green       = Color.FromArgb(74, 222, 128),   // #4ade80
+                GreenDim    = Color.FromArgb(28, 100, 50),
+                Text        = Color.FromArgb(232, 215, 185),  // #e8d7b9
+                TextSub     = Color.FromArgb(145, 128, 98),
+                BarBg       = Color.FromArgb(30, 24, 14),
+                BarDone     = Color.FromArgb(55, 185, 82),
+                BarFail     = Color.FromArgb(255, 107, 107),  // #ff6b6b
+                Warn        = Color.FromArgb(255, 203, 58),   // #ffcb3a
+                BarActive   = Color.FromArgb(212, 162, 78),
+                BarCancel   = Color.FromArgb(72, 65, 52),
+                BtnBg       = Color.FromArgb(32, 26, 14),
+                BtnBorder   = Color.FromArgb(88, 70, 34),
+                ErrBg       = Color.FromArgb(38, 16, 10),
+                ErrBorder   = Color.FromArgb(110, 40, 28),
+                Sep         = Color.FromArgb(55, 44, 22),
+                Accent      = Color.FromArgb(0, 255, 136),    // #00ff88
+                FocusAccent = Color.FromArgb(0, 255, 136),
+            },
+
+            // ── 2. Amber ──────────────────────────────────────────────────────────────────
+            ["amber"] = new ThemePalette
+            {
+                Id          = "amber",
+                DisplayName = "Amber",
+                Description = "Warm CRT phosphor earth & vintage almanac",
+                Mark        = "✦",
+                Bg          = Color.FromArgb(13, 9, 5),       // #0d0905
+                PanelBg     = Color.FromArgb(22, 16, 10),     // #16100a
+                PanelBgAlt  = Color.FromArgb(32, 22, 12),
+                Border      = Color.FromArgb(95, 68, 28),     // #5f441c
+                BorderSub   = Color.FromArgb(59, 41, 18),
+                GoldBrt     = Color.FromArgb(255, 185, 56),   // #ffb938
+                GoldMid     = Color.FromArgb(210, 145, 35),
+                GoldDim     = Color.FromArgb(120, 80, 20),
+                GoldDark    = Color.FromArgb(70, 45, 12),
+                Green       = Color.FromArgb(255, 203, 58),   // #ffcb3a
+                GreenDim    = Color.FromArgb(160, 112, 18),
+                Text        = Color.FromArgb(255, 225, 160),
+                TextSub     = Color.FromArgb(165, 130, 80),
+                BarBg       = Color.FromArgb(28, 18, 10),
+                BarDone     = Color.FromArgb(255, 185, 56),
+                BarFail     = Color.FromArgb(255, 95, 75),
+                Warn        = Color.FromArgb(255, 215, 80),
+                BarActive   = Color.FromArgb(255, 154, 42),
+                BarCancel   = Color.FromArgb(75, 55, 35),
+                BtnBg       = Color.FromArgb(35, 22, 12),
+                BtnBorder   = Color.FromArgb(115, 78, 30),
+                ErrBg       = Color.FromArgb(42, 16, 10),
+                ErrBorder   = Color.FromArgb(125, 45, 25),
+                Sep         = Color.FromArgb(65, 45, 20),
+                Accent      = Color.FromArgb(255, 185, 56),
+                FocusAccent = Color.FromArgb(255, 234, 121),  // #ffea79
+            },
+
+            // ── 3. Ice / Cyan ─────────────────────────────────────────────────────────────
+            ["cyan"] = new ThemePalette
+            {
+                Id          = "cyan",
+                DisplayName = "Ice Cyan",
+                Description = "Clinical lab cool phosphor terminal",
+                Mark        = "✧",
+                Bg          = Color.FromArgb(5, 10, 13),      // #050a0d
+                PanelBg     = Color.FromArgb(10, 18, 24),     // #0a1218
+                PanelBgAlt  = Color.FromArgb(14, 26, 36),
+                Border      = Color.FromArgb(26, 44, 54),     // #1a2c36
+                BorderSub   = Color.FromArgb(18, 32, 40),
+                GoldBrt     = Color.FromArgb(34, 211, 238),   // #22d3ee
+                GoldMid     = Color.FromArgb(24, 160, 185),
+                GoldDim     = Color.FromArgb(16, 95, 115),
+                GoldDark    = Color.FromArgb(10, 55, 70),
+                Green       = Color.FromArgb(56, 189, 248),   // #38bdf8
+                GreenDim    = Color.FromArgb(20, 95, 130),
+                Text        = Color.FromArgb(197, 243, 251),  // #c5f3fb
+                TextSub     = Color.FromArgb(91, 143, 163),   // #5b8fa3
+                BarBg       = Color.FromArgb(10, 20, 28),
+                BarDone     = Color.FromArgb(34, 211, 238),
+                BarFail     = Color.FromArgb(255, 105, 130),
+                Warn        = Color.FromArgb(255, 215, 107),  // #ffd76b
+                BarActive   = Color.FromArgb(103, 232, 249),
+                BarCancel   = Color.FromArgb(40, 60, 70),
+                BtnBg       = Color.FromArgb(12, 24, 34),
+                BtnBorder   = Color.FromArgb(34, 75, 95),
+                ErrBg       = Color.FromArgb(35, 15, 20),
+                ErrBorder   = Color.FromArgb(110, 35, 45),
+                Sep         = Color.FromArgb(24, 48, 60),
+                Accent      = Color.FromArgb(34, 211, 238),
+                FocusAccent = Color.FromArgb(56, 189, 248),
+            },
+
+            // ── 4. Plasma ─────────────────────────────────────────────────────────────────
+            ["plasma"] = new ThemePalette
+            {
+                Id          = "plasma",
+                DisplayName = "Plasma",
+                Description = "Arcade synthwave neon & magenta pulse",
+                Mark        = "✣",
+                Bg          = Color.FromArgb(10, 5, 9),       // #0a0509
+                PanelBg     = Color.FromArgb(20, 10, 18),     // #140a12
+                PanelBgAlt  = Color.FromArgb(30, 14, 26),
+                Border      = Color.FromArgb(56, 24, 51),     // #381833
+                BorderSub   = Color.FromArgb(40, 16, 36),
+                GoldBrt     = Color.FromArgb(255, 77, 138),   // #ff4d8a
+                GoldMid     = Color.FromArgb(200, 55, 110),
+                GoldDim     = Color.FromArgb(120, 30, 65),
+                GoldDark    = Color.FromArgb(70, 15, 40),
+                Green       = Color.FromArgb(0, 240, 255),    // #00f0ff
+                GreenDim    = Color.FromArgb(0, 120, 140),
+                Text        = Color.FromArgb(255, 182, 212),  // #ffb6d4
+                TextSub     = Color.FromArgb(166, 74, 120),   // #a64a78
+                BarBg       = Color.FromArgb(24, 10, 22),
+                BarDone     = Color.FromArgb(255, 77, 138),
+                BarFail     = Color.FromArgb(255, 60, 80),
+                Warn        = Color.FromArgb(255, 174, 107),
+                BarActive   = Color.FromArgb(196, 137, 255),
+                BarCancel   = Color.FromArgb(65, 40, 60),
+                BtnBg       = Color.FromArgb(28, 12, 24),
+                BtnBorder   = Color.FromArgb(85, 30, 75),
+                ErrBg       = Color.FromArgb(40, 12, 20),
+                ErrBorder   = Color.FromArgb(120, 30, 50),
+                Sep         = Color.FromArgb(60, 24, 52),
+                Accent      = Color.FromArgb(255, 77, 138),
+                FocusAccent = Color.FromArgb(0, 240, 255),
+            },
+
+            // ── 5. Void ───────────────────────────────────────────────────────────────────
+            ["void"] = new ThemePalette
+            {
+                Id          = "void",
+                DisplayName = "Void",
+                Description = "Midnight Senche deep violet & solar fire",
+                Mark        = "☽",
+                Bg          = Color.FromArgb(6, 5, 26),       // #06051a
+                PanelBg     = Color.FromArgb(12, 10, 38),     // #0c0a26
+                PanelBgAlt  = Color.FromArgb(20, 16, 54),
+                Border      = Color.FromArgb(38, 29, 82),     // #261d52
+                BorderSub   = Color.FromArgb(28, 20, 60),
+                GoldBrt     = Color.FromArgb(168, 85, 247),   // #a855f7
+                GoldMid     = Color.FromArgb(130, 60, 200),
+                GoldDim     = Color.FromArgb(80, 35, 130),
+                GoldDark    = Color.FromArgb(45, 18, 80),
+                Green       = Color.FromArgb(210, 73, 31),    // #d2491f
+                GreenDim    = Color.FromArgb(120, 40, 18),
+                Text        = Color.FromArgb(216, 204, 255),  // #d8ccff
+                TextSub     = Color.FromArgb(109, 87, 196),   // #6d57c4
+                BarBg       = Color.FromArgb(16, 12, 45),
+                BarDone     = Color.FromArgb(168, 85, 247),
+                BarFail     = Color.FromArgb(255, 70, 70),
+                Warn        = Color.FromArgb(255, 201, 122),
+                BarActive   = Color.FromArgb(255, 133, 51),   // #ff8533
+                BarCancel   = Color.FromArgb(50, 40, 80),
+                BtnBg       = Color.FromArgb(22, 16, 52),
+                BtnBorder   = Color.FromArgb(65, 45, 120),
+                ErrBg       = Color.FromArgb(38, 12, 25),
+                ErrBorder   = Color.FromArgb(115, 30, 60),
+                Sep         = Color.FromArgb(45, 32, 90),
+                Accent      = Color.FromArgb(210, 73, 31),
+                FocusAccent = Color.FromArgb(255, 133, 51),
+            },
+
+            // ── 6. Phosphor ───────────────────────────────────────────────────────────────
+            ["phosphor"] = new ThemePalette
+            {
+                Id          = "phosphor",
+                DisplayName = "Phosphor",
+                Description = "Brutalist P1 monochromatic CRT green",
+                Mark        = "▣",
+                Bg          = Color.FromArgb(0, 0, 0),        // #000000
+                PanelBg     = Color.FromArgb(5, 9, 8),        // #050908
+                PanelBgAlt  = Color.FromArgb(10, 18, 14),
+                Border      = Color.FromArgb(26, 42, 24),     // #1a2a18
+                BorderSub   = Color.FromArgb(18, 30, 16),
+                GoldBrt     = Color.FromArgb(214, 255, 58),   // #d6ff3a
+                GoldMid     = Color.FromArgb(160, 200, 35),
+                GoldDim     = Color.FromArgb(94, 155, 0),
+                GoldDark    = Color.FromArgb(50, 90, 0),
+                Green       = Color.FromArgb(163, 255, 0),    // #a3ff00
+                GreenDim    = Color.FromArgb(94, 155, 0),
+                Text        = Color.FromArgb(163, 255, 0),    // #a3ff00
+                TextSub     = Color.FromArgb(94, 155, 0),     // #5e9b00
+                BarBg       = Color.FromArgb(8, 14, 8),
+                BarDone     = Color.FromArgb(163, 255, 0),
+                BarFail     = Color.FromArgb(255, 60, 60),
+                Warn        = Color.FromArgb(240, 255, 0),
+                BarActive   = Color.FromArgb(57, 255, 20),    // #39ff14
+                BarCancel   = Color.FromArgb(30, 50, 30),
+                BtnBg       = Color.FromArgb(10, 18, 10),
+                BtnBorder   = Color.FromArgb(40, 80, 35),
+                ErrBg       = Color.FromArgb(25, 10, 10),
+                ErrBorder   = Color.FromArgb(80, 25, 25),
+                Sep         = Color.FromArgb(24, 46, 22),
+                Accent      = Color.FromArgb(214, 255, 58),
+                FocusAccent = Color.FromArgb(57, 255, 20),
+            },
+
+            // ── 7. Khajiit ────────────────────────────────────────────────────────────────
+            ["khajiit"] = new ThemePalette
+            {
+                Id          = "khajiit",
+                DisplayName = "Khajiit",
+                Description = "Desert dusk, moon-sugar, & starlight gold",
+                Mark        = "☾",
+                Bg          = Color.FromArgb(20, 8, 40),      // #140828
+                PanelBg     = Color.FromArgb(29, 16, 24),     // #1d1018
+                PanelBgAlt  = Color.FromArgb(38, 20, 36),
+                Border      = Color.FromArgb(200, 122, 58),   // #c87a3a
+                BorderSub   = Color.FromArgb(74, 40, 24),
+                GoldBrt     = Color.FromArgb(240, 201, 138),  // #f0c98a
+                GoldMid     = Color.FromArgb(184, 138, 82),
+                GoldDim     = Color.FromArgb(120, 85, 45),
+                GoldDark    = Color.FromArgb(65, 40, 20),
+                Green       = Color.FromArgb(93, 255, 155),   // #5dff9b
+                GreenDim    = Color.FromArgb(40, 120, 70),
+                Text        = Color.FromArgb(240, 201, 138),  // #f0c98a
+                TextSub     = Color.FromArgb(184, 138, 82),   // #b88a52
+                BarBg       = Color.FromArgb(28, 14, 30),
+                BarDone     = Color.FromArgb(93, 255, 155),
+                BarFail     = Color.FromArgb(255, 100, 100),
+                Warn        = Color.FromArgb(255, 154, 60),   // #ff9a3c
+                BarActive   = Color.FromArgb(242, 156, 92),
+                BarCancel   = Color.FromArgb(60, 40, 55),
+                BtnBg       = Color.FromArgb(38, 20, 32),
+                BtnBorder   = Color.FromArgb(140, 75, 40),
+                ErrBg       = Color.FromArgb(40, 14, 25),
+                ErrBorder   = Color.FromArgb(120, 35, 50),
+                Sep         = Color.FromArgb(70, 38, 50),
+                Accent      = Color.FromArgb(255, 154, 60),
+                FocusAccent = Color.FromArgb(93, 255, 155),
+            },
+
+            // ── 8. Dunmer ─────────────────────────────────────────────────────────────────
+            ["dunmer"] = new ThemePalette
+            {
+                Id          = "dunmer",
+                DisplayName = "Dunmer",
+                Description = "Vvardenfell ash, bonemold & blood-red banners",
+                Mark        = "◆",
+                Bg          = Color.FromArgb(10, 6, 6),       // #0a0606
+                PanelBg     = Color.FromArgb(18, 10, 8),      // #120a08
+                PanelBgAlt  = Color.FromArgb(28, 14, 12),
+                Border      = Color.FromArgb(107, 30, 30),    // #6b1e1e
+                BorderSub   = Color.FromArgb(60, 18, 18),
+                GoldBrt     = Color.FromArgb(212, 168, 94),   // #d4a85e
+                GoldMid     = Color.FromArgb(160, 120, 65),
+                GoldDim     = Color.FromArgb(100, 70, 35),
+                GoldDark    = Color.FromArgb(55, 35, 15),
+                Green       = Color.FromArgb(47, 224, 200),   // #2fe0c8
+                GreenDim    = Color.FromArgb(25, 110, 100),
+                Text        = Color.FromArgb(212, 184, 142),  // #d4b88e
+                TextSub     = Color.FromArgb(138, 112, 80),   // #8a7050
+                BarBg       = Color.FromArgb(25, 12, 12),
+                BarDone     = Color.FromArgb(47, 224, 200),
+                BarFail     = Color.FromArgb(178, 29, 29),    // #b21d1d
+                Warn        = Color.FromArgb(212, 168, 94),
+                BarActive   = Color.FromArgb(178, 29, 29),
+                BarCancel   = Color.FromArgb(60, 40, 40),
+                BtnBg       = Color.FromArgb(28, 14, 12),
+                BtnBorder   = Color.FromArgb(115, 38, 38),
+                ErrBg       = Color.FromArgb(42, 10, 10),
+                ErrBorder   = Color.FromArgb(130, 25, 25),
+                Sep         = Color.FromArgb(60, 22, 22),
+                Accent      = Color.FromArgb(178, 29, 29),
+                FocusAccent = Color.FromArgb(47, 224, 200),
+            },
+
+            // ── 9. Orsimer ────────────────────────────────────────────────────────────────
+            ["orsimer"] = new ThemePalette
+            {
+                Id          = "orsimer",
+                DisplayName = "Orsimer",
+                Description = "Forge-iron, steel-blue & tribal green",
+                Mark        = "⚒",
+                Bg          = Color.FromArgb(12, 15, 18),     // #0c0f12
+                PanelBg     = Color.FromArgb(19, 23, 32),     // #131720
+                PanelBgAlt  = Color.FromArgb(26, 32, 44),
+                Border      = Color.FromArgb(106, 138, 154),  // #6a8a9a
+                BorderSub   = Color.FromArgb(42, 46, 54),
+                GoldBrt     = Color.FromArgb(184, 212, 220),  // #b8d4dc
+                GoldMid     = Color.FromArgb(130, 160, 175),
+                GoldDim     = Color.FromArgb(80, 105, 120),
+                GoldDark    = Color.FromArgb(40, 60, 75),
+                Green       = Color.FromArgb(93, 201, 122),   // #5dc97a
+                GreenDim    = Color.FromArgb(45, 110, 65),
+                Text        = Color.FromArgb(216, 228, 236),  // #d8e4ec
+                TextSub     = Color.FromArgb(136, 160, 176),  // #88a0b0
+                BarBg       = Color.FromArgb(18, 24, 32),
+                BarDone     = Color.FromArgb(93, 201, 122),
+                BarFail     = Color.FromArgb(235, 90, 90),
+                Warn        = Color.FromArgb(216, 228, 236),
+                BarActive   = Color.FromArgb(125, 255, 160),  // #7dffa0
+                BarCancel   = Color.FromArgb(50, 60, 70),
+                BtnBg       = Color.FromArgb(24, 30, 42),
+                BtnBorder   = Color.FromArgb(75, 105, 120),
+                ErrBg       = Color.FromArgb(35, 16, 20),
+                ErrBorder   = Color.FromArgb(110, 35, 45),
+                Sep         = Color.FromArgb(40, 55, 68),
+                Accent      = Color.FromArgb(93, 201, 122),
+                FocusAccent = Color.FromArgb(125, 255, 160),
+            },
+
+            // ── 10. Necrom ────────────────────────────────────────────────────────────────
+            ["necrom"] = new ThemePalette
+            {
+                Id          = "necrom",
+                DisplayName = "Necrom",
+                Description = "Apocrypha violet, sickly bone & green ink",
+                Mark        = "◌",
+                Bg          = Color.FromArgb(5, 12, 8),       // #050c08
+                PanelBg     = Color.FromArgb(8, 20, 16),      // #081410
+                PanelBgAlt  = Color.FromArgb(14, 32, 24),
+                Border      = Color.FromArgb(42, 106, 78),    // #2a6a4e
+                BorderSub   = Color.FromArgb(20, 50, 36),
+                GoldBrt     = Color.FromArgb(196, 216, 168),  // #c4d8a8
+                GoldMid     = Color.FromArgb(140, 165, 115),
+                GoldDim     = Color.FromArgb(80, 105, 65),
+                GoldDark    = Color.FromArgb(40, 60, 35),
+                Green       = Color.FromArgb(58, 255, 154),   // #3aff9a
+                GreenDim    = Color.FromArgb(28, 125, 75),
+                Text        = Color.FromArgb(168, 224, 184),  // #a8e0b8
+                TextSub     = Color.FromArgb(94, 154, 114),   // #5e9a72
+                BarBg       = Color.FromArgb(10, 24, 18),
+                BarDone     = Color.FromArgb(58, 255, 154),
+                BarFail     = Color.FromArgb(255, 80, 110),
+                Warn        = Color.FromArgb(196, 216, 168),
+                BarActive   = Color.FromArgb(207, 107, 255),  // #cf6bff
+                BarCancel   = Color.FromArgb(35, 60, 45),
+                BtnBg       = Color.FromArgb(12, 28, 22),
+                BtnBorder   = Color.FromArgb(45, 115, 85),
+                ErrBg       = Color.FromArgb(35, 12, 20),
+                ErrBorder   = Color.FromArgb(110, 30, 55),
+                Sep         = Color.FromArgb(30, 70, 50),
+                Accent      = Color.FromArgb(58, 255, 154),
+                FocusAccent = Color.FromArgb(207, 107, 255),
+            },
+
+            // ── 11. Blackwood ─────────────────────────────────────────────────────────────
+            ["blackwood"] = new ThemePalette
+            {
+                Id          = "blackwood",
+                DisplayName = "Blackwood",
+                Description = "Marsh teal, fog blue & torch fire orange",
+                Mark        = "♜",
+                Bg          = Color.FromArgb(10, 16, 24),     // #0a1018
+                PanelBg     = Color.FromArgb(15, 24, 34),     // #0f1822
+                PanelBgAlt  = Color.FromArgb(22, 34, 48),
+                Border      = Color.FromArgb(74, 98, 128),    // #4a6280
+                BorderSub   = Color.FromArgb(40, 56, 74),
+                GoldBrt     = Color.FromArgb(240, 160, 80),   // #f0a050
+                GoldMid     = Color.FromArgb(180, 115, 55),
+                GoldDim     = Color.FromArgb(110, 70, 30),
+                GoldDark    = Color.FromArgb(60, 38, 15),
+                Green       = Color.FromArgb(255, 140, 58),   // #ff8c3a
+                GreenDim    = Color.FromArgb(140, 65, 20),
+                Text        = Color.FromArgb(184, 200, 216),  // #b8c8d8
+                TextSub     = Color.FromArgb(106, 128, 152),  // #6a8098
+                BarBg       = Color.FromArgb(16, 26, 38),
+                BarDone     = Color.FromArgb(255, 140, 58),
+                BarFail     = Color.FromArgb(255, 85, 85),
+                Warn        = Color.FromArgb(255, 179, 71),   // #ffb347
+                BarActive   = Color.FromArgb(255, 179, 71),
+                BarCancel   = Color.FromArgb(45, 60, 75),
+                BtnBg       = Color.FromArgb(18, 30, 44),
+                BtnBorder   = Color.FromArgb(65, 95, 125),
+                ErrBg       = Color.FromArgb(36, 15, 20),
+                ErrBorder   = Color.FromArgb(115, 35, 45),
+                Sep         = Color.FromArgb(38, 55, 75),
+                Accent      = Color.FromArgb(255, 140, 58),
+                FocusAccent = Color.FromArgb(255, 179, 71),
+            }
+        };
+
+        public static IReadOnlyDictionary<string, ThemePalette> AllPalettes => _palettes;
+        public static ThemePalette Current { get; private set; } = _palettes["fissal"];
+
+        public static event Action? ThemeChanged;
+
+        public static void SetTheme(string themeId)
+        {
+            if (string.IsNullOrWhiteSpace(themeId)) themeId = "fissal";
+            if (_palettes.TryGetValue(themeId.Trim(), out var palette))
+            {
+                Current = palette;
+            }
+            else
+            {
+                Current = _palettes["fissal"];
+            }
+
+            try
+            {
+                var cfg = AppConfig.Instance;
+                if (!string.Equals(cfg.Theme, Current.Id, StringComparison.OrdinalIgnoreCase))
+                {
+                    cfg.Theme = Current.Id;
+                    cfg.Save();
+                }
+            }
+            catch { }
+
+            ThemeChanged?.Invoke();
+        }
+
+        // ── Dynamic Dynamic Palette Accessors (Backwards-Compatible) ────────
+        public static Color CBg        => Current.Bg;
+        public static Color CPanelBg   => Current.PanelBg;
+        public static Color CPanelBgAlt=> Current.PanelBgAlt;
+        public static Color CBorder    => Current.Border;
+        public static Color CBorderSub => Current.BorderSub;
+        public static Color CGoldBrt   => Current.GoldBrt;
+        public static Color CGoldMid   => Current.GoldMid;
+        public static Color CGoldDim   => Current.GoldDim;
+        public static Color CGoldDark  => Current.GoldDark;
+        public static Color CGreen     => Current.Green;
+        public static Color CGreenDim  => Current.GreenDim;
+        public static Color CText      => Current.Text;
+        public static Color CTextSub   => Current.TextSub;
+        public static Color CBarBg     => Current.BarBg;
+        public static Color CBarDone   => Current.BarDone;
+        public static Color CBarFail   => Current.BarFail;
+        public static Color CWarn      => Current.Warn;
+        public static Color CBarActive => Current.BarActive;
+        public static Color CBarCancel => Current.BarCancel;
+        public static Color CBtnBg     => Current.BtnBg;
+        public static Color CBtnBorder => Current.BtnBorder;
+        public static Color CErrBg     => Current.ErrBg;
+        public static Color CErrBorder => Current.ErrBorder;
+        public static Color CSep       => Current.Sep;
+        public static Color CAccent    => Current.Accent;
+        public static Color CFocusAccent=>Current.FocusAccent;
+        public static string ThemeMark => Current.Mark;
+
         public static readonly Color CBtnDark  = Color.FromArgb(85, 85, 85); 
-        public static readonly Color CBtnLight  = Color.FromArgb(150, 150, 150);
+        public static readonly Color CBtnLight = Color.FromArgb(150, 150, 150);
 
         // ── P/Invoke — the only reliable way to get per-monitor DPI ──────────
         [DllImport("user32.dll")] private static extern int GetDpiForWindow(IntPtr hwnd);
@@ -81,7 +537,8 @@ namespace RedfurSync
         private static extern IntPtr AddFontMemResourceEx(IntPtr pbFont, uint cbFont, IntPtr pdv, [In] ref uint pcFonts);
 
         private static readonly PrivateFontCollection _pfc = new PrivateFontCollection();
-        private static readonly FontFamily? _customFont;
+        private static readonly FontFamily? _customRetroFont;
+
         static FissalTheme()
         {
             try
@@ -89,13 +546,13 @@ namespace RedfurSync
                 var assembly = Assembly.GetExecutingAssembly();
                 string? actualResourceName = null;
 
-                // The bulletproof hunt: we let Fissal sniff out the font dynamically
+                // The bulletproof hunt: dynamically locate embedded font
                 foreach (string name in assembly.GetManifestResourceNames())
                 {
                     if (name.EndsWith("RetroFontMain.ttf", StringComparison.OrdinalIgnoreCase))
                     {
                         actualResourceName = name;
-                        break; // Caught it!
+                        break;
                     }
                 }
 
@@ -104,49 +561,44 @@ namespace RedfurSync
                     using Stream? stream = assembly.GetManifestResourceStream(actualResourceName);
                     if (stream != null)
                     {
-                        // Read the embedded stream into a byte array
                         byte[] fontData = new byte[stream.Length];
                         stream.ReadExactly(fontData, 0, fontData.Length);
 
-                        // Allocate native memory for the font
                         IntPtr dataPtr = Marshal.AllocCoTaskMem(fontData.Length);
                         try
                         {
                             Marshal.Copy(fontData, 0, dataPtr, fontData.Length);
-
-                            // 1. Load into GDI+ (For Graphics.DrawString in your OnPaint methods)
                             _pfc.AddMemoryFont(dataPtr, fontData.Length);
                             if (_pfc.Families.Length > 0)
                             {
-                                _customFont = _pfc.Families[0];
+                                _customRetroFont = _pfc.Families[0];
                             }
-
-                            // 2. Load into native GDI memory (For your TextBox and Button controls)
                             uint cFonts = 0;
                             AddFontMemResourceEx(dataPtr, (uint)fontData.Length, IntPtr.Zero, ref cFonts);
                         }
                         finally
                         {
-                            // Safely free the allocated memory
                             Marshal.FreeCoTaskMem(dataPtr);
                         }
                     }
                 }
-                else
+            }
+            catch { }
+
+            try
+            {
+                string savedTheme = AppConfig.Instance.Theme;
+                if (!string.IsNullOrWhiteSpace(savedTheme) && _palettes.TryGetValue(savedTheme, out var p))
                 {
-                    // A soft warning growl if the compiler truly failed to pack it
-                    MessageBox.Show("Fissal's hunt failed: 'RetroFont.ttf' was not found inside the compiled assembly.\nDouble check that the .csproj has the <EmbeddedResource> tag.", "Missing Font");
+                    Current = p;
                 }
             }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"Fissal encountered an error loading the embedded font:\n{ex.Message}", "Font Error");
-            }
+            catch { }
         }
 
-        public static string TitleFontName => _customFont?.Name ?? "Courier New";
-        public static string BodyFontName  => _customFont?.Name ?? "Courier New";
-        public static string MonoFontName  => _customFont?.Name ?? "Courier New";
+        public static string TitleFontName => _customRetroFont?.Name ?? "Segoe UI";
+        public static string BodyFontName  => "Segoe UI";
+        public static string MonoFontName  => "Consolas";
 
         // ── A quick sniff to find the main monitor's scale for the Tray Menu
         public static float GetSystemScale()
@@ -160,41 +612,57 @@ namespace RedfurSync
         }
 
         // ── The Translation Magic
-        // Tweak this number to grow or shrink all text across the entire app!
-        public static float GlobalTextScale => AppConfig.Instance.AppScale * 1.25f;
+        public static float GlobalTextScale => Math.Max(0.75f, Math.Min(1.75f, AppConfig.Instance.AppScale));
 
         private static float PtToPx(float pt, float scale)
         {
-            // Fissal now multiplies the final size by your global preference
             float px = pt * (96f / 72f) * scale * GlobalTextScale;
             return (float)Math.Round(px); 
         }
 
+        /// <summary>
+        /// Display / Heading font with vintage Dwemer / CRT feel.
+        /// </summary>
         public static Font Title(float pt, float scale, FontStyle style = FontStyle.Regular)
         {
-            float pxSize = PtToPx(pt, scale);
-            if (_customFont != null) 
-                return new Font(_customFont, pxSize, style, GraphicsUnit.Pixel);
-                
-            return new Font("Courier New", pxSize, style, GraphicsUnit.Pixel);
+            float pxSize = Math.Max(8f, PtToPx(pt, scale));
+            if (_customRetroFont != null)
+                return new Font(_customRetroFont, pxSize, style, GraphicsUnit.Pixel);
+
+            return new Font("Segoe UI", pxSize, style | FontStyle.Bold, GraphicsUnit.Pixel);
         }
 
+        /// <summary>
+        /// Highly legible standard UI body font (Segoe UI / Arial) for multi-line chat transcripts,
+        /// settings fields, and form controls.
+        /// </summary>
         public static Font Body(float pt, float scale, FontStyle style = FontStyle.Regular)
         {
-            float pxSize = PtToPx(pt, scale);
-            if (_customFont != null) 
-                return new Font(_customFont, pxSize, style, GraphicsUnit.Pixel);
-                
-            return new Font("Courier New", pxSize, style, GraphicsUnit.Pixel);
+            float pxSize = Math.Max(8f, PtToPx(pt, scale));
+            try
+            {
+                return new Font("Segoe UI", pxSize, style, GraphicsUnit.Pixel);
+            }
+            catch
+            {
+                return new Font(FontFamily.GenericSansSerif, pxSize, style, GraphicsUnit.Pixel);
+            }
         }
 
+        /// <summary>
+        /// Monospace font (Consolas / Courier New) for diagnostics, logs, and code blocks.
+        /// </summary>
         public static Font Mono(float pt, float scale, FontStyle style = FontStyle.Regular)
         {
-            float pxSize = PtToPx(pt, scale);
-            if (_customFont != null) 
-                return new Font(_customFont, pxSize, style, GraphicsUnit.Pixel);
-                
-            return new Font("Courier New", pxSize, style, GraphicsUnit.Pixel);
+            float pxSize = Math.Max(8f, PtToPx(pt, scale));
+            try
+            {
+                return new Font("Consolas", pxSize, style, GraphicsUnit.Pixel);
+            }
+            catch
+            {
+                return new Font(FontFamily.GenericMonospace, pxSize, style, GraphicsUnit.Pixel);
+            }
         }
 
         // ── Decorative helpers ────────────────────────────────────────────────
@@ -231,9 +699,9 @@ namespace RedfurSync
             }
         }
 
-        public static System.Drawing.Drawing2D.GraphicsPath RoundRect(float x, float y, float w, float h, float r)
+        public static GraphicsPath RoundRect(float x, float y, float w, float h, float r)
         {
-            var p = new System.Drawing.Drawing2D.GraphicsPath();
+            var p = new GraphicsPath();
             p.AddArc(x,       y,       r*2, r*2, 180, 90);
             p.AddArc(x+w-r*2, y,       r*2, r*2, 270, 90);
             p.AddArc(x+w-r*2, y+h-r*2, r*2, r*2,   0, 90);
