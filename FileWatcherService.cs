@@ -39,6 +39,7 @@ namespace RedfurSync
         private readonly object _jobLock   = new();
         private readonly object _hashLock  = new();
         private readonly System.Timers.Timer _updateTimer = new();
+        private readonly SemaphoreSlim _updateCheckLock = new SemaphoreSlim(1, 1);
         private readonly SemaphoreSlim _uploadThrottle = new SemaphoreSlim(3, 3); // Max 3 concurrent uploads
 
         public FileWatcherService(Action<string> onStatus)
@@ -51,55 +52,73 @@ namespace RedfurSync
         private async Task CheckForUpdatesAsync()
         {
             if (string.IsNullOrWhiteSpace(_config.UpdateUrl)) return;
+            if (!await _updateCheckLock.WaitAsync(0)) return;
 
-            Console.WriteLine("[RedfurSync] Checking for updates...");
-            
-            if (Jobs.Any(j => j.Status == UploadStatus.Uploading)) return; 
-            
-            var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
-            var payload = await _uploader.CheckForUpdateAsync(version);
-            
-            if (payload == null) return;
-
-            UploadJob? existingUpdate;
-            lock (_jobLock)
+            try
             {
-                existingUpdate = Jobs.LastOrDefault(j => j.IsUpdate && j.UpdateVersion == payload.Version);
+                Console.WriteLine("[RedfurSync] Checking for updates...");
+
+                if (Jobs.Any(j => j.Status == UploadStatus.Uploading)) return;
+
+                var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
+                var payload = await _uploader.CheckForUpdateAsync(version);
+
+                if (payload == null)
+                {
+                    if (!string.IsNullOrWhiteSpace(_uploader.LastError))
+                        _onStatus(_uploader.LastError);
+                    return;
+                }
+
+                UploadJob? existingUpdate;
+                lock (_jobLock)
+                {
+                    existingUpdate = Jobs.LastOrDefault(j => j.IsUpdate && j.UpdateVersion == payload.Version);
+                }
+
+                if (existingUpdate != null)
+                {
+                    if (existingUpdate.Status is not (UploadStatus.Failed or UploadStatus.Cancelled)) return;
+                    RetryJob(existingUpdate);
+                    return;
+                }
+
+                string tmpPath = Path.Combine(AppConfig.ConfigDirectory, "Update.tmp");
+
+                var job = new UploadJob
+                {
+                    IsUpdate       = true,
+                    CurrentVersion = version,
+                    UpdateVersion  = payload.Version,
+                    Changelog      = payload.Changelog,
+                    DownloadUrl    = payload.DownloadUrl,
+                    UpdateSha256   = payload.Sha256,
+                    FilePath       = tmpPath,
+                    FileName       = $"RedfurSync v{payload.Version}",
+                    FileSizeBytes  = payload.SizeBytes,
+                    QueuedAt       = DateTime.Now,
+                    Status         = UploadStatus.Queued,
+                    IsExpanded     = true
+                };
+
+                lock (_jobLock)
+                {
+                    PruneOldJobs();
+                    Jobs.Add(job);
+                }
+                NotifyChanged();
+
+                await ProcessUpdateDownloadAsync(job);
             }
-
-            if (existingUpdate != null)
+            catch (Exception ex)
             {
-                if (existingUpdate.Status is not (UploadStatus.Failed or UploadStatus.Cancelled)) return;
-                RetryJob(existingUpdate);
-                return;
+                _onStatus($"Update check failed: {ex.Message}");
+                Console.WriteLine($"[Update Error] ✖ Error: {ex.Message}");
             }
-
-            string tmpPath = Path.Combine(AppConfig.ConfigDirectory, "Update.tmp");
-            
-            var job = new UploadJob
+            finally
             {
-                IsUpdate       = true,
-                CurrentVersion = version,
-                UpdateVersion  = payload.Version,
-                Changelog      = payload.Changelog,
-                DownloadUrl    = payload.DownloadUrl,
-                UpdateSha256   = payload.Sha256,
-                FilePath       = tmpPath,
-                FileName       = $"RedfurSync v{payload.Version}",
-                FileSizeBytes  = payload.SizeBytes, 
-                QueuedAt       = DateTime.Now,
-                Status         = UploadStatus.Queued,
-                IsExpanded     = true
-            };
-
-            lock (_jobLock)
-            {
-                PruneOldJobs();
-                Jobs.Add(job);
+                _updateCheckLock.Release();
             }
-            NotifyChanged();
-
-            await ProcessUpdateDownloadAsync(job);
         }
 
         private async Task ProcessUpdateDownloadAsync(UploadJob job)
@@ -138,7 +157,12 @@ namespace RedfurSync
             SetupWatchers();
             
             _updateTimer.Interval = TimeSpan.FromMinutes(60).TotalMilliseconds;
-            _updateTimer.Elapsed += async (_, _) => await CheckForUpdatesAsync();
+            _updateTimer.AutoReset = false;
+            _updateTimer.Elapsed += async (_, _) =>
+            {
+                try { await CheckForUpdatesAsync(); }
+                finally { _updateTimer.Start(); }
+            };
             _updateTimer.Start();
             _ = Task.Run(async () => { await Task.Delay(8000); await CheckForUpdatesAsync(); });
         }

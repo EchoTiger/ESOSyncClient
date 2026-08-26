@@ -22,11 +22,20 @@ namespace RedfurSync
         {
             try
             {
-                if (!IsTrustedUpdateUri(_config.UpdateUrl, _config.UpdateUrl)) return null;
+                LastError = null;
+                if (!IsTrustedUpdateUri(_config.UpdateUrl, _config.UpdateUrl))
+                {
+                    LastError = "The update manifest URL is not a trusted HTTPS endpoint.";
+                    return null;
+                }
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
                 using var response = await _updateHttp.GetAsync(_config.UpdateUrl, cts.Token);
                 
-                if (!response.IsSuccessStatusCode) return null;
+                if (!response.IsSuccessStatusCode)
+                {
+                    LastError = $"Update manifest returned HTTP {(int)response.StatusCode}.";
+                    return null;
+                }
 
                 var json = await response.Content.ReadAsStringAsync();
                 var payload = JsonSerializer.Deserialize<UpdatePayload>(json, new JsonSerializerOptions 
@@ -57,6 +66,7 @@ namespace RedfurSync
             }
             catch (Exception ex) 
             { 
+                LastError = $"Update check failed: {ex.Message}";
                 Console.WriteLine($"[Update Error] ✖ Error: {ex.Message}"); 
             }
             return null;
