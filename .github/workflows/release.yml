@@ -52,8 +52,8 @@ jobs:
         shell: pwsh
         run: |
           $sdkVersion = dotnet --version
-          if ($sdkVersion -ne '10.0.100') {
-            throw "Expected .NET SDK 10.0.100, found $sdkVersion."
+          if ($sdkVersion -notmatch '^10\.0\.\d+$') {
+            throw "Expected a .NET 10 SDK, found $sdkVersion."
           }
           "RELEASE_SDK=$sdkVersion" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
