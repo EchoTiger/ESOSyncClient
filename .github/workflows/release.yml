@@ -80,16 +80,31 @@ jobs:
           Copy-Item publish/RedfurSync.exe RedfurSync.exe
           Compress-Archive -Path publish/RedfurSync.exe -DestinationPath RedfurSync-win-x64.zip
 
+      - name: Build release changelog
+        shell: pwsh
+        run: |
+          $range = $null
+          try {
+            $previousTag = git describe --tags --abbrev=0 "HEAD^"
+            if ($LASTEXITCODE -eq 0 -and $previousTag) { $range = "$previousTag..HEAD" }
+          } catch {}
+          $notes = if ($range) { git log --pretty=format:"- %s" $range } else { git log --pretty=format:"- %s" -n 15 }
+          $changelog = (($notes | Out-String) -replace "`r`n", "`n").Trim()
+          if ([string]::IsNullOrWhiteSpace($changelog)) { $changelog = "Fissal Relay $($env:RELEASE_VERSION)" }
+          if ($changelog.Length -gt 4000) { $changelog = $changelog.Substring(0, 4000) + "`n- (truncated)" }
+          Set-Content -Path changelog.txt -Value $changelog -Encoding utf8
+
       - name: Create update manifest
         shell: pwsh
         run: |
           $exe = Get-Item publish/RedfurSync.exe
           $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $changelog = (Get-Content changelog.txt -Raw).TrimEnd()
           $releaseTag = "v$($env:RELEASE_VERSION)"
           $manifest = [ordered]@{
             version = $env:RELEASE_VERSION
             downloadUrl = "https://github.com/EchoTiger/ESOSyncClient/releases/download/$releaseTag/RedfurSync.exe"
-            changelog = "Fissal Relay $($env:RELEASE_VERSION)"
+            changelog = $changelog
             sizeBytes = [int64]$exe.Length
             sha256 = $hash
           }
