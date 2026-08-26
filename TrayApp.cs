@@ -26,11 +26,9 @@ namespace RedfurSync
 
         private UploadProgressForm? _progressForm;
 
-        private const string Checked   = "👍  ";
-        private const string Unchecked = "👎  ";
-
-        private const string Selected = "👍  ";
-        private const string Unselected = "   ";
+        // Mono glyphs derived from v2 tokens.css --theme-mark '◈' / '◆' — not emoji.
+        private const string Checked   = "◆  ";
+        private const string Unchecked = "   ";
 
         private int  _prevActiveCount  = 0;
         private bool _batchHadError    = false;
@@ -225,14 +223,17 @@ private void CheckBatchCompletion()
         
         private ContextMenuStrip BuildMenu()
         {
-            float sysScale = GetSystemScale();
-
             var menu = new ContextMenuStrip
             {
-                Font     = Title(11f, sysScale),
                 Renderer = new FissalMenuRenderer(),
                 ShowImageMargin = false
             };
+            // DPI: prefer handle-aware per-monitor scale; fallback to system scale
+            // if handle not yet created (BuildMenu runs before _menu assigned).
+            float sysScale;
+            try { var _ = menu.Handle; sysScale = GetScale(menu.Handle); }
+            catch { sysScale = GetSystemScale(); }
+            menu.Font = Title(11f, sysScale);
 
             _statusItem = new ToolStripMenuItem("⚙  Fissal is harmonizing her mechanical purr…")
             {
@@ -248,9 +249,9 @@ private void CheckBatchCompletion()
             var perfMenu = new ToolStripMenuItem("⚡  Visual Fidelity");
             ((ToolStripDropDownMenu)perfMenu.DropDown).ShowImageMargin = false;
 
-            _perfLowItem  = new ToolStripMenuItem(Unselected + "Super Clear (Low CPU)");
-            _perfMedItem  = new ToolStripMenuItem(Selected   + "Clear (Balanced)");
-            _perfHighItem = new ToolStripMenuItem(Unselected + "Terminal (Max Visuals)");
+            _perfLowItem  = new ToolStripMenuItem(Unchecked + "Minimal (Low FX)");
+            _perfMedItem  = new ToolStripMenuItem(Checked   + "Balanced");
+            _perfHighItem = new ToolStripMenuItem(Unchecked + "Full Glow (Max FX)");
 
             _perfLowItem.Click  += (_, _) => SetPerformanceMode(UploadProgressForm.AppConfig.FidelityMode.Low, true);
             _perfMedItem.Click  += (_, _) => SetPerformanceMode(UploadProgressForm.AppConfig.FidelityMode.Medium, true);
@@ -291,9 +292,9 @@ private void CheckBatchCompletion()
         {
             UploadProgressForm.AppConfig.SetMode(mode);
 
-            _perfLowItem.Text  = (mode == UploadProgressForm.AppConfig.FidelityMode.Low ? Selected : Unselected) + "Super Clear (Low CPU)";
-            _perfMedItem.Text  = (mode == UploadProgressForm.AppConfig.FidelityMode.Medium ? Selected : Unselected) + "Clear (Balanced)";
-            _perfHighItem.Text = (mode == UploadProgressForm.AppConfig.FidelityMode.High ? Selected : Unselected) +"Terminal (Max Visuals)";
+            _perfLowItem.Text  = (mode == UploadProgressForm.AppConfig.FidelityMode.Low ? Checked : Unchecked) + "Minimal (Low FX)";
+            _perfMedItem.Text  = (mode == UploadProgressForm.AppConfig.FidelityMode.Medium ? Checked : Unchecked) + "Balanced";
+            _perfHighItem.Text = (mode == UploadProgressForm.AppConfig.FidelityMode.High ? Checked : Unchecked) + "Full Glow (Max FX)";
 
             if (saveConfig)
             {
@@ -512,14 +513,17 @@ private void CheckBatchCompletion()
 
     internal sealed class FissalMenuRenderer : ToolStripRenderer
     {
-        private static readonly Color CBg    = Color.FromArgb(18, 14, 8);
+        // Derived from FissalTheme — single source of truth (tokens.css parity).
+        // CBg kept at 18,14,8 (slightly raised vs FissalTheme.CBg 15,12,6) so
+        // the context menu lifts off the main panel; all other values follow theme.
+        private static readonly Color CBg    = Color.FromArgb(18, 14, 8); // raised menu surface — intentional vs FissalTheme.CBg
         private static readonly Color CHover = Color.FromArgb(50, 40, 20);
-        private static readonly Color CText  = Color.FromArgb(218, 195, 148);
-        private static readonly Color CDim   = Color.FromArgb(95,  82, 58);
-        private static readonly Color CGold  = Color.FromArgb(218, 182, 88);
-        private static readonly Color CSep   = Color.FromArgb(60,  48, 24);
-        private static readonly Color CBord  = Color.FromArgb(88,  70, 34);
-        private static readonly Color CDmnd  = Color.FromArgb(120, 95, 42);
+        private static readonly Color CText  = FissalTheme.CText;
+        private static readonly Color CDim   = FissalTheme.CTextSub;
+        private static readonly Color CGold  = FissalTheme.CGoldBrt; // was 218,182,88 -> 212,162,78 (#d4a24e)
+        private static readonly Color CSep   = FissalTheme.CSep;
+        private static readonly Color CBord  = FissalTheme.CBorder;
+        private static readonly Color CDmnd  = FissalTheme.CGoldDim;
 
         protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)
         {

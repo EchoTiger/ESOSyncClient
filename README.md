@@ -158,6 +158,8 @@ staged replacement, rollback, and a recoverable failed-install state. Until
 then, an update should never be presented as verified merely because a file
 finished downloading.
 
+DisplayName unification (Track D) is now wired: paired devices may update their server-side label via `PATCH /api/relay/v1/devices/{id}` and the desktop client propagates `DisplayName` to that endpoint after save.
+
 ### Stage 5: Package and release safely
 
 Current release blocker: no code-signing certificate or signing secret is

@@ -365,6 +365,20 @@ namespace RedfurSync
             AppConfig.Instance.PairingCode = _codeInput.Text.Trim();
             AppConfig.Instance.Save();
 
+            // Track D: propagate DisplayName to server device label when paired (fire-and-forget, best-effort)
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken))
+                {
+                    var label = AppConfig.Instance.DisplayName;
+                    using var svc = new UploadService(AppConfig.Instance);
+                    // synchronous wait with short window so UI doesn't hang long
+                    var task = svc.UpdateDeviceLabelAsync(label);
+                    if (!task.Wait(3000)) { /* timeout — best-effort */ }
+                }
+            }
+            catch { /* non-fatal: local save already succeeded */ }
+
             DialogResult = DialogResult.OK;
             Close();
         }

@@ -36,7 +36,12 @@ namespace RedfurSync
                         System.Security.Cryptography.DataProtectionScope.CurrentUser);
                     return Convert.ToBase64String(encrypted);
                 }
-                catch { return string.Empty; }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Fissal] DPAPI protect failed: {ex.Message}");
+                    // fail-closed: prompt re-pair
+                    return string.Empty;
+                }
             }
             set
             {
@@ -49,7 +54,12 @@ namespace RedfurSync
                         System.Security.Cryptography.DataProtectionScope.CurrentUser);
                     DeviceToken = System.Text.Encoding.UTF8.GetString(decrypted);
                 }
-                catch { DeviceToken = string.Empty; }
+                catch (Exception ex)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[Fissal] DPAPI unprotect failed: {ex.Message}");
+                    // fail-closed: prompt re-pair
+                    DeviceToken = string.Empty;
+                }
             }
         }
 
@@ -98,6 +108,7 @@ namespace RedfurSync
         IncludeFields = true 
     };
 
+        // TODO(security): ACL config.json to current user only (icacls /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F")
         public static string ConfigDirectory { get; } = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "FissalCogworkCourier");

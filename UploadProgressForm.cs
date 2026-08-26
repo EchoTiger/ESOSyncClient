@@ -21,6 +21,8 @@ namespace RedfurSync
         private static extern bool ReleaseCapture();
 
         // ── Centralized Visual Configuration (Easy Maintenance) ──
+        // TODO: unify with AppConfig.cs — this inner AppConfig duplicates persistence/config concerns
+        // from the top-level AppConfig.cs (DisplayName/DeviceToken/VisualFidelity). Defer merge to Track D.
         public static class AppConfig
         {
             public static int AnimIntervalMs = 51; 
@@ -436,6 +438,19 @@ namespace RedfurSync
 
         private void OnAnimationTick(object? sender, EventArgs e)
         {
+            // PERF Track C P0: adaptive tick — if Jobs.Count==0 or all Done/terminal and no visual delta, skip Invalidate (keep FidelityMode: High always animates)
+            bool isIdleForTick = _jobs.Count == 0 || _jobs.All(j => j.Status is UploadStatus.Done or UploadStatus.Failed or UploadStatus.Cancelled or UploadStatus.UpdateReady);
+            if (isIdleForTick && _copyBubbles.Count == 0 && _purgeAnimFrames == 0 && _slideOffset == 0 && AppConfig.CurrentMode != AppConfig.FidelityMode.High)
+            {
+                // Allow emptyStateAlpha to settle once, otherwise skip entire tick to save CPU
+                bool emptySettled = (_jobs.Count == 0 && _emptyStateAlpha >= 255f) || (_jobs.Count > 0 && _emptyStateAlpha <= 0f);
+                if (emptySettled)
+                {
+                    // Still run cheap color pulse check but skip Invalidate if nothing changed
+                    bool sc = ProcessScrollPhysics();
+                    if (!sc) return;
+                }
+            }
             bool visualChanged = ProcessVisualMath();
             bool scrollChanged = ProcessScrollPhysics();
             bool colorChanged = ProcessColorPulse();
@@ -541,6 +556,7 @@ namespace RedfurSync
         
         private bool ProcessVisualMath()
         {
+            // PERF Track C: OnAnimationTick already gates idle Invalidate; ProcessVisualMath keeps FidelityMode behavior (High always animates)
             _shimmer = (_shimmer + AppConfig.ShimmerSpeed) % 500f;
             
             if (AppConfig.FX.ScreenScanlines || AppConfig.FX.MCScanlines || AppConfig.FX.GroupSepScanlines || AppConfig.FX.RowBadgeScanlines)

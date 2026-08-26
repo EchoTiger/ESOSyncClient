@@ -14,20 +14,27 @@ namespace RedfurSync
     internal static class FissalTheme
     {
         // ── Palette ───────────────────────────────────────────────────────────
+        // Mirrors web/v2/src/styles/tokens.css :root tokens.
+        // --gold #d4a24e, --t-green #4ade80, --bad #ff6b6b, --warn #ffcb3a.
+        // Surface ladder intentionally separated (tokens.css --surface-sunken/
+        // --surface-muted/--surface-raised/--surface-action/--surface-selected)
+        // so buttons, category panes, cards and selected states no longer
+        // collapse into the same black tile (CBg vs CPanelBg vs CBarBg etc).
         public static readonly Color CBg        = Color.FromArgb(15, 12, 6);
         public static readonly Color CPanelBg   = Color.FromArgb(29, 22, 12);
         public static readonly Color CBorder    = Color.FromArgb(90, 72, 36);
-        public static readonly Color CGoldBrt   = Color.FromArgb(218, 182, 88);
+        public static readonly Color CGoldBrt   = Color.FromArgb(212, 162, 78);  // #d4a24e — was 218,182,88
         public static readonly Color CGoldMid   = Color.FromArgb(160, 128, 55);
         public static readonly Color CGoldDim   = Color.FromArgb(95,  74, 30);
         public static readonly Color CGoldDark   = Color.FromArgb(64, 50, 20);
-        public static readonly Color CGreen     = Color.FromArgb(85,  220, 100);
+        public static readonly Color CGreen     = Color.FromArgb(74,  222, 128); // #4ade80 — was 85,220,100
         public static readonly Color CGreenDim  = Color.FromArgb(28,  100,  50);
         public static readonly Color CText      = Color.FromArgb(232, 215, 185);
         public static readonly Color CTextSub   = Color.FromArgb(130, 112, 82);
         public static readonly Color CBarBg     = Color.FromArgb(30,  24, 14);
         public static readonly Color CBarDone   = Color.FromArgb(55,  185, 82);
-        public static readonly Color CBarFail   = Color.FromArgb(170,  55, 42);
+        public static readonly Color CBarFail   = Color.FromArgb(255, 107, 107); // #ff6b6b — was 170,55,42
+        public static readonly Color CWarn      = Color.FromArgb(255, 203, 58);  // #ffcb3a — warn/amber (NEW)
         public static readonly Color CBarActive = Color.FromArgb(210, 175, 80);
         public static readonly Color CBarCancel = Color.FromArgb(72,  65, 52);
         public static readonly Color CBtnBg     = Color.FromArgb(32,  26, 14);

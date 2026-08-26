@@ -167,6 +167,7 @@ namespace RedfurSync
             return builder.Uri;
         }
 
+        // Pairing uses Environment.MachineName as initial label; post-pair renames flow via PATCH /api/relay/v1/devices/{id} (UpdateDeviceLabelAsync).
         public async Task<(bool ok, string message)> PairAsync()
         {
             if (!string.IsNullOrWhiteSpace(_config.DeviceToken)) return (true, "Already paired");
@@ -232,6 +233,46 @@ namespace RedfurSync
             {
                 return (false, $"Could not reach Fissal: {ex.Message}", string.Empty);
             }
+        }
+
+        public static string? NormalizeLabel(string raw)
+        {
+            var v = (raw ?? "").Trim();
+            if (v.StartsWith("@")) v = v.Substring(1);
+            if (v.Length > 32) v = v.Substring(0, 32);
+            if (string.IsNullOrWhiteSpace(v)) return null;
+            foreach (var ch in v)
+                if (!(char.IsLetterOrDigit(ch) || ch == '.' || ch == '-' || ch == '_' || ch == ' '))
+                    return null;
+            return v;
+        }
+
+        public async Task<(bool ok, string message)> UpdateDeviceLabelAsync(string label)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(_config.DeviceToken)) return (false, "Not paired");
+                var normalized = NormalizeLabel(label);
+                if (normalized == null) return (false, "Invalid displayName");
+                // Need device id — fetch via GET /health (cheap, already paired) then PATCH by id
+                using var healthReq = CreateSyncRequest(HttpMethod.Get, BuildRelayUri("/health"));
+                using var healthResp = await _syncHttp.SendAsync(healthReq);
+                if (!healthResp.IsSuccessStatusCode) return (false, $"Could not resolve device ({(int)healthResp.StatusCode})");
+                using var healthDoc = JsonDocument.Parse(await healthResp.Content.ReadAsStringAsync());
+                if (!healthDoc.RootElement.TryGetProperty("device", out var deviceEl) || !deviceEl.TryGetProperty("id", out var idEl) || !idEl.TryGetInt32(out var deviceId))
+                    return (false, "Device id not available");
+                var payload = JsonSerializer.Serialize(new { displayName = normalized });
+                using var patchReq = CreateSyncRequest(new HttpMethod("PATCH"), BuildRelayUri($"/devices/{deviceId}"),
+                    new StringContent(payload, System.Text.Encoding.UTF8, "application/json"));
+                using var patchResp = await _syncHttp.SendAsync(patchReq);
+                if (!patchResp.IsSuccessStatusCode)
+                {
+                    var body = await patchResp.Content.ReadAsStringAsync();
+                    return (false, string.IsNullOrWhiteSpace(body) ? $"PATCH {(int)patchResp.StatusCode}" : body.Trim());
+                }
+                return (true, normalized);
+            }
+            catch (Exception ex) { return (false, ex.Message); }
         }
 
         public async Task<HashSet<string>?> GetMissingSaleIdsAsync(IReadOnlyList<string> saleIds, CancellationToken cancellationToken)

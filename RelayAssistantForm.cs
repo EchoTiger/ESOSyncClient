@@ -26,6 +26,9 @@ namespace RedfurSync
             ForeColor = CText;
             Text = "Ask Fissal";
 
+            // DPI: prefer handle-aware scale; fallback to system if handle not yet created.
+            float scale = IsHandleCreated ? GetScale(Handle) : GetSystemScale();
+
             var layout = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
@@ -46,16 +49,18 @@ namespace RedfurSync
                 AutoSize = true,
                 Text = "Fissal Relay Assistant",
                 ForeColor = CGoldBrt,
-                Font = Title(16f, 1f, FontStyle.Bold),
+                Font = Title(14f, scale, FontStyle.Bold),
                 Margin = new Padding(0, 0, 0, 6),
+                AccessibleName = "Fissal Relay Assistant header",
             });
             layout.Controls.Add(new Label
             {
                 AutoSize = true,
                 Text = "Ask about setup, connection state, sync progress, or Relay errors.",
                 ForeColor = CTextSub,
-                Font = SystemFonts.MessageBoxFont,
+                Font = Body(9f, scale),
                 Margin = new Padding(0, 0, 0, 8),
+                AccessibleName = "Assistant hint",
             });
 
             _prompt = new TextBox
@@ -66,7 +71,7 @@ namespace RedfurSync
                 ScrollBars = ScrollBars.Vertical,
                 BackColor = CPanelBg,
                 ForeColor = CText,
-                Font = SystemFonts.MessageBoxFont,
+                Font = Body(9f, scale),
                 AccessibleName = "Question for Fissal",
             };
             layout.Controls.Add(_prompt);
@@ -91,8 +96,9 @@ namespace RedfurSync
                 ScrollBars = ScrollBars.Vertical,
                 BackColor = Color.FromArgb(8, 8, 10),
                 ForeColor = CText,
-                Font = SystemFonts.MessageBoxFont,
+                Font = Mono(9f, scale),
                 AccessibleName = "Fissal response",
+                AccessibleRole = AccessibleRole.Text,
             };
             layout.Controls.Add(_response);
 
@@ -100,12 +106,16 @@ namespace RedfurSync
             {
                 AutoSize = true,
                 ForeColor = CTextSub,
+                Font = Body(8f, scale),
                 Text = "Paired requests use the Relay Assistant route configured in Fissal Control.",
                 Margin = new Padding(0, 8, 0, 4),
+                AccessibleName = "Assistant status",
             };
             layout.Controls.Add(_status);
 
-            var close = new Button { AutoSize = true, Text = "Close", DialogResult = DialogResult.Cancel };
+            _send.Font = Body(9f, scale, FontStyle.Bold);
+            _send.AccessibleName = "Send question to Fissal";
+            var close = new Button { AutoSize = true, Text = "Close", DialogResult = DialogResult.Cancel, Font = Body(9f, scale), AccessibleName = "Close assistant" };
             layout.Controls.Add(close);
             Controls.Add(layout);
             AcceptButton = _send;

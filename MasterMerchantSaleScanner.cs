@@ -7,6 +7,9 @@ namespace RedfurSync
 {
     internal static class MasterMerchantSaleScanner
     {
+        // PERF Track C: replace Regex with AsSpan trim/StartsWith to avoid 200k Match allocs — TODO Track C
+        // Span approach sketch: line.AsSpan().Trim().StartsWith("[\"id\"]", Ordinal) then slice between quotes and TryParse.
+        // Kept Regex for now for correctness; TODO is to swap to manual span parse in next pass.
         private static readonly Regex SaleIdPattern = new(
             "^\\s*\\[\"id\"\\]\\s*=\\s*\"(?<id>\\d{1,20})\",?\\s*$",
             RegexOptions.Compiled | RegexOptions.CultureInvariant);
