@@ -15,7 +15,31 @@ permissions:
   contents: write
 
 jobs:
+  test:
+    # RedfurSync.Core + tests target plain net10.0, so Linux runners work and are cheaper.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: global.json
+
+      - name: Run relay tests
+        run: dotnet test RedfurSync.Tests/RedfurSync.Tests.csproj -c Release
+
+      - name: Verify the core library stays WinForms-free
+        run: |
+          if grep -rnE 'System\.Windows\.Forms|System\.Drawing' RedfurSync.Core --include='*.cs' --include='*.csproj'; then
+            echo "::error::RedfurSync.Core must stay cross-platform so tests can run off Windows."
+            exit 1
+          fi
+
   release:
+    needs: test
     runs-on: windows-latest
     timeout-minutes: 20
     steps:

@@ -17,6 +17,8 @@ namespace RedfurSync
             // own scaling factor and re-scales when windows move between them.
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 
+            AppConfig.FaultReporter = (title, message) => MessageBox.Show(message, title);
+
             string? exePath = Environment.ProcessPath;
             if (!string.IsNullOrEmpty(exePath))
             {

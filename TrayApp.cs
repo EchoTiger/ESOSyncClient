@@ -63,6 +63,7 @@ namespace RedfurSync
             CheckFirstRun();
         }
         private System.Windows.Forms.Timer? _batchAlertTimer;
+        private bool _disposed;
         private void CheckFirstRun()
         {
             var config = AppConfig.Instance;
@@ -268,9 +269,9 @@ private void CheckBatchCompletion()
             _perfMedItem  = new ToolStripMenuItem(Checked   + "Balanced");
             _perfHighItem = new ToolStripMenuItem(Unchecked + "Full Glow (Max FX)");
 
-            _perfLowItem.Click  += (_, _) => SetPerformanceMode(UploadProgressForm.AppConfig.FidelityMode.Low, true);
-            _perfMedItem.Click  += (_, _) => SetPerformanceMode(UploadProgressForm.AppConfig.FidelityMode.Medium, true);
-            _perfHighItem.Click += (_, _) => SetPerformanceMode(UploadProgressForm.AppConfig.FidelityMode.High, true);
+            _perfLowItem.Click  += (_, _) => SetPerformanceMode(FidelityMode.Low, true);
+            _perfMedItem.Click  += (_, _) => SetPerformanceMode(FidelityMode.Medium, true);
+            _perfHighItem.Click += (_, _) => SetPerformanceMode(FidelityMode.High, true);
 
             perfMenu.DropDownItems.Add(_perfLowItem);
             perfMenu.DropDownItems.Add(_perfMedItem);
@@ -305,13 +306,13 @@ private void CheckBatchCompletion()
             return menu;
         }
 
-        private void SetPerformanceMode(UploadProgressForm.AppConfig.FidelityMode mode, bool saveConfig)
+        private void SetPerformanceMode(FidelityMode mode, bool saveConfig)
         {
             UploadProgressForm.AppConfig.SetMode(mode);
 
-            _perfLowItem.Text  = (mode == UploadProgressForm.AppConfig.FidelityMode.Low ? Checked : Unchecked) + "Minimal (Low FX)";
-            _perfMedItem.Text  = (mode == UploadProgressForm.AppConfig.FidelityMode.Medium ? Checked : Unchecked) + "Balanced";
-            _perfHighItem.Text = (mode == UploadProgressForm.AppConfig.FidelityMode.High ? Checked : Unchecked) + "Full Glow (Max FX)";
+            _perfLowItem.Text  = (mode == FidelityMode.Low ? Checked : Unchecked) + "Minimal (Low FX)";
+            _perfMedItem.Text  = (mode == FidelityMode.Medium ? Checked : Unchecked) + "Balanced";
+            _perfHighItem.Text = (mode == FidelityMode.High ? Checked : Unchecked) + "Full Glow (Max FX)";
 
             if (saveConfig)
             {
@@ -400,13 +401,17 @@ private void CheckBatchCompletion()
 
             if (result == DialogResult.Yes)
             {
+                string? exePath = null;
+                string? oldPath = null;
+                bool originalMoved = false;
                 try 
                 {
-                    string exePath = Environment.ProcessPath ?? AppContext.BaseDirectory;
-                    string oldPath = exePath + ".old";
+                    exePath = Environment.ProcessPath ?? throw new InvalidOperationException("Could not determine the executable path.");
+                    oldPath = exePath + ".old";
                     
                     if (System.IO.File.Exists(oldPath)) System.IO.File.Delete(oldPath);
                     System.IO.File.Move(exePath, oldPath);
+                    originalMoved = true;
                     System.IO.File.Move(job.FilePath, exePath);
                     
                     Process.Start(exePath);
@@ -414,7 +419,21 @@ private void CheckBatchCompletion()
                 }
                 catch (Exception ex) 
                 {
-                    ShowAlert("Update Failed!", $"Fissal's claws slipped: {ex.Message}", FissalAlert.AlertLevel.TotalError);
+                    string message = ex.Message;
+                    try
+                    {
+                        if (originalMoved && exePath != null && oldPath != null && System.IO.File.Exists(oldPath))
+                        {
+                            if (System.IO.File.Exists(exePath)) System.IO.File.Delete(exePath);
+                            System.IO.File.Move(oldPath, exePath);
+                        }
+                    }
+                    catch (Exception rollbackEx)
+                    {
+                        message += $" The original executable could not be restored: {rollbackEx.Message}";
+                    }
+
+                    ShowAlert("Update Failed!", $"Fissal's claws slipped: {message}", FissalAlert.AlertLevel.TotalError);
                 }
             }
         }
@@ -489,7 +508,13 @@ private void CheckBatchCompletion()
 
         public void Dispose()
         {
+            if (_disposed) return;
+            _disposed = true;
+
+            _batchAlertTimer?.Stop();
+            _batchAlertTimer?.Dispose();
             _progressForm?.Dispose();
+            _mainWindow?.Dispose();
             _watcher.Dispose();
             _trayIcon.Dispose();
             _menu.Dispose();

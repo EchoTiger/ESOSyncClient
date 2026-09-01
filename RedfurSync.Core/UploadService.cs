@@ -88,6 +88,8 @@ namespace RedfurSync
                 long? totalBytes = response.Content.Headers.ContentLength;
                 if (totalBytes.HasValue && (totalBytes.Value <= 0 || totalBytes.Value > 500L * 1024 * 1024))
                     throw new InvalidOperationException("Update size is outside the allowed limit.");
+                if (totalBytes.HasValue && totalBytes.Value != job.FileSizeBytes)
+                    throw new InvalidOperationException("Update size did not match the update manifest.");
                 await using var contentStream = await response.Content.ReadAsStreamAsync(job.Cts.Token);
                 
                 await using var fileStream = new FileStream(job.FilePath, FileMode.Create, FileAccess.Write, FileShare.None, 8192, true);
@@ -109,6 +111,9 @@ namespace RedfurSync
                     }
                 }
 
+                if (totalRead != job.FileSizeBytes)
+                    throw new InvalidOperationException("Downloaded update size did not match the update manifest.");
+
                 var actualHash = Convert.ToHexString(hasher.GetHashAndReset());
                 if (!CryptographicOperations.FixedTimeEquals(
                     Convert.FromHexString(actualHash), Convert.FromHexString(job.UpdateSha256)))
@@ -128,10 +133,21 @@ namespace RedfurSync
         }
 
         public UploadService(AppConfig config)
+            : this(config, new HttpClientHandler(), new HttpClientHandler())
         {
-            _config = config;
-            _syncHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(120) };
-            _updateHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(120) };
+        }
+
+        public UploadService(AppConfig config, HttpMessageHandler syncHandler, HttpMessageHandler updateHandler)
+        {
+            _config = config ?? throw new ArgumentNullException(nameof(config));
+            _syncHttp = new HttpClient(syncHandler ?? throw new ArgumentNullException(nameof(syncHandler)))
+            {
+                Timeout = TimeSpan.FromSeconds(120)
+            };
+            _updateHttp = new HttpClient(updateHandler ?? throw new ArgumentNullException(nameof(updateHandler)))
+            {
+                Timeout = TimeSpan.FromSeconds(120)
+            };
         }
 
         public async Task<(bool ok, string message)> PingAsync()
@@ -364,7 +380,7 @@ namespace RedfurSync
                 }), System.Text.Encoding.UTF8, "application/json");
                 using var request = CreateSyncRequest(HttpMethod.Post, BuildRelayUri("/events"), body);
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                await _syncHttp.SendAsync(request, cts.Token);
+                using var response = await _syncHttp.SendAsync(request, cts.Token);
             }
             catch
             {
@@ -379,8 +395,8 @@ namespace RedfurSync
             return target.Scheme == Uri.UriSchemeHttps && manifest.Scheme == Uri.UriSchemeHttps && target.Host.Equals(manifest.Host, StringComparison.OrdinalIgnoreCase);
         }
 
-        private static bool IsValidUpdatePayload(UpdatePayload payload) =>
-            payload.SizeBytes > 0 && payload.SizeBytes <= 500L * 1024 * 1024 && IsValidSha256(payload.Sha256) && IsTrustedUpdateUri(payload.DownloadUrl, AppConfig.Instance.UpdateUrl);
+        private bool IsValidUpdatePayload(UpdatePayload payload) =>
+            payload.SizeBytes > 0 && payload.SizeBytes <= 500L * 1024 * 1024 && IsValidSha256(payload.Sha256) && IsTrustedUpdateUri(payload.DownloadUrl, _config.UpdateUrl);
 
         public async Task<bool> UploadAsync(UploadJob job)
         {
@@ -412,13 +428,13 @@ namespace RedfurSync
                 
                 if (string.IsNullOrWhiteSpace(_config.DeviceToken))
                 {
-                    string finalName = AppConfig.Instance.DisplayName;
+                    string finalName = _config.DisplayName;
                     if (string.IsNullOrWhiteSpace(finalName)) finalName = "Redfur Trader";
                     form.Add(new StringContent(finalName), "displayName");
                 }
 
                 using var request = CreateSyncRequest(HttpMethod.Post, BuildUploadUri(), form);
-                var response = await _syncHttp.SendAsync(request, job.Cts.Token);
+                using var response = await _syncHttp.SendAsync(request, job.Cts.Token);
 
                 if (!response.IsSuccessStatusCode)
                 {

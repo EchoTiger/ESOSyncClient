@@ -295,6 +295,16 @@ namespace RedfurSync
             _rootLayout.Controls.Add(_titleBar, 0, 0);
             _rootLayout.SetColumnSpan(_titleBar, 2);
 
+            // ── Content Area Host ──
+            _contentHost = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = CBg,
+                Margin = new Padding(0),
+                Padding = new Padding(12),
+            };
+            _rootLayout.Controls.Add(_contentHost, 1, 1);
+
             // ── Navigation Rail ──
             _navRail = new Panel
             {
@@ -321,16 +331,6 @@ namespace RedfurSync
 
             _navRail.Controls.Add(navStack);
             _rootLayout.Controls.Add(_navRail, 0, 1);
-
-            // ── Content Area Host ──
-            _contentHost = new Panel
-            {
-                Dock = DockStyle.Fill,
-                BackColor = CBg,
-                Margin = new Padding(0),
-                Padding = new Padding(12),
-            };
-            _rootLayout.Controls.Add(_contentHost, 1, 1);
 
             Controls.Add(_rootLayout);
 
@@ -1425,7 +1425,7 @@ namespace RedfurSync
             _fidelityCombo.SelectedIndex = (int)AppConfig.Instance.VisualFidelity;
             _fidelityCombo.SelectedIndexChanged += (_, _) =>
             {
-                var mode = (UploadProgressForm.AppConfig.FidelityMode)_fidelityCombo.SelectedIndex;
+                var mode = (FidelityMode)_fidelityCombo.SelectedIndex;
                 AppConfig.Instance.VisualFidelity = mode;
                 AppConfig.Instance.Save();
                 UploadProgressForm.AppConfig.SetMode(mode);

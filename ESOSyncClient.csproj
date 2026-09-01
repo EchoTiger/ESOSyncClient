@@ -25,4 +25,11 @@
     <EmbeddedResource Include="Fonts\RetroFontMain.ttf" />
     <EmbeddedResource Include="fiss.png" />
   </ItemGroup>
+  <ItemGroup>
+    <Compile Remove="RedfurSync.Tests\**\*.cs" />
+    <Compile Remove="RedfurSync.Core\**\*.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="RedfurSync.Core\RedfurSync.Core.csproj" />
+  </ItemGroup>
 </Project>

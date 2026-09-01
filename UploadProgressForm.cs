@@ -49,7 +49,7 @@ namespace RedfurSync
             public const int DiagScrollBottomPad = 5;   // Stretches scrollbar downward
             // -------------------------------------------------
             
-            public enum FidelityMode { Low, Medium, High }
+            // FidelityMode now lives in RedfurSync.Core/FidelityMode.cs
             public static FidelityMode CurrentMode = FidelityMode.Medium;
 
             public static void SetMode(FidelityMode mode)
@@ -440,7 +440,7 @@ namespace RedfurSync
         {
             // PERF Track C P0: adaptive tick — if Jobs.Count==0 or all Done/terminal and no visual delta, skip Invalidate (keep FidelityMode: High always animates)
             bool isIdleForTick = _jobs.Count == 0 || _jobs.All(j => j.Status is UploadStatus.Done or UploadStatus.Failed or UploadStatus.Cancelled or UploadStatus.UpdateReady);
-            if (isIdleForTick && _copyBubbles.Count == 0 && _purgeAnimFrames == 0 && _slideOffset == 0 && AppConfig.CurrentMode != AppConfig.FidelityMode.High)
+            if (isIdleForTick && _copyBubbles.Count == 0 && _purgeAnimFrames == 0 && _slideOffset == 0 && AppConfig.CurrentMode != FidelityMode.High)
             {
                 // Allow emptyStateAlpha to settle once, otherwise skip entire tick to save CPU
                 bool emptySettled = (_jobs.Count == 0 && _emptyStateAlpha >= 255f) || (_jobs.Count > 0 && _emptyStateAlpha <= 0f);
@@ -603,7 +603,7 @@ namespace RedfurSync
 
             // In High fidelity, always invalidate to maintain smooth continuous glows/scrolling.
             // In Low fidelity, only flag a visual change if dynamic physical animations are active.
-            if (AppConfig.CurrentMode == AppConfig.FidelityMode.High) return true;
+            if (AppConfig.CurrentMode == FidelityMode.High) return true;
             return visualChanged;
         }
 
@@ -1067,16 +1067,16 @@ private void EnsureLayoutUpdated()
             for (int j = 0; j < Height; j += S(3)) g.DrawLine(meshPen, 0, j, Width, j);
 
             // Screen scratches and smudges based on Fidelity ---
-            if (AppConfig.CurrentMode != AppConfig.FidelityMode.Low)
+            if (AppConfig.CurrentMode != FidelityMode.Low)
             {
-                int sAlpha = AppConfig.CurrentMode == AppConfig.FidelityMode.High ? 8 : 3;
+                int sAlpha = AppConfig.CurrentMode == FidelityMode.High ? 8 : 3;
                 using var screenScratch = new Pen(Color.FromArgb(sAlpha, 255, 255, 255), 1f);
                 g.DrawCurve(screenScratch, new PointF[] { new PointF(S(50), S(120)), new PointF(S(80), S(125)), new PointF(S(90), S(110)) });
                 g.DrawLine(screenScratch, Width - S(60), Height - S(100), Width - S(40), Height - S(80));
                 g.DrawLine(screenScratch, S(15), Height - S(50), S(35), Height - S(45));
                 
                 // Increased alpha slightly because the radial gradient softens it dramatically
-                int sSmudgeAlpha = AppConfig.CurrentMode == AppConfig.FidelityMode.High ? 12 : 5;
+                int sSmudgeAlpha = AppConfig.CurrentMode == FidelityMode.High ? 12 : 5;
                 
                 void DrawSoftSmudge(float sx, float sy, float sw, float sh) {
                     using var p = new GraphicsPath(); p.AddEllipse(sx, sy, sw, sh);
@@ -2141,13 +2141,13 @@ private void EnsureLayoutUpdated()
                 g.DrawPath(botLipPen, botLip);
 
                 // Subtle Crack & Smudge for ruggedness ---
-                if (AppConfig.CurrentMode != AppConfig.FidelityMode.Low)
+                if (AppConfig.CurrentMode != FidelityMode.Low)
                 {
-                    int smudgeAlpha = AppConfig.CurrentMode == AppConfig.FidelityMode.High ? 15 : 6;
+                    int smudgeAlpha = AppConfig.CurrentMode == FidelityMode.High ? 15 : 6;
                     using var smudgeBrush = new SolidBrush(Color.FromArgb(smudgeAlpha, 255, 255, 255));
                     g.FillEllipse(smudgeBrush, gx + S(6), gy + S(8), gSize - S(16), gSize - S(12));
 
-                    int crackAlpha = AppConfig.CurrentMode == AppConfig.FidelityMode.High ? 80 : 35;
+                    int crackAlpha = AppConfig.CurrentMode == FidelityMode.High ? 80 : 35;
                     using var crackPen = new Pen(Color.FromArgb(crackAlpha, 255, 255, 255), 1f);
                     var crackPts = new PointF[] {
                         new PointF(gx + S(5), gy + S(16)),
@@ -2157,7 +2157,7 @@ private void EnsureLayoutUpdated()
                     };
                     g.DrawLines(crackPen, crackPts);
                     
-                    int refractAlpha = AppConfig.CurrentMode == AppConfig.FidelityMode.High ? 40 : 15;
+                    int refractAlpha = AppConfig.CurrentMode == FidelityMode.High ? 40 : 15;
                     using var refractionPen = new Pen(Color.FromArgb(refractAlpha, _coreColor), 1f);
                     g.DrawLine(refractionPen, gx + S(10), gy + S(14), gx + S(14), gy + S(11));
                 }
@@ -2354,9 +2354,9 @@ private void EnsureLayoutUpdated()
             }
 
             // Micro Display Screen Scratches ---
-            if (AppConfig.CurrentMode != AppConfig.FidelityMode.Low)
+            if (AppConfig.CurrentMode != FidelityMode.Low)
             {
-                int smudgeAlpha = AppConfig.CurrentMode == AppConfig.FidelityMode.High ? 20 : 8;
+                int smudgeAlpha = AppConfig.CurrentMode == FidelityMode.High ? 20 : 8;
                 
                 void DrawSoftMCSmudge(float sx, float sy, float sw, float sh) {
                     using var p = new GraphicsPath(); p.AddEllipse(sx, sy, sw, sh);
@@ -2370,7 +2370,7 @@ private void EnsureLayoutUpdated()
                 DrawSoftMCSmudge(mcX + S(10), mcY + S(5), S(40), S(15));
                 DrawSoftMCSmudge(mcX + mcW - S(30), mcY + S(2), S(20), S(10));
                 
-                int scratchAlpha = AppConfig.CurrentMode == AppConfig.FidelityMode.High ? 30 : 15;
+                int scratchAlpha = AppConfig.CurrentMode == FidelityMode.High ? 30 : 15;
                 using var mcScratchPen = new Pen(Color.FromArgb(scratchAlpha, 255, 255, 255), 1f);
                 g.DrawLine(mcScratchPen, mcX + S(15), mcY + S(8), mcX + S(22), mcY + S(14));
                 g.DrawLine(mcScratchPen, mcX + mcW - S(10), mcY + S(18), mcX + mcW - S(5), mcY + S(12));

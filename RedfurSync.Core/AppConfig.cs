@@ -29,6 +29,8 @@ namespace RedfurSync
             get
             {
                 if (string.IsNullOrWhiteSpace(DeviceToken)) return string.Empty;
+                // DPAPI is Windows-only; the relay only ships on Windows, so fail closed elsewhere.
+                if (!OperatingSystem.IsWindows()) return string.Empty;
                 try
                 {
                     var encrypted = System.Security.Cryptography.ProtectedData.Protect(
@@ -47,6 +49,7 @@ namespace RedfurSync
             set
             {
                 if (string.IsNullOrWhiteSpace(value)) { DeviceToken = string.Empty; return; }
+                if (!OperatingSystem.IsWindows()) { DeviceToken = string.Empty; return; }
                 try
                 {
                     var decrypted = System.Security.Cryptography.ProtectedData.Unprotect(
@@ -99,7 +102,7 @@ namespace RedfurSync
         public Dictionary<string, string> SyncedFileHashes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         
         [JsonIgnore]
-        public UploadProgressForm.AppConfig.FidelityMode VisualFidelity { get; set; } = UploadProgressForm.AppConfig.FidelityMode.Medium;
+        public FidelityMode VisualFidelity { get; set; } = FidelityMode.Medium;
 
         [JsonPropertyName("VisualFidelity")]
         public int VisualFidelityInt 
@@ -107,10 +110,10 @@ namespace RedfurSync
             get => (int)VisualFidelity; 
             set 
             {
-                if (Enum.IsDefined(typeof(UploadProgressForm.AppConfig.FidelityMode), value) && value != 0)
-                    VisualFidelity = (UploadProgressForm.AppConfig.FidelityMode)value;
+                if (Enum.IsDefined(typeof(FidelityMode), value) && value != 0)
+                    VisualFidelity = (FidelityMode)value;
                 else
-                    VisualFidelity = UploadProgressForm.AppConfig.FidelityMode.Medium;
+                    VisualFidelity = FidelityMode.Medium;
             }
         }
         
@@ -130,6 +133,19 @@ namespace RedfurSync
         
         private static AppConfig? _instance;
         private static readonly object _fileLock = new object();
+
+        /// Set by the UI host so config faults surface as a dialog; falls back to stderr in tests/headless.
+        public static Action<string, string>? FaultReporter { get; set; }
+
+        private static void ReportFault(string title, string message)
+        {
+            var reporter = FaultReporter;
+            if (reporter is not null)
+            {
+                try { reporter(title, message); return; } catch { }
+            }
+            Console.Error.WriteLine($"[Fissal] {title}: {message}");
+        }
 
         // ── A singular, unified mind ──
         public static AppConfig Instance 
@@ -176,7 +192,7 @@ namespace RedfurSync
             }
             catch (Exception ex)
             { 
-                System.Windows.Forms.MessageBox.Show($"Fissal's memory clouded:\n\n{ex.Message}\n\n{ex.StackTrace}", "Load Error");
+                ReportFault("Load Error", $"Fissal's memory clouded:\n\n{ex.Message}\n\n{ex.StackTrace}");
                 
                 try 
                 {
@@ -213,7 +229,7 @@ namespace RedfurSync
             }
             catch (Exception ex)
             {
-                System.Windows.Forms.MessageBox.Show($"Fissal's claws slipped while writing memory:\n\n{ex.Message}\n\n{ex.StackTrace}", "Save Error");
+                ReportFault("Save Error", $"Fissal's claws slipped while writing memory:\n\n{ex.Message}\n\n{ex.StackTrace}");
             }
         }
 

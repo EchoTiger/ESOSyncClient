@@ -6,6 +6,9 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Threading.Tasks;
 using System.Threading;
+using System.Runtime.CompilerServices;
+
+[assembly: InternalsVisibleTo("RedfurSync.Tests")]
 
 namespace RedfurSync
 {
@@ -24,6 +27,8 @@ namespace RedfurSync
         private readonly AppConfig      _config;
         private readonly UploadService  _uploader;
         private readonly Action<string> _onStatus;
+        private readonly string         _spoolDirectory;
+        private readonly Action<AppConfig> _saveConfig;
 
         public ObservableCollection<UploadJob> Jobs { get; } = new();
         public event Action?               JobsChanged;
@@ -78,20 +83,48 @@ namespace RedfurSync
         private readonly List<FileSystemWatcher>               _watchers       = new();
         private readonly Dictionary<string, System.Timers.Timer> _debounceTimers = new();
         private readonly Dictionary<string, string>            _lastFileHashes = new();
+        private readonly HashSet<string>                        _pendingSources = new(StringComparer.OrdinalIgnoreCase);
         private readonly object _timerLock = new();
         private readonly object _jobLock   = new();
         private readonly object _hashLock  = new();
         private readonly System.Timers.Timer _updateTimer = new();
         private readonly SemaphoreSlim _updateCheckLock = new SemaphoreSlim(1, 1);
         private readonly SemaphoreSlim _uploadThrottle = new SemaphoreSlim(3, 3); // Max 3 concurrent uploads
+        private readonly SemaphoreSlim _startLock = new SemaphoreSlim(1, 1);
+        private bool _disposed;
 
         public FileWatcherService(Action<string> onStatus)
+            : this(
+                onStatus,
+                AppConfig.Instance,
+                new UploadService(AppConfig.Instance),
+                Path.Combine(AppConfig.ConfigDirectory, "spool"),
+                config => config.Save())
+        {
+        }
+
+        internal FileWatcherService(
+            Action<string> onStatus,
+            AppConfig config,
+            UploadService uploader,
+            string spoolDirectory,
+            Action<AppConfig> saveConfig)
         {
             _onStatus = onStatus;
-            _config   = AppConfig.Instance; 
-            _uploader = new UploadService(_config);
+            _config = config;
+            _uploader = uploader;
+            _spoolDirectory = spoolDirectory;
+            _saveConfig = saveConfig;
             foreach (var entry in _config.SyncedFileHashes)
                 _lastFileHashes[entry.Key] = entry.Value;
+
+            _updateTimer.Interval = TimeSpan.FromMinutes(60).TotalMilliseconds;
+            _updateTimer.AutoReset = false;
+            _updateTimer.Elapsed += async (_, _) =>
+            {
+                try { await CheckForUpdatesAsync(); }
+                finally { if (!_disposed) _updateTimer.Start(); }
+            };
         }
 
         private async Task CheckForUpdatesAsync()
@@ -181,40 +214,45 @@ namespace RedfurSync
 
         public async Task StartAsync()
         {
-            if (!_config.IsConfigured())
+            await _startLock.WaitAsync();
+            try
             {
-                _onStatus("Fissal requires calibration!");
-                return;
-            }
+                if (!_config.IsConfigured())
+                {
+                    _onStatus("Fissal requires calibration!");
+                    return;
+                }
 
-            _onStatus("Establishing connection...");
-            var (paired, pairingMessage) = await _uploader.PairAsync();
-            if (!paired)
-            {
-                _onStatus(pairingMessage);
-                ConnectionChecked?.Invoke(false, pairingMessage);
-                return;
-            }
-            var (ok, msg) = await _uploader.PingAsync();
+                _onStatus("Establishing connection...");
+                var (paired, pairingMessage) = await _uploader.PairAsync();
+                if (!paired)
+                {
+                    _onStatus(pairingMessage);
+                    ConnectionChecked?.Invoke(false, pairingMessage);
+                    return;
+                }
+                var (ok, msg) = await _uploader.PingAsync();
 
-            _onStatus(ok ? "Connection established!" : $"Signal lost: {msg}");
-            ConnectionChecked?.Invoke(ok, msg);
-            SetupWatchers();
-            if (ok) _ = ReconcileExistingFilesAsync();
-            
-            _updateTimer.Interval = TimeSpan.FromMinutes(60).TotalMilliseconds;
-            _updateTimer.AutoReset = false;
-            _updateTimer.Elapsed += async (_, _) =>
+                _onStatus(ok ? "Connection established!" : $"Signal lost: {msg}");
+                ConnectionChecked?.Invoke(ok, msg);
+                SetupWatchers();
+                if (ok) _ = ReconcileExistingFilesAsync();
+
+                _updateTimer.Stop();
+                _updateTimer.Start();
+                _ = Task.Run(async () => { await Task.Delay(8000); await CheckForUpdatesAsync(); });
+            }
+            finally
             {
-                try { await CheckForUpdatesAsync(); }
-                finally { _updateTimer.Start(); }
-            };
-            _updateTimer.Start();
-            _ = Task.Run(async () => { await Task.Delay(8000); await CheckForUpdatesAsync(); });
+                _startLock.Release();
+            }
         }
 
         private void SetupWatchers()
         {
+            foreach (var watcher in _watchers) watcher.Dispose();
+            _watchers.Clear();
+
             int count   = 0;
             var docs    = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
             var esoBase = Path.Combine(docs, "Elder Scrolls Online", "live");
@@ -319,11 +357,10 @@ namespace RedfurSync
             catch { return string.Empty; }
         }
 
-        private static string CreateSnapshot(string sourcePath)
+        private string CreateSnapshot(string sourcePath)
         {
-            var spoolDirectory = Path.Combine(AppConfig.ConfigDirectory, "spool");
-            Directory.CreateDirectory(spoolDirectory);
-            var snapshotPath = Path.Combine(spoolDirectory, $"{Guid.NewGuid():N}-{Path.GetFileName(sourcePath)}");
+            Directory.CreateDirectory(_spoolDirectory);
+            var snapshotPath = Path.Combine(_spoolDirectory, $"{Guid.NewGuid():N}-{Path.GetFileName(sourcePath)}");
             using var source = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read);
             using var destination = new FileStream(snapshotPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
             source.CopyTo(destination);
@@ -349,13 +386,24 @@ namespace RedfurSync
                 _lastFileHashes[job.SourcePath] = syncedHash;
                 _config.SyncedFileHashes[job.SourcePath] = syncedHash;
             }
-            _config.Save();
+            _saveConfig(_config);
         }
+
+        internal Task EnqueueFileForTestAsync(string filePath) => EnqueueUploadAsync(filePath);
 
         private async Task EnqueueUploadAsync(string filePath)
         {
             UploadJob job;
             int currentJobCount;
+
+            lock (_jobLock)
+            {
+                if (Jobs.Any(existing => existing.SourcePath == filePath && existing.Status is UploadStatus.Queued or UploadStatus.Uploading))
+                {
+                    _pendingSources.Add(filePath);
+                    return;
+                }
+            }
 
             int lockWaitRetries = 0;
             while (IsFileLocked(filePath) && lockWaitRetries < 5)
@@ -401,7 +449,7 @@ namespace RedfurSync
                 {
                     if (ex.SourcePath == filePath && ex.Status is UploadStatus.Queued or UploadStatus.Uploading)
                     {
-                        ex.Progress = 0f;
+                        _pendingSources.Add(filePath);
                         try { File.Delete(snapshotPath); } catch { }
                         return;
                     }
@@ -430,7 +478,19 @@ namespace RedfurSync
             _ = ProcessUploadAsync(job);
         }
 
-private async Task ProcessUploadAsync(UploadJob job)
+        private async Task EnqueuePendingSourceAsync(UploadJob job)
+        {
+            if (string.IsNullOrWhiteSpace(job.SourcePath)) return;
+
+            lock (_jobLock)
+            {
+                if (!_pendingSources.Remove(job.SourcePath)) return;
+            }
+
+            await EnqueueUploadAsync(job.SourcePath);
+        }
+
+        private async Task ProcessUploadAsync(UploadJob job)
         {
             _onStatus($"Dispatching {job.FileName}...");
             bool success = false;
@@ -451,10 +511,11 @@ private async Task ProcessUploadAsync(UploadJob job)
                             job.Progress = 1f;
                             job.Status = UploadStatus.Done;
                             job.ErrorMessage = "No upload needed; every sale is already stored by Redfur.";
-                            NotifyChanged();
-                            _onStatus($"{job.FileName} is already synchronized.");
                             RecordSuccessfulSync(job);
                             CleanupSnapshot(job);
+                            NotifyChanged();
+                            _onStatus($"{job.FileName} is already synchronized.");
+                            await EnqueuePendingSourceAsync(job);
                             return;
                         }
                         if (missing != null)
@@ -472,7 +533,15 @@ private async Task ProcessUploadAsync(UploadJob job)
                 job.Status = UploadStatus.Queued;
                 NotifyChanged();
 
-                await _uploadThrottle.WaitAsync(job.Cts.Token);
+                try
+                {
+                    await _uploadThrottle.WaitAsync(job.Cts.Token);
+                }
+                catch (OperationCanceledException) when (job.Cts.Token.IsCancellationRequested)
+                {
+                    break;
+                }
+
                 try
                 {
                     if (job.Cts.Token.IsCancellationRequested) break;
@@ -515,14 +584,20 @@ private async Task ProcessUploadAsync(UploadJob job)
             else
                 job.Status = success ? UploadStatus.Done : UploadStatus.Failed;
 
+            // Reclaim the spool file before announcing the terminal status, so no observer
+            // ever sees a finished job whose snapshot is still on disk.
+            if (success)
+            {
+                RecordSuccessfulSync(job);
+                CleanupSnapshot(job);
+            }
+
             NotifyChanged();
 
             if (success)
             {
-                RecordSuccessfulSync(job);
                 Console.WriteLine($"[RedfurSync] ✦ {job.FileName} uploaded successfully.");
                 _onStatus($"{job.FileName} delivered!");
-                CleanupSnapshot(job);
             }
             else if (job.Status == UploadStatus.Cancelled)
             {
@@ -532,6 +607,8 @@ private async Task ProcessUploadAsync(UploadJob job)
             {
                 _onStatus($"Transmission failed: {job.FileName}");
             }
+
+            await EnqueuePendingSourceAsync(job);
         }
         
         private bool IsFileLocked(string filePath)
@@ -597,11 +674,22 @@ private async Task ProcessUploadAsync(UploadJob job)
 
         public void Dispose()
         {
+            if (_disposed) return;
+            _disposed = true;
+
+            _updateTimer.Stop();
+            _updateTimer.Dispose();
             foreach (var w in _watchers) w.Dispose();
+            _watchers.Clear();
             lock (_timerLock)
             {
                 foreach (var t in _debounceTimers.Values) { t.Stop(); t.Dispose(); }
                 _debounceTimers.Clear();
+            }
+            lock (_jobLock)
+            {
+                foreach (var job in Jobs.Where(job => job.Status is UploadStatus.Queued or UploadStatus.Uploading))
+                    job.Cts.Cancel();
             }
             _uploader.Dispose();
         }

@@ -95,7 +95,7 @@ namespace RedfurSync
                     return previousScale.ToString(CultureInfo.InvariantCulture);
                 case "visualfidelity":
                     var previousFidelity = _config.VisualFidelity;
-                    if (!Enum.TryParse<UploadProgressForm.AppConfig.FidelityMode>(value, true, out var fidelity))
+                    if (!Enum.TryParse<FidelityMode>(value, true, out var fidelity))
                         throw new InvalidOperationException("VisualFidelity must be Low, Medium, or High.");
                     _config.VisualFidelity = fidelity;
                     return previousFidelity.ToString();
