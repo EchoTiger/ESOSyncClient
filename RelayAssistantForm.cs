@@ -72,7 +72,7 @@ namespace RedfurSync
                 AutoScroll = true,
                 FlowDirection = FlowDirection.TopDown,
                 WrapContents = false,
-                BackColor = Color.FromArgb(11, 9, 5),
+                BackColor = CBg,
                 Padding = new Padding(12),
                 Margin = new Padding(0, 10, 0, 10),
                 AccessibleName = "Conversation with Fissal",
@@ -101,7 +101,7 @@ namespace RedfurSync
                 MaxLength = 1200,
                 ScrollBars = ScrollBars.Vertical,
                 MinimumSize = new Size(0, 72),
-                BackColor = Color.FromArgb(20, 16, 9),
+                BackColor = CPanelBg,
                 ForeColor = CText,
                 BorderStyle = BorderStyle.FixedSingle,
                 Font = Body(9f, _scale),
@@ -180,7 +180,7 @@ namespace RedfurSync
                 Height = 34,
                 ColumnCount = 3,
                 Margin = new Padding(0, 0, 0, 12),
-                BackColor = Color.FromArgb(18, 14, 8),
+                BackColor = CBarBg,
             };
             bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             bar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 42));
@@ -215,7 +215,7 @@ namespace RedfurSync
                 Text = text,
                 AccessibleName = accessibleName,
                 FlatStyle = FlatStyle.Flat,
-                BackColor = Color.FromArgb(18, 14, 8),
+                BackColor = CBarBg,
                 ForeColor = CTextSub,
                 Font = Mono(9f, _scale, FontStyle.Bold),
                 TabStop = true,
@@ -410,6 +410,8 @@ namespace RedfurSync
                 }
 
                 var result = await _ask(request);
+                if (IsDisposed) return;
+                
                 var responseText = result.message;
                 if (result.ok) responseText = ProcessHarnessAction(responseText);
                 AddMessage(false, responseText, !result.ok);
@@ -479,7 +481,7 @@ namespace RedfurSync
             {
                 AutoSize = true,
                 AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                BackColor = fromUser ? Color.FromArgb(43, 33, 16) : isError ? CErrBg : CPanelBg,
+                BackColor = fromUser ? CPanelBgAlt : isError ? CErrBg : CPanelBg,
                 Padding = new Padding(12),
                 Margin = new Padding(fromUser ? 64 : 0, 0, fromUser ? 0 : 64, 10),
                 Tag = "message-card",
@@ -505,7 +507,6 @@ namespace RedfurSync
                 DetectUrls = true,
                 ScrollBars = RichTextBoxScrollBars.None,
                 TabStop = true,
-                AccessibleName = fromUser ? "Message text" : "Fissal message text",
             };
             ApplyMarkdown(content, text);
             content.Width = Math.Max(360, _transcript.ClientSize.Width - 128);
@@ -564,9 +565,9 @@ namespace RedfurSync
 
         private int MeasureRichTextHeight(RichTextBox rich, int width)
         {
-            var proposed = new Size(Math.Max(100, width - 8), int.MaxValue);
-            var measured = TextRenderer.MeasureText(rich.Text + "\n", rich.Font, proposed, TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl);
-            return Math.Max(28, measured.Height + 8);
+            if (rich.TextLength == 0) return 28;
+            var pt = rich.GetPositionFromCharIndex(rich.TextLength - 1);
+            return Math.Max(28, pt.Y + (rich.SelectionFont?.Height ?? rich.Font.Height) + 8);
         }
 
         private void ApplyMarkdown(RichTextBox box, string raw)
