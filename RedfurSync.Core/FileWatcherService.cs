@@ -45,8 +45,7 @@ namespace RedfurSync
 
         public string GetAssistantContext()
         {
-            var docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-            var esoBase = Path.Combine(docs, "Elder Scrolls Online", "live");
+            var esoBase = WatchRootProvider();
             var folders = new[]
             {
                 Path.Combine(esoBase, "SavedVariables"),
@@ -93,6 +92,29 @@ namespace RedfurSync
         private readonly SemaphoreSlim _startLock = new SemaphoreSlim(1, 1);
         private bool _disposed;
 
+        /// <summary>Inject the ESO "live" watch root so tests can point watchers at a temp dir.
+        /// Default mirrors the original MyDocuments/Elder Scrolls Online/live path.</summary>
+        internal Func<string> WatchRootProvider { get; set; } =
+            () => Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
+                "Elder Scrolls Online",
+                "live");
+
+        /// <summary>Cadence of the self-re-arming update timer. Injectable so tests can keep it
+        /// from firing instead of sleeping 60 minutes.</summary>
+        internal TimeSpan UpdateInterval { get; set; } = TimeSpan.FromMinutes(60);
+
+        /// <summary>Delay before the one-shot startup update check. Injectable so tests can
+        /// observe the update HTTP call count deterministically.</summary>
+        internal TimeSpan StartupUpdateDelay { get; set; } = TimeSpan.FromSeconds(8);
+
+        /// <summary>Number of live <see cref="FileSystemWatcher"/> instances. Lets tests assert
+        /// a single watcher set survives repeated StartAsync calls.</summary>
+        internal int ActiveWatcherCount => _watchers.Count;
+
+        // Guarded by _startLock so only the first StartAsync arms the update machinery.
+        private bool _updateCheckScheduled;
+
         public FileWatcherService(Action<string> onStatus)
             : this(
                 onStatus,
@@ -118,7 +140,7 @@ namespace RedfurSync
             foreach (var entry in _config.SyncedFileHashes)
                 _lastFileHashes[entry.Key] = entry.Value;
 
-            _updateTimer.Interval = TimeSpan.FromMinutes(60).TotalMilliseconds;
+            _updateTimer.Interval = UpdateInterval.TotalMilliseconds;
             _updateTimer.AutoReset = false;
             _updateTimer.Elapsed += async (_, _) =>
             {
@@ -238,9 +260,18 @@ namespace RedfurSync
                 SetupWatchers();
                 if (ok) _ = ReconcileExistingFilesAsync();
 
-                _updateTimer.Stop();
-                _updateTimer.Start();
-                _ = Task.Run(async () => { await Task.Delay(8000); await CheckForUpdatesAsync(); });
+                if (!_updateCheckScheduled)
+                {
+                    _updateCheckScheduled = true;
+                    _updateTimer.Interval = UpdateInterval.TotalMilliseconds;
+                    _updateTimer.Stop();
+                    _updateTimer.Start();
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(StartupUpdateDelay);
+                        await CheckForUpdatesAsync();
+                    });
+                }
             }
             finally
             {
@@ -254,8 +285,7 @@ namespace RedfurSync
             _watchers.Clear();
 
             int count   = 0;
-            var docs    = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-            var esoBase = Path.Combine(docs, "Elder Scrolls Online", "live");
+            var esoBase = WatchRootProvider();
 
             void TryWatch(string p) { if (Directory.Exists(p)) { AddWatcher(p); count++; } }
 
@@ -268,8 +298,7 @@ namespace RedfurSync
 
         private async Task ReconcileExistingFilesAsync()
         {
-            var docs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
-            var esoBase = Path.Combine(docs, "Elder Scrolls Online", "live");
+            var esoBase = WatchRootProvider();
             var folders = new[]
             {
                 Path.Combine(esoBase, "SavedVariables"),
