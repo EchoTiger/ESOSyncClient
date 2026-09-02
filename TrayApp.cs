@@ -399,43 +399,29 @@ private void CheckBatchCompletion()
                 "Update Ready!", 
                 MessageBoxButtons.YesNo);
 
-            if (result == DialogResult.Yes)
-            {
-                string? exePath = null;
-                string? oldPath = null;
-                bool originalMoved = false;
-                try 
-                {
-                    exePath = Environment.ProcessPath ?? throw new InvalidOperationException("Could not determine the executable path.");
-                    oldPath = exePath + ".old";
-                    
-                    if (System.IO.File.Exists(oldPath)) System.IO.File.Delete(oldPath);
-                    System.IO.File.Move(exePath, oldPath);
-                    originalMoved = true;
-                    System.IO.File.Move(job.FilePath, exePath);
-                    
-                    Process.Start(exePath);
-                    Application.Exit();
-                }
-                catch (Exception ex) 
-                {
-                    string message = ex.Message;
-                    try
-                    {
-                        if (originalMoved && exePath != null && oldPath != null && System.IO.File.Exists(oldPath))
-                        {
-                            if (System.IO.File.Exists(exePath)) System.IO.File.Delete(exePath);
-                            System.IO.File.Move(oldPath, exePath);
-                        }
-                    }
-                    catch (Exception rollbackEx)
-                    {
-                        message += $" The original executable could not be restored: {rollbackEx.Message}";
-                    }
+            if (result != DialogResult.Yes) return;
 
-                    ShowAlert("Update Failed!", $"Fissal's claws slipped: {message}", FissalAlert.AlertLevel.TotalError);
-                }
+            string exePath;
+            try
+            {
+                exePath = Environment.ProcessPath ?? throw new InvalidOperationException("Could not determine the executable path.");
             }
+            catch (Exception ex)
+            {
+                ShowAlert("Update Failed!", $"Fissal's claws slipped: {ex.Message}", FissalAlert.AlertLevel.TotalError);
+                return;
+            }
+
+            // Backup → replace → launch lives in Core so failure injection is testable on Linux.
+            var installer = new UpdateInstaller(new PhysicalUpdateFileSystem(), path => Process.Start(path));
+            var outcome = installer.Apply(exePath, job.FilePath);
+            if (!outcome.Ok)
+            {
+                ShowAlert("Update Failed!", $"Fissal's claws slipped: {outcome.Message}", FissalAlert.AlertLevel.TotalError);
+                return;
+            }
+
+            Application.Exit();
         }
 
         private void OpenProgressForm()

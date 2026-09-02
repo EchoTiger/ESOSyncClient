@@ -102,14 +102,23 @@ project (forms, tray, DPI, updater exe replacement).
       observed HTTP requests and job count, not on a "one timer" check —
       `_updateTimer` is a single field and such a test would pass against any
       implementation.
-- [ ] Inject failures between executable backup, replacement, and launch.
+- [x] Inject failures between executable backup, replacement, and launch.
       Verify the original executable remains recoverable.
-      **Blocked: not testable today.** The whole sequence is inline in
-      `TrayApp.ApplyUpdate` (WinForms project), interleaved with dialogs and
-      `Application.Exit()`, so it cannot run on Linux. Requires extracting a
-      Core `UpdateInstaller.Apply(exePath, stagedPath, IUpdateFileSystem, launch)`
-      — roughly +70 Core lines / −45 `TrayApp` lines. `ApplyUpdate` is already
-      passed as an `Action<UploadJob>`, so the injection point exists.
+      → `RedfurSync.Core/UpdateInstaller.cs` (extracted from `TrayApp.ApplyUpdate`):
+      `Apply(exePath, stagedPath)` with an injected `IUpdateFileSystem` + launch
+      delegate; rollback restores the `.old` backup and guards on its existence
+      (a vanished backup never deletes the validated new exe). `TrayApp.cs` now
+      constructs `new UpdateInstaller(new PhysicalUpdateFileSystem(), path => Process.Start(path))`.
+      → `RedfurSync.Tests/UpdateInstallerTests.cs` (12 tests): success op-order,
+      stale-`.old` delete-before-backup, backup/replace/launch fault injection,
+      rollback restore-fail + delete-fail + backup-missing, empty paths, and a
+      real-filesystem cross-directory apply. Mutation-checked (rollback removed →
+      4 tests fail). `Program.cs` stale-`.old` cleanup moved after the
+      single-instance mutex gate so a second instance can never delete the
+      backup mid-update.
+      Acceptance passed: `dotnet build ESOSyncClient.sln -c Release -warnaserror`
+      (0/0), `dotnet test RedfurSync.Tests/RedfurSync.Tests.csproj -c Release`
+      (28/28), `git diff --check` clean.
 
 Known uncovered by design: the in-loop 500 MB trip in `UploadService` would
 need a half-gigabyte fixture; it is shadowed by the `Content-Length` bound

@@ -19,16 +19,6 @@ namespace RedfurSync
 
             AppConfig.FaultReporter = (title, message) => MessageBox.Show(message, title);
 
-            string? exePath = Environment.ProcessPath;
-            if (!string.IsNullOrEmpty(exePath))
-            {
-                string oldExe = exePath + ".old";
-                if (File.Exists(oldExe))
-                {
-                    try { File.Delete(oldExe); } catch { /* It will be deleted next time */ }
-                }
-            }
-
             _mutex = new Mutex(true, "FissalCogworkCourier_SingleInstance", out bool isNew);
 
             if (!isNew)
@@ -39,6 +29,18 @@ namespace RedfurSync
                     MessageBoxButtons.OK,
                     MessageBoxIcon.Information);
                 return;
+            }
+
+            // Only the primary instance may clean a stale ".old" — a second instance
+            // must never delete the backup while the first is mid-update.
+            string? exePath = Environment.ProcessPath;
+            if (!string.IsNullOrEmpty(exePath))
+            {
+                string oldExe = exePath + ".old";
+                if (File.Exists(oldExe))
+                {
+                    try { File.Delete(oldExe); } catch { /* It will be deleted next time */ }
+                }
             }
 
             Application.EnableVisualStyles();
