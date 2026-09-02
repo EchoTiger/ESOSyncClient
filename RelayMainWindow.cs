@@ -30,6 +30,10 @@ namespace RedfurSync
         private Label _titleTextLabel = null!;
         private Label _titleThemeBadge = null!;
         private Label _titleStatusLabel = null!;
+        private Label _messageBoardLabel = null!;
+        private Label _powerLampLabel = null!;
+        private Label _signalLampLabel = null!;
+        private Label _transferLampLabel = null!;
         private Panel _navRail = null!;
         private Panel _contentHost = null!;
 
@@ -50,7 +54,15 @@ namespace RedfurSync
         private Label _syncStateBadge = null!;
         private Button _btnRefreshJobs = null!;
         private Button _btnClearCompleted = null!;
-        private System.Windows.Forms.Timer _syncRefreshTimer = null!;
+        private readonly Dictionary<UploadJob, JobCardControls> _jobCards = new();
+        private bool _syncRefreshPending;
+
+        private sealed class JobCardControls
+        {
+            public Panel Card { get; init; } = null!;
+            public Label StatusLabel { get; init; } = null!;
+            public Label DetailLabel { get; init; } = null!;
+        }
 
         // ── 2. Ask Fissal Controls ──
         private FlowLayoutPanel _transcript = null!;
@@ -117,10 +129,6 @@ namespace RedfurSync
             _watcher.ConnectionChecked += OnWatcherConnectionChecked;
             FissalTheme.ThemeChanged += OnGlobalThemeChanged;
 
-            _syncRefreshTimer = new System.Windows.Forms.Timer { Interval = 1000 };
-            _syncRefreshTimer.Tick += (_, _) => RefreshSyncView();
-            _syncRefreshTimer.Start();
-
             Shown += (_, _) =>
             {
                 RefreshAllViews();
@@ -144,7 +152,6 @@ namespace RedfurSync
         {
             if (disposing)
             {
-                _syncRefreshTimer?.Dispose();
                 _watcher.JobsChanged -= OnWatcherJobsChanged;
                 _watcher.ConnectionChecked -= OnWatcherConnectionChecked;
                 FissalTheme.ThemeChanged -= OnGlobalThemeChanged;
@@ -197,14 +204,15 @@ namespace RedfurSync
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 2,
-                RowCount = 2,
+                RowCount = 3,
                 BackColor = CBg,
                 Margin = new Padding(0),
-                Padding = new Padding(1), // 1px border container
+                Padding = new Padding(10),
             };
             _rootLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(210 * _scale)));
             _rootLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             _rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, (int)(44 * _scale)));
+            _rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, (int)(56 * _scale)));
             _rootLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
             // ── Titlebar (spans both columns) ──
@@ -295,6 +303,49 @@ namespace RedfurSync
             _rootLayout.Controls.Add(_titleBar, 0, 0);
             _rootLayout.SetColumnSpan(_titleBar, 2);
 
+            var instrumentPanel = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 2,
+                RowCount = 1,
+                BackColor = CPanelBgAlt,
+                Margin = new Padding(0, 5, 0, 7),
+                Padding = new Padding(12, 7, 12, 7),
+            };
+            instrumentPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            instrumentPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(230 * _scale)));
+
+            _messageBoardLabel = new Label
+            {
+                Text = "FISSAL // TONAL LATTICE READY",
+                Dock = DockStyle.Fill,
+                BackColor = Color.FromArgb(3, 12, 7),
+                ForeColor = CGreen,
+                Font = Mono(9f, _scale, FontStyle.Bold),
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(10, 0, 10, 0),
+                BorderStyle = BorderStyle.FixedSingle,
+            };
+            instrumentPanel.Controls.Add(_messageBoardLabel, 0, 0);
+
+            var lamps = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                BackColor = Color.Transparent,
+                Padding = new Padding(8, 7, 0, 0),
+            };
+            _powerLampLabel = MakeStatusLamp("POWER", CGreen);
+            _signalLampLabel = MakeStatusLamp("SIGNAL", CTextSub);
+            _transferLampLabel = MakeStatusLamp("SEND", CTextSub);
+            lamps.Controls.Add(_powerLampLabel);
+            lamps.Controls.Add(_signalLampLabel);
+            lamps.Controls.Add(_transferLampLabel);
+            instrumentPanel.Controls.Add(lamps, 1, 0);
+            _rootLayout.Controls.Add(instrumentPanel, 0, 1);
+            _rootLayout.SetColumnSpan(instrumentPanel, 2);
+
             // ── Content Area Host ──
             _contentHost = new Panel
             {
@@ -303,7 +354,7 @@ namespace RedfurSync
                 Margin = new Padding(0),
                 Padding = new Padding(12),
             };
-            _rootLayout.Controls.Add(_contentHost, 1, 1);
+            _rootLayout.Controls.Add(_contentHost, 1, 2);
 
             // ── Navigation Rail ──
             _navRail = new Panel
@@ -330,7 +381,7 @@ namespace RedfurSync
             AddNavButton(navStack, "diagnostics", "⚙️ Diagnostics",      "Watcher status, log viewers, and debug controls");
 
             _navRail.Controls.Add(navStack);
-            _rootLayout.Controls.Add(_navRail, 0, 1);
+            _rootLayout.Controls.Add(_navRail, 0, 2);
 
             Controls.Add(_rootLayout);
 
@@ -338,6 +389,19 @@ namespace RedfurSync
             {
                 using var borderPen = new Pen(CBorder, 1);
                 g.Graphics.DrawRectangle(borderPen, 0, 0, Width - 1, Height - 1);
+                DrawCornerRivets(g.Graphics, Width, Height, 5, CGoldDim);
+            };
+        }
+
+        private Label MakeStatusLamp(string label, Color color)
+        {
+            return new Label
+            {
+                Text = $"● {label}",
+                ForeColor = color,
+                Font = Mono(7.5f, _scale, FontStyle.Bold),
+                AutoSize = true,
+                Margin = new Padding(5, 0, 5, 0),
             };
         }
 
@@ -563,41 +627,58 @@ namespace RedfurSync
             {
                 _syncStateBadge.Text = "⚡ TRANSMITTING...";
                 _syncStateBadge.ForeColor = CGoldBrt;
+                _messageBoardLabel.Text = $"TRANSMITTING // {uploading} ACTIVE // {queued} QUEUED";
+                _transferLampLabel.ForeColor = CGoldBrt;
             }
             else if (queued > 0)
             {
                 _syncStateBadge.Text = "⏳ QUEUED";
                 _syncStateBadge.ForeColor = CWarn;
+                _messageBoardLabel.Text = $"SIGNAL QUEUED // {queued} FILE{(queued == 1 ? "" : "S")}";
+                _transferLampLabel.ForeColor = CWarn;
             }
             else
             {
                 _syncStateBadge.Text = "⚡ SYNC IDLE";
                 _syncStateBadge.ForeColor = CGreen;
+                _messageBoardLabel.Text = failed > 0 ? $"INTERFERENCE // {failed} LOG ALERT{(failed == 1 ? "" : "S")}" : "FISSAL // TONAL LATTICE READY";
+                _transferLampLabel.ForeColor = failed > 0 ? CBarFail : CTextSub;
             }
 
             _syncSummaryLabel.Text = $"Active: {uploading} | Queued: {queued} | Verified: {done} | Errors: {failed} | Total Tracked: {jobs.Count}";
 
+            bool structureChanged = jobs.Count != _jobCards.Count || jobs.Any(job => !_jobCards.ContainsKey(job));
+            if (!structureChanged)
+            {
+                foreach (var job in jobs)
+                {
+                    UpdateJobCard(job, _jobCards[job]);
+                }
+                return;
+            }
+
             _syncJobsList.SuspendLayout();
             _syncJobsList.Controls.Clear();
+            _jobCards.Clear();
 
             if (jobs.Count == 0)
             {
-                var emptyLabel = new Label
+                _syncJobsList.Controls.Add(new Label
                 {
                     Text = "No active or recent file transmissions.\nNew sales data in SavedVariables will appear here instantly.",
                     ForeColor = CTextSub,
                     Font = Body(9.5f, _scale, FontStyle.Italic),
                     AutoSize = true,
                     Margin = new Padding(16, 24, 16, 16),
-                };
-                _syncJobsList.Controls.Add(emptyLabel);
+                });
             }
             else
             {
                 foreach (var job in jobs.OrderByDescending(j => j.QueuedAt))
                 {
-                    var card = BuildJobCard(job);
-                    _syncJobsList.Controls.Add(card);
+                    var controls = BuildJobCard(job);
+                    _jobCards.Add(job, controls);
+                    _syncJobsList.Controls.Add(controls.Card);
                 }
             }
 
@@ -605,7 +686,7 @@ namespace RedfurSync
             _syncJobsList.ResumeLayout(true);
         }
 
-        private Panel BuildJobCard(UploadJob job)
+        private JobCardControls BuildJobCard(UploadJob job)
         {
             var card = new Panel
             {
@@ -651,26 +732,8 @@ namespace RedfurSync
             layout.Controls.Add(timeLabel, 0, 1);
 
             // Status Badge
-            Color statusColor = job.Status switch
-            {
-                UploadStatus.Done => CGreen,
-                UploadStatus.Uploading => CGoldBrt,
-                UploadStatus.Queued => CWarn,
-                UploadStatus.UpdateReady => Color.FromArgb(196, 137, 255),
-                UploadStatus.Failed => CBarFail,
-                UploadStatus.Cancelled => CTextSub,
-                _ => CText
-            };
-
             var statusLabel = new Label
             {
-                Text = job.Status switch
-                {
-                    UploadStatus.Uploading => $"UPLOADING ({(int)(job.Progress * 100)}%)",
-                    UploadStatus.UpdateReady => "UPGRADE READY",
-                    _ => job.Status.ToString().ToUpperInvariant()
-                },
-                ForeColor = statusColor,
                 Font = Mono(8.5f, _scale, FontStyle.Bold),
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
@@ -680,8 +743,6 @@ namespace RedfurSync
             // Status progress or error detail
             var detailLabel = new Label
             {
-                Text = string.IsNullOrWhiteSpace(job.ErrorMessage) ? (job.Status == UploadStatus.Done ? "Lattice Verified" : "") : job.ErrorMessage,
-                ForeColor = string.IsNullOrWhiteSpace(job.ErrorMessage) ? CTextSub : CBarFail,
                 Font = Body(8f, _scale),
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
@@ -723,7 +784,33 @@ namespace RedfurSync
 
             card.Controls.Add(layout);
             card.Height = (int)(54 * _scale);
-            return card;
+            var controls = new JobCardControls { Card = card, StatusLabel = statusLabel, DetailLabel = detailLabel };
+            UpdateJobCard(job, controls);
+            return controls;
+        }
+
+        private static void UpdateJobCard(UploadJob job, JobCardControls controls)
+        {
+            controls.StatusLabel.Text = job.Status switch
+            {
+                UploadStatus.Uploading => $"UPLOADING ({(int)(job.Progress * 100)}%)",
+                UploadStatus.UpdateReady => "UPGRADE READY",
+                _ => job.Status.ToString().ToUpperInvariant()
+            };
+            controls.StatusLabel.ForeColor = job.Status switch
+            {
+                UploadStatus.Done => CGreen,
+                UploadStatus.Uploading => CGoldBrt,
+                UploadStatus.Queued => CWarn,
+                UploadStatus.UpdateReady => Color.FromArgb(196, 137, 255),
+                UploadStatus.Failed => CBarFail,
+                UploadStatus.Cancelled => CTextSub,
+                _ => CText
+            };
+            controls.DetailLabel.Text = string.IsNullOrWhiteSpace(job.ErrorMessage)
+                ? job.Status == UploadStatus.Done ? "Lattice Verified" : ""
+                : job.ErrorMessage;
+            controls.DetailLabel.ForeColor = string.IsNullOrWhiteSpace(job.ErrorMessage) ? CTextSub : CBarFail;
         }
 
         private void ResizeSyncJobCards()
@@ -1710,7 +1797,16 @@ namespace RedfurSync
             RefreshDiagnosticsView();
         }
 
-        private void OnWatcherJobsChanged() => RefreshSyncView();
+        private void OnWatcherJobsChanged()
+        {
+            if (IsDisposed || _syncRefreshPending) return;
+            _syncRefreshPending = true;
+            BeginInvoke(() =>
+            {
+                _syncRefreshPending = false;
+                RefreshSyncView();
+            });
+        }
 
         private void OnWatcherConnectionChecked(bool ok, string msg)
         {
@@ -1721,6 +1817,8 @@ namespace RedfurSync
             }
             _titleStatusLabel.Text = ok ? "● LATTICE CONNECTED" : "● SIGNAL DEGRADED";
             _titleStatusLabel.ForeColor = ok ? CGreen : CBarFail;
+            _signalLampLabel.ForeColor = ok ? CGreen : CBarFail;
+            _messageBoardLabel.Text = ok ? "FREQUENCIES LOCKED // MONITORING ESO DATA" : "SIGNAL DEGRADED // OPEN DIAGNOSTICS";
         }
 
         private void OnTitleBarMouseDown(object? sender, MouseEventArgs e)
