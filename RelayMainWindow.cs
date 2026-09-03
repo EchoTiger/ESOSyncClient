@@ -45,7 +45,7 @@ namespace RedfurSync
         private Panel _contentHost = null!;
 
         // Nav buttons
-        private readonly List<(string id, Button btn, Panel indicator, Panel viewPanel)> _navItems = new();
+        private readonly List<(string id, Panel panel, Button btn, Panel viewPanel)> _navItems = new();
         private string _activeTabId = "sync";
 
         // View Panels
@@ -152,7 +152,7 @@ namespace RedfurSync
                 RefreshAllViews();
                 if (_transcript.Controls.Count == 0)
                 {
-                    AddAssistantMessage(false, "Purrs! Fissal's Tonal Terminal is active. I can inspect your live sync queue, check ESO data directories, explain log entries, or tune relay settings.");
+                    AddAssistantMessage(false, "*purrs warmly* Welcome back to the bench! Fissal's tonal lattice is humming smoothly. I can inspect our live sync cassettes, check your ESO data scrolls, explain anomaly logs, or tune our apparatus settings. What shall we look into together?");
                 }
             };
 
@@ -457,7 +457,7 @@ namespace RedfurSync
             };
 
             AddNavButton(navStack, "sync",        "⚡ Live Sync & Logs", "Live file sync monitor and batch history");
-            AddNavButton(navStack, "assistant",   "💬 Ask Fissal",       "AI-powered relay diagnostics and assistance");
+            AddNavButton(navStack, "assistant",   "🐾 Tonal Transceiver", "Commune with Fissal for relay diagnostics and tuning");
             AddNavButton(navStack, "setup",       "🛠️ Setup & Pairing",  "Device token, display name, and pairing code");
             AddNavButton(navStack, "themes",      "🎨 Themes & Display", "11 Terminal color palettes and UI scaling");
             AddNavButton(navStack, "diagnostics", "⚙️ Diagnostics",      "Watcher status, log viewers, and debug controls");
@@ -506,39 +506,73 @@ namespace RedfurSync
 
         private void AddNavButton(FlowLayoutPanel container, string id, string title, string description)
         {
-            int btnWidth = (int)(210 * _scale);
-            int btnHeight = (int)(52 * _scale);
+            int btnWidth = (int)(200 * _scale);
+            int btnHeight = (int)(48 * _scale);
 
             var itemPanel = new Panel
             {
                 Width = btnWidth,
                 Height = btnHeight,
-                Margin = new Padding(0, 2, 0, 2),
+                Margin = new Padding((int)(6 * _scale), (int)(3 * _scale), (int)(6 * _scale), (int)(3 * _scale)),
                 BackColor = Color.Transparent,
             };
 
-            var indicator = new Panel
+            itemPanel.Paint += (s, e) =>
             {
-                Dock = DockStyle.Left,
-                Width = (int)(4 * _scale),
-                BackColor = Color.Transparent,
+                var g = e.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                bool active = _activeTabId == id;
+
+                int w = itemPanel.Width;
+                int h = itemPanel.Height;
+
+                if (active)
+                {
+                    // Engaged mechanical lever slot: recessed deep metal bed
+                    using var bgBrush = new SolidBrush(Color.FromArgb(16, 20, 26));
+                    g.FillRectangle(bgBrush, 0, 0, w - 1, h - 1);
+
+                    using var borderPen = new Pen(CBorderSub, 1.5f);
+                    g.DrawRectangle(borderPen, 0, 0, w - 1, h - 1);
+
+                    // Luminous jewel bar on the left edge with gradient halo
+                    int barW = (int)(5 * _scale);
+                    using var jewelBrush = new SolidBrush(CGreen);
+                    g.FillRectangle(jewelBrush, 0, 0, barW, h);
+
+                    using var glowBrush = new SolidBrush(Color.FromArgb(90, CGreen));
+                    g.FillRectangle(glowBrush, barW, 0, (int)(3 * _scale), h);
+
+                    // Subtle inner shadow at the top of the recessed slot
+                    using var shadowPen = new Pen(Color.FromArgb(80, 0, 0, 0), 1f);
+                    g.DrawLine(shadowPen, barW, 1, w - 2, 1);
+                }
+                else
+                {
+                    // Unengaged slot with subtle etched border
+                    using var slotBrush = new SolidBrush(Color.FromArgb(14, 12, 10));
+                    g.FillRectangle(slotBrush, 0, 0, w - 1, h - 1);
+
+                    using var borderPen = new Pen(Color.FromArgb(40, CBorderSub), 1f);
+                    g.DrawRectangle(borderPen, 0, 0, w - 1, h - 1);
+                }
             };
 
             var btn = new Button
             {
                 Dock = DockStyle.Fill,
-                Text = "  " + title,
+                Text = title,
                 TextAlign = ContentAlignment.MiddleLeft,
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.Transparent,
                 ForeColor = CTextSub,
-                Font = Body(9f, _scale, FontStyle.Regular),
+                Font = Body(8.5f, _scale, FontStyle.Regular),
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0),
-                Padding = new Padding(8, 0, 0, 0),
+                Padding = new Padding((int)(14 * _scale), 0, 0, 0),
             };
             btn.FlatAppearance.BorderSize = 0;
-            btn.FlatAppearance.MouseOverBackColor = CBarBg;
+            btn.FlatAppearance.MouseOverBackColor = Color.FromArgb(35, 180, 140, 50);
 
             var viewPanel = new Panel
             {
@@ -550,10 +584,9 @@ namespace RedfurSync
             btn.Click += (_, _) => SwitchTab(id);
 
             itemPanel.Controls.Add(btn);
-            itemPanel.Controls.Add(indicator);
             container.Controls.Add(itemPanel);
 
-            _navItems.Add((id, btn, indicator, viewPanel));
+            _navItems.Add((id, itemPanel, btn, viewPanel));
             _contentHost.Controls.Add(viewPanel);
         }
 
@@ -564,9 +597,8 @@ namespace RedfurSync
             {
                 bool active = item.id == id;
                 item.btn.ForeColor = active ? CGoldBrt : CTextSub;
-                item.btn.Font = Body(9.5f, _scale, active ? FontStyle.Bold : FontStyle.Regular);
-                item.btn.BackColor = active ? CBarBg : Color.Transparent;
-                item.indicator.BackColor = active ? CGreen : Color.Transparent;
+                item.btn.Font = Body(8.5f, _scale, active ? FontStyle.Bold : FontStyle.Regular);
+                item.panel.Invalidate();
                 item.viewPanel.Visible = active;
                 if (active) item.viewPanel.BringToFront();
             }
@@ -995,9 +1027,9 @@ namespace RedfurSync
 
             var brandLabel = new Label
             {
-                Text = "ASK FISSAL AI",
+                Text = "🐾 TONAL TRANSCEIVER // FISSAL",
                 ForeColor = CGoldBrt,
-                Font = Title(11f, _scale, FontStyle.Bold),
+                Font = Title(10f, _scale, FontStyle.Bold),
                 AutoSize = true,
                 Anchor = AnchorStyles.Left,
             };
@@ -1005,9 +1037,9 @@ namespace RedfurSync
 
             _assistantModelLabel = new Label
             {
-                Text = "● READY",
+                Text = "● HARMONICS SYNCHRONIZED",
                 ForeColor = CGreen,
-                Font = Mono(8f, _scale, FontStyle.Bold),
+                Font = Mono(7.5f, _scale, FontStyle.Bold),
                 AutoSize = true,
                 Anchor = AnchorStyles.Left,
                 Margin = new Padding(10, 0, 0, 0),
@@ -1016,7 +1048,7 @@ namespace RedfurSync
 
             _harnessCheckBox = new CheckBox
             {
-                Text = "Fissal Harness",
+                Text = "Tonal Attunement",
                 ForeColor = CText,
                 Font = Body(8.5f, _scale),
                 AutoSize = true,
@@ -1031,13 +1063,13 @@ namespace RedfurSync
                 if (!_harnessCheckBox.Checked) _writePermsCheckBox.Checked = false;
                 AppConfig.Instance.Save();
                 _writePermsCheckBox.Enabled = _harnessCheckBox.Checked;
-                _assistantStatus.Text = _harnessCheckBox.Checked ? "Harness enabled. Read diagnostics will accompany requests." : "Harness disabled.";
+                _assistantStatus.Text = _harnessCheckBox.Checked ? "Attunement active. Tonal diagnostics accompany transmissions." : "Attunement idle.";
             };
             header.Controls.Add(_harnessCheckBox, 2, 0);
 
             _writePermsCheckBox = new CheckBox
             {
-                Text = "Allow Setting Changes",
+                Text = "Allow Tuning",
                 ForeColor = CWarn,
                 Font = Body(8.5f, _scale),
                 AutoSize = true,
@@ -1123,9 +1155,9 @@ namespace RedfurSync
             };
             composer.Controls.Add(_prompt, 0, 0);
 
-            _send = MakeStyledButton("Send  >", CGreen);
+            _send = MakeStyledButton("TRANSMIT ❯", CGreen);
             _send.Dock = DockStyle.Fill;
-            _send.Font = Title(10f, _scale, FontStyle.Bold);
+            _send.Font = Title(9.5f, _scale, FontStyle.Bold);
             _send.Click += async (_, _) => await SendAssistantPromptAsync();
             composer.Controls.Add(_send, 1, 0);
 
@@ -1140,7 +1172,7 @@ namespace RedfurSync
             };
             _assistantStatus = new Label
             {
-                Text = "Press Enter to send. Shift+Enter creates a new line.",
+                Text = "Press Enter to transmit frequency. Shift+Enter creates a new line.",
                 ForeColor = CTextSub,
                 Font = Body(8f, _scale),
                 Dock = DockStyle.Fill,
