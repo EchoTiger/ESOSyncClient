@@ -18,6 +18,7 @@ namespace RedfurSync
     {
         [DllImport("user32.dll")] private static extern bool ReleaseCapture();
         [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr hWnd, int msg, int wParam, int lParam);
+        [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
 
         private readonly FileWatcherService _watcher;
         private readonly Action<UploadJob> _applyUpdateAction;
@@ -30,10 +31,16 @@ namespace RedfurSync
         private Label _titleTextLabel = null!;
         private Label _titleThemeBadge = null!;
         private Label _titleStatusLabel = null!;
-        private Label _messageBoardLabel = null!;
-        private Label _powerLampLabel = null!;
-        private Label _signalLampLabel = null!;
-        private Label _transferLampLabel = null!;
+        private Panel _tonalScopePanel = null!;
+        private Panel _nixieLampsPanel = null!;
+        private string _messageBoardText = "FISSAL // TONAL LATTICE READY";
+        private Color _messageBoardColor = CGreen;
+        private bool _lampPowerActive = true;
+        private bool _lampSignalActive = true;
+        private bool _lampSendActive = false;
+        private Color _lampSendColor = CGoldBrt;
+        private float _animPhase = 0f;
+        private System.Windows.Forms.Timer? _fxTimer;
         private Panel _navRail = null!;
         private Panel _contentHost = null!;
 
@@ -129,6 +136,17 @@ namespace RedfurSync
             _watcher.ConnectionChecked += OnWatcherConnectionChecked;
             FissalTheme.ThemeChanged += OnGlobalThemeChanged;
 
+            _fxTimer = new System.Windows.Forms.Timer { Interval = 45 };
+            _fxTimer.Tick += (_, _) =>
+            {
+                if (IsDisposed || !Visible || WindowState == FormWindowState.Minimized) return;
+                _animPhase += 0.08f;
+                if (_animPhase > 1000f) _animPhase = 0f;
+                _tonalScopePanel?.Invalidate();
+                _nixieLampsPanel?.Invalidate();
+            };
+            _fxTimer.Start();
+
             Shown += (_, _) =>
             {
                 RefreshAllViews();
@@ -152,6 +170,8 @@ namespace RedfurSync
         {
             if (disposing)
             {
+                _fxTimer?.Stop();
+                _fxTimer?.Dispose();
                 _watcher.JobsChanged -= OnWatcherJobsChanged;
                 _watcher.ConnectionChecked -= OnWatcherConnectionChecked;
                 FissalTheme.ThemeChanged -= OnGlobalThemeChanged;
@@ -167,8 +187,15 @@ namespace RedfurSync
                 return;
             }
             Show();
-            WindowState = FormWindowState.Normal;
+            if (WindowState == FormWindowState.Minimized)
+            {
+                WindowState = FormWindowState.Normal;
+            }
+            TopMost = true;
             Activate();
+            BringToFront();
+            TopMost = false;
+            try { SetForegroundWindow(Handle); } catch { }
             SwitchTab(tabId);
         }
 
@@ -207,12 +234,12 @@ namespace RedfurSync
                 RowCount = 3,
                 BackColor = CBg,
                 Margin = new Padding(0),
-                Padding = new Padding(10),
+                Padding = new Padding((int)(14 * _scale)),
             };
             _rootLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(210 * _scale)));
             _rootLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             _rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, (int)(44 * _scale)));
-            _rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, (int)(56 * _scale)));
+            _rootLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, (int)(62 * _scale)));
             _rootLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
             // ── Titlebar (spans both columns) ──
@@ -224,6 +251,12 @@ namespace RedfurSync
                 Padding = new Padding(12, 0, 8, 0),
             };
             _titleBar.MouseDown += OnTitleBarMouseDown;
+            _titleBar.Paint += (s, e) =>
+            {
+                var g = e.Graphics;
+                using var linePen = new Pen(CBorderSub, 1f);
+                g.DrawLine(linePen, 0, _titleBar.Height - 1, _titleBar.Width, _titleBar.Height - 1);
+            };
 
             var titleLayout = new TableLayoutPanel
             {
@@ -294,6 +327,7 @@ namespace RedfurSync
             });
             var btnClose = MakeTitleButton("✕", "Hide to Tray", (_, _) => Hide());
             btnClose.ForeColor = CBarFail;
+            btnClose.FlatAppearance.MouseOverBackColor = Color.FromArgb(120, 200, 40, 40);
 
             titleLayout.Controls.Add(btnMin, 4, 0);
             titleLayout.Controls.Add(btnMax, 5, 0);
@@ -309,40 +343,88 @@ namespace RedfurSync
                 ColumnCount = 2,
                 RowCount = 1,
                 BackColor = CPanelBgAlt,
-                Margin = new Padding(0, 5, 0, 7),
-                Padding = new Padding(12, 7, 12, 7),
+                Margin = new Padding(0, (int)(4 * _scale), 0, (int)(6 * _scale)),
+                Padding = new Padding((int)(4 * _scale)),
             };
             instrumentPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            instrumentPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(230 * _scale)));
+            instrumentPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(240 * _scale)));
 
-            _messageBoardLabel = new Label
-            {
-                Text = "FISSAL // TONAL LATTICE READY",
-                Dock = DockStyle.Fill,
-                BackColor = Color.FromArgb(3, 12, 7),
-                ForeColor = CGreen,
-                Font = Mono(9f, _scale, FontStyle.Bold),
-                TextAlign = ContentAlignment.MiddleLeft,
-                Padding = new Padding(10, 0, 10, 0),
-                BorderStyle = BorderStyle.FixedSingle,
-            };
-            instrumentPanel.Controls.Add(_messageBoardLabel, 0, 0);
-
-            var lamps = new FlowLayoutPanel
+            _tonalScopePanel = new Panel
             {
                 Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false,
-                BackColor = Color.Transparent,
-                Padding = new Padding(8, 7, 0, 0),
+                BackColor = Color.FromArgb(5, 10, 8),
+                Margin = new Padding(0, 0, (int)(4 * _scale), 0),
             };
-            _powerLampLabel = MakeStatusLamp("POWER", CGreen);
-            _signalLampLabel = MakeStatusLamp("SIGNAL", CTextSub);
-            _transferLampLabel = MakeStatusLamp("SEND", CTextSub);
-            lamps.Controls.Add(_powerLampLabel);
-            lamps.Controls.Add(_signalLampLabel);
-            lamps.Controls.Add(_transferLampLabel);
-            instrumentPanel.Controls.Add(lamps, 1, 0);
+            _tonalScopePanel.Paint += (s, e) =>
+            {
+                var g = e.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+
+                int w = _tonalScopePanel.Width;
+                int h = _tonalScopePanel.Height;
+
+                // 1. Recessed cathode screen housing
+                using (var bgBrush = new SolidBrush(Color.FromArgb(5, 10, 8)))
+                {
+                    g.FillRectangle(bgBrush, 0, 0, w, h);
+                }
+
+                // 2. Oscilloscope wave on right half
+                int waveW = Math.Max(80, (int)(180 * _scale));
+                int waveX = w - waveW - (int)(8 * _scale);
+                int waveY = (int)(6 * _scale);
+                int waveH = h - (int)(12 * _scale);
+                if (waveW > 40 && waveH > 10)
+                {
+                    var waveRect = new Rectangle(waveX, waveY, waveW, waveH);
+                    DrawTonalWaveform(g, waveRect, _animPhase * 6f, _messageBoardColor, _lampSendActive, _scale);
+                }
+
+                // 3. Glowing cathode text readout on left
+                int textW = waveX - (int)(16 * _scale);
+                if (textW > 20)
+                {
+                    using var font = Mono(9f, _scale, FontStyle.Bold);
+                    float textY = (h - font.Height) / 2f;
+                    DrawGlowingText(g, _messageBoardText, font, _messageBoardColor, (int)(12 * _scale), textY, 50);
+                }
+
+                // 4. Cathode Bezel Border
+                using var framePen = new Pen(CBorderSub, 1f);
+                g.DrawRectangle(framePen, 0, 0, w - 1, h - 1);
+            };
+            instrumentPanel.Controls.Add(_tonalScopePanel, 0, 0);
+
+            _nixieLampsPanel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                BackColor = Color.FromArgb(14, 18, 24),
+                Margin = new Padding((int)(4 * _scale), 0, 0, 0),
+            };
+            _nixieLampsPanel.Paint += (s, e) =>
+            {
+                var g = e.Graphics;
+                int lampCount = 3;
+                int lampW = _nixieLampsPanel.Width / lampCount;
+                int lampH = _nixieLampsPanel.Height;
+
+                // Lamp 1: POWER
+                var r1 = new Rectangle(0, 0, lampW, lampH);
+                DrawNixieLamp(g, r1, "POWER", CGreen, _lampPowerActive, _animPhase, _scale);
+
+                // Lamp 2: SIGNAL
+                var r2 = new Rectangle(lampW, 0, lampW, lampH);
+                DrawNixieLamp(g, r2, "SIGNAL", CBorder, _lampSignalActive, _animPhase * 0.7f, _scale);
+
+                // Lamp 3: SEND
+                var r3 = new Rectangle(lampW * 2, 0, lampW, lampH);
+                DrawNixieLamp(g, r3, "SEND", _lampSendColor, _lampSendActive, _animPhase * 1.5f, _scale);
+
+                // Lamp panel housing border
+                using var framePen = new Pen(CBorderSub, 1f);
+                g.DrawRectangle(framePen, 0, 0, _nixieLampsPanel.Width - 1, _nixieLampsPanel.Height - 1);
+            };
+            instrumentPanel.Controls.Add(_nixieLampsPanel, 1, 0);
             _rootLayout.Controls.Add(instrumentPanel, 0, 1);
             _rootLayout.SetColumnSpan(instrumentPanel, 2);
 
@@ -387,9 +469,7 @@ namespace RedfurSync
 
             Paint += (_, g) =>
             {
-                using var borderPen = new Pen(CBorder, 1);
-                g.Graphics.DrawRectangle(borderPen, 0, 0, Width - 1, Height - 1);
-                DrawCornerRivets(g.Graphics, Width, Height, 5, CGoldDim);
+                DrawTerminalChassis(g.Graphics, Width, Height, _scale);
             };
         }
 
@@ -494,6 +574,14 @@ namespace RedfurSync
             if (id == "sync") RefreshSyncView();
             else if (id == "diagnostics") RefreshDiagnosticsView();
             else if (id == "setup") RefreshSetupView();
+            else if (id == "assistant")
+            {
+                BeginInvoke(() =>
+                {
+                    ResizeAssistantCards();
+                    _prompt?.Focus();
+                });
+            }
         }
 
         private void BuildViewPanels()
@@ -627,23 +715,31 @@ namespace RedfurSync
             {
                 _syncStateBadge.Text = "⚡ TRANSMITTING...";
                 _syncStateBadge.ForeColor = CGoldBrt;
-                _messageBoardLabel.Text = $"TRANSMITTING // {uploading} ACTIVE // {queued} QUEUED";
-                _transferLampLabel.ForeColor = CGoldBrt;
+                _messageBoardText = $"TRANSMITTING // {uploading} ACTIVE // {queued} QUEUED";
+                _messageBoardColor = CGoldBrt;
+                _lampSendActive = true;
+                _lampSendColor = CGoldBrt;
             }
             else if (queued > 0)
             {
                 _syncStateBadge.Text = "⏳ QUEUED";
                 _syncStateBadge.ForeColor = CWarn;
-                _messageBoardLabel.Text = $"SIGNAL QUEUED // {queued} FILE{(queued == 1 ? "" : "S")}";
-                _transferLampLabel.ForeColor = CWarn;
+                _messageBoardText = $"SIGNAL QUEUED // {queued} FILE{(queued == 1 ? "" : "S")}";
+                _messageBoardColor = CWarn;
+                _lampSendActive = true;
+                _lampSendColor = CWarn;
             }
             else
             {
                 _syncStateBadge.Text = "⚡ SYNC IDLE";
                 _syncStateBadge.ForeColor = CGreen;
-                _messageBoardLabel.Text = failed > 0 ? $"INTERFERENCE // {failed} LOG ALERT{(failed == 1 ? "" : "S")}" : "FISSAL // TONAL LATTICE READY";
-                _transferLampLabel.ForeColor = failed > 0 ? CBarFail : CTextSub;
+                _messageBoardText = failed > 0 ? $"INTERFERENCE // {failed} LOG ALERT{(failed == 1 ? "" : "S")}" : "FISSAL // TONAL LATTICE READY";
+                _messageBoardColor = failed > 0 ? CBarFail : CGreen;
+                _lampSendActive = failed > 0;
+                _lampSendColor = failed > 0 ? CBarFail : CTextSub;
             }
+            _tonalScopePanel?.Invalidate();
+            _nixieLampsPanel?.Invalidate();
 
             _syncSummaryLabel.Text = $"Active: {uploading} | Queued: {queued} | Verified: {done} | Errors: {failed} | Total Tracked: {jobs.Count}";
 
@@ -691,9 +787,49 @@ namespace RedfurSync
             var card = new Panel
             {
                 BackColor = CPanelBg,
-                Padding = new Padding(10, 8, 10, 8),
+                Padding = new Padding(12, 8, 12, 8),
                 Margin = new Padding(0, 0, 0, 6),
                 Tag = "sync-card",
+            };
+
+            card.Paint += (s, e) =>
+            {
+                var g = e.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+
+                Color borderCol = job.Status switch
+                {
+                    UploadStatus.Done => Color.FromArgb(50, CGreen),
+                    UploadStatus.Uploading => CGoldBrt,
+                    UploadStatus.Queued => Color.FromArgb(80, CWarn),
+                    UploadStatus.UpdateReady => Color.FromArgb(180, 137, 255),
+                    UploadStatus.Failed => Color.FromArgb(140, CBarFail),
+                    _ => CBorderSub
+                };
+
+                using (var pen = new Pen(borderCol, 1f))
+                {
+                    g.DrawRectangle(pen, 0, 0, card.Width - 1, card.Height - 1);
+                }
+
+                if (job.Status == UploadStatus.Uploading)
+                {
+                    int barH = Math.Max(2, (int)(3 * _scale));
+                    int barY = card.Height - barH;
+                    float prog = Math.Clamp(job.Progress, 0.05f, 1f);
+                    int fillW = (int)(card.Width * prog);
+
+                    using var barBg = new SolidBrush(Color.FromArgb(40, CGoldMid));
+                    g.FillRectangle(barBg, 0, barY, card.Width, barH);
+
+                    using var barBrush = new SolidBrush(CGoldBrt);
+                    g.FillRectangle(barBrush, 0, barY, fillW, barH);
+                }
+                else if (job.Status == UploadStatus.Done)
+                {
+                    using var dotBrush = new SolidBrush(CGreen);
+                    g.FillRectangle(dotBrush, 1, 1, (int)(3 * _scale), card.Height - 2);
+                }
             };
 
             var layout = new TableLayoutPanel
@@ -811,6 +947,7 @@ namespace RedfurSync
                 ? job.Status == UploadStatus.Done ? "Lattice Verified" : ""
                 : job.ErrorMessage;
             controls.DetailLabel.ForeColor = string.IsNullOrWhiteSpace(job.ErrorMessage) ? CTextSub : CBarFail;
+            controls.Card.Invalidate();
         }
 
         private void ResizeSyncJobCards()
@@ -1126,35 +1263,81 @@ namespace RedfurSync
 
         private void AddAssistantMessage(bool fromUser, string text, bool isError = false)
         {
+            int availW = _transcript.ClientSize.Width > 100 ? _transcript.ClientSize.Width : (int)(680 * _scale);
+            int indent = (int)(48 * _scale);
+            int totalW = Math.Max(380, availW - (int)(32 * _scale));
+            int cardW = totalW - indent;
+
             var card = new Panel
             {
-                AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                BackColor = fromUser ? Color.FromArgb(36, 28, 14) : isError ? CErrBg : CPanelBg,
-                Padding = new Padding(12),
-                Margin = new Padding(fromUser ? 64 : 0, 0, fromUser ? 0 : 64, 8),
+                AutoSize = false,
+                Width = cardW,
+                BackColor = fromUser ? Color.FromArgb(28, 22, 14) : isError ? CErrBg : CPanelBg,
+                Padding = new Padding((int)(12 * _scale)),
+                Margin = new Padding(fromUser ? indent : 0, 0, fromUser ? 0 : indent, (int)(10 * _scale)),
                 Tag = "chat-card",
             };
 
-            var body = new TableLayoutPanel
+            card.Paint += (s, e) =>
             {
-                AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink,
-                Dock = DockStyle.Top,
-                ColumnCount = 1,
-                RowCount = 3,
+                var g = e.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                Color borderCol = fromUser ? CGoldDim : isError ? CErrBorder : CBorderSub;
+                using var pen = new Pen(borderCol, 1f);
+                g.DrawRectangle(pen, 0, 0, card.Width - 1, card.Height - 1);
+
+                // Small decorative corner jewel on Fissal cards
+                if (!fromUser)
+                {
+                    using var jewelBrush = new SolidBrush(isError ? CBarFail : CGreen);
+                    g.FillPolygon(jewelBrush, new[] {
+                        new PointF(2, 2),
+                        new PointF(10, 2),
+                        new PointF(2, 10)
+                    });
+                }
             };
+
+            int innerW = cardW - card.Padding.Horizontal;
+
+            // 1. Header (Sender label & Timestamp)
+            var headerPanel = new TableLayoutPanel
+            {
+                Location = new Point(card.Padding.Left, card.Padding.Top),
+                Width = innerW,
+                Height = (int)(22 * _scale),
+                ColumnCount = 2,
+                RowCount = 1,
+                BackColor = Color.Transparent,
+                Margin = new Padding(0),
+                Tag = "card-header",
+            };
+            headerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            headerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
             var senderLabel = new Label
             {
-                AutoSize = true,
-                Text = fromUser ? "YOU" : isError ? "FISSAL // ANOMALY" : "FISSAL",
+                Text = fromUser ? "👤 YOU // TRADER CONSOLE" : isError ? "⚠️ FISSAL // SIGNAL ANOMALY" : "🐾 FISSAL // TONAL HARMONICS",
                 ForeColor = fromUser ? CGoldBrt : isError ? CBarFail : CGreen,
                 Font = Mono(8f, _scale, FontStyle.Bold),
-                Margin = new Padding(0, 0, 0, 4),
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
             };
-            body.Controls.Add(senderLabel);
+            headerPanel.Controls.Add(senderLabel, 0, 0);
 
+            var timeLabel = new Label
+            {
+                Text = DateTime.Now.ToString("h:mm tt"),
+                ForeColor = CTextSub,
+                Font = Mono(7.5f, _scale),
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleRight,
+            };
+            headerPanel.Controls.Add(timeLabel, 1, 0);
+            card.Controls.Add(headerPanel);
+
+            // 2. Rich Text Box
+            int textW = innerW - (int)(4 * _scale);
             var rtb = new RichTextBox
             {
                 ReadOnly = true,
@@ -1164,38 +1347,49 @@ namespace RedfurSync
                 Font = Body(9.5f, _scale),
                 DetectUrls = true,
                 ScrollBars = RichTextBoxScrollBars.None,
-                TabStop = true,
+                TabStop = false,
+                Location = new Point(card.Padding.Left, headerPanel.Bottom + (int)(4 * _scale)),
+                Width = textW,
+                Tag = "card-rtb",
             };
             FormatAssistantRichText(rtb, text);
-            rtb.Width = Math.Max(300, _transcript.ClientSize.Width - 140);
-            rtb.Height = CalculateRichTextHeight(rtb, rtb.Width);
+            int textH = CalculateRichTextHeight(rtb, textW);
+            rtb.Height = textH;
+
             rtb.LinkClicked += (_, e) =>
             {
                 if (!string.IsNullOrWhiteSpace(e.LinkText))
                     try { Process.Start(new ProcessStartInfo(e.LinkText) { UseShellExecute = true }); } catch { }
             };
-            body.Controls.Add(rtb);
+            card.Controls.Add(rtb);
 
+            // 3. Optional Copy Link
+            LinkLabel? copyLink = null;
             if (!fromUser)
             {
-                var copyLink = new LinkLabel
+                copyLink = new LinkLabel
                 {
-                    Text = "Copy response",
+                    Text = "📋 Copy Transmission",
                     LinkColor = CTextSub,
                     ActiveLinkColor = CGoldBrt,
                     Font = Body(7.5f, _scale),
-                    AutoSize = true,
-                    Margin = new Padding(0, 6, 0, 0),
+                    Location = new Point(card.Padding.Left, rtb.Bottom + (int)(6 * _scale)),
+                    Width = innerW,
+                    Height = (int)(20 * _scale),
+                    TextAlign = ContentAlignment.MiddleLeft,
+                    Tag = "card-copy",
                 };
                 copyLink.LinkClicked += (_, _) =>
                 {
-                    try { Clipboard.SetText(text); _assistantStatus.Text = "Response copied to clipboard."; }
-                    catch { _assistantStatus.Text = "Failed to copy."; }
+                    try { Clipboard.SetText(text); _assistantStatus.Text = "Transmission copied to clipboard."; }
+                    catch { _assistantStatus.Text = "Failed to copy transmission."; }
                 };
-                body.Controls.Add(copyLink);
+                card.Controls.Add(copyLink);
             }
 
-            card.Controls.Add(body);
+            int cardH = (copyLink != null ? copyLink.Bottom : rtb.Bottom) + card.Padding.Bottom;
+            card.Height = cardH;
+
             _transcript.Controls.Add(card);
             ResizeAssistantCards();
             _transcript.ScrollControlIntoView(card);
@@ -1203,30 +1397,69 @@ namespace RedfurSync
 
         private void ResizeAssistantCards()
         {
-            int width = Math.Max(360, _transcript.ClientSize.Width - 30);
+            if (_transcript == null || _transcript.IsDisposed) return;
+            int availW = _transcript.ClientSize.Width;
+            if (availW <= 100) return;
+
+            int indent = (int)(48 * _scale);
+            int totalW = Math.Max(380, availW - (int)(32 * _scale));
+            int cardW = totalW - indent;
+
+            _transcript.SuspendLayout();
+
             foreach (Control ctrl in _transcript.Controls)
             {
-                if (!Equals(ctrl.Tag, "chat-card")) continue;
-                ctrl.Width = width - ctrl.Margin.Horizontal;
-                foreach (Control child in ctrl.Controls)
+                if (!Equals(ctrl.Tag, "chat-card") || ctrl is not Panel card) continue;
+
+                card.Width = cardW;
+                int innerW = cardW - card.Padding.Horizontal;
+
+                TableLayoutPanel? header = null;
+                RichTextBox? rtb = null;
+                LinkLabel? copy = null;
+
+                foreach (Control child in card.Controls)
                 {
-                    child.Width = ctrl.ClientSize.Width - ctrl.Padding.Horizontal;
-                    foreach (Control nested in child.Controls)
+                    if (Equals(child.Tag, "card-header") && child is TableLayoutPanel t) header = t;
+                    else if (Equals(child.Tag, "card-rtb") && child is RichTextBox r) rtb = r;
+                    else if (Equals(child.Tag, "card-copy") && child is LinkLabel l) copy = l;
+                }
+
+                if (header != null)
+                {
+                    header.Width = innerW;
+                }
+
+                if (rtb != null)
+                {
+                    int textW = innerW - (int)(4 * _scale);
+                    rtb.Width = textW;
+                    int newH = CalculateRichTextHeight(rtb, textW);
+                    rtb.Height = newH;
+                    rtb.Location = new Point(card.Padding.Left, (header != null ? header.Bottom : card.Padding.Top) + (int)(4 * _scale));
+
+                    if (copy != null)
                     {
-                        if (nested is RichTextBox rtb)
-                        {
-                            rtb.Width = child.ClientSize.Width;
-                            rtb.Height = CalculateRichTextHeight(rtb, rtb.Width);
-                        }
+                        copy.Width = innerW;
+                        copy.Location = new Point(card.Padding.Left, rtb.Bottom + (int)(6 * _scale));
                     }
+
+                    card.Height = (copy != null ? copy.Bottom : rtb.Bottom) + card.Padding.Bottom;
                 }
             }
+
+            _transcript.ResumeLayout(true);
         }
 
         private int CalculateRichTextHeight(RichTextBox rtb, int width)
         {
-            var size = TextRenderer.MeasureText(rtb.Text + "\n ", rtb.Font, new Size(Math.Max(100, width - 8), int.MaxValue), TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl);
-            return Math.Max(24, size.Height + 10);
+            if (string.IsNullOrEmpty(rtb.Text)) return (int)(24 * _scale);
+            var size = TextRenderer.MeasureText(
+                rtb.Text + "\n ",
+                rtb.Font,
+                new Size(Math.Max(100, width - 8), int.MaxValue),
+                TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl);
+            return Math.Max((int)(24 * _scale), size.Height + (int)(12 * _scale));
         }
 
         private void FormatAssistantRichText(RichTextBox box, string raw)
@@ -1458,7 +1691,7 @@ namespace RedfurSync
             };
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, (int)(40 * _scale)));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, (int)(70 * _scale)));
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, (int)(92 * _scale)));
 
             // Header
             var header = new Label
@@ -1490,7 +1723,14 @@ namespace RedfurSync
                 ColumnCount = 4,
                 RowCount = 1,
                 BackColor = CPanelBg,
-                Padding = new Padding(12, 8, 12, 8),
+                Padding = new Padding((int)(14 * _scale), (int)(10 * _scale), (int)(14 * _scale), (int)(10 * _scale)),
+                Margin = new Padding(0, (int)(8 * _scale), 0, 0),
+            };
+            footer.Paint += (s, e) =>
+            {
+                var g = e.Graphics;
+                using var pen = new Pen(CBorderSub, 1f);
+                g.DrawRectangle(pen, 0, 0, footer.Width - 1, footer.Height - 1);
             };
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
@@ -1629,8 +1869,22 @@ namespace RedfurSync
                 // Highlight border if active
                 card.Paint += (_, e) =>
                 {
-                    using var pen = new Pen(isSelected ? p.Green : p.Border, isSelected ? 2 : 1);
-                    e.Graphics.DrawRectangle(pen, 0, 0, card.Width - 1, card.Height - 1);
+                    var g = e.Graphics;
+                    g.SmoothingMode = SmoothingMode.AntiAlias;
+                    Color borderCol = isSelected ? p.Green : p.BorderSub;
+                    float borderW = isSelected ? 2f : 1f;
+                    using var pen = new Pen(borderCol, borderW);
+                    g.DrawRectangle(pen, 0, 0, card.Width - 1, card.Height - 1);
+
+                    if (isSelected)
+                    {
+                        using var jewelBrush = new SolidBrush(p.Green);
+                        g.FillPolygon(jewelBrush, new[] {
+                            new PointF(card.Width - (int)(14 * _scale), 0),
+                            new PointF(card.Width, 0),
+                            new PointF(card.Width, (int)(14 * _scale))
+                        });
+                    }
                 };
 
                 // Click event on all card child controls
@@ -1649,10 +1903,15 @@ namespace RedfurSync
         {
             var swatch = new Panel
             {
-                Width = (int)(20 * _scale),
+                Width = (int)(22 * _scale),
                 Height = (int)(14 * _scale),
                 BackColor = color,
-                Margin = new Padding(0, 0, 4, 0),
+                Margin = new Padding(0, 0, (int)(4 * _scale), 0),
+            };
+            swatch.Paint += (s, e) =>
+            {
+                using var p = new Pen(Color.FromArgb(60, 255, 255, 255), 1f);
+                e.Graphics.DrawRectangle(p, 0, 0, swatch.Width - 1, swatch.Height - 1);
             };
             host.Controls.Add(swatch);
         }
@@ -1817,8 +2076,11 @@ namespace RedfurSync
             }
             _titleStatusLabel.Text = ok ? "● LATTICE CONNECTED" : "● SIGNAL DEGRADED";
             _titleStatusLabel.ForeColor = ok ? CGreen : CBarFail;
-            _signalLampLabel.ForeColor = ok ? CGreen : CBarFail;
-            _messageBoardLabel.Text = ok ? "FREQUENCIES LOCKED // MONITORING ESO DATA" : "SIGNAL DEGRADED // OPEN DIAGNOSTICS";
+            _lampSignalActive = ok;
+            _messageBoardText = ok ? "FREQUENCIES LOCKED // MONITORING ESO DATA" : "SIGNAL DEGRADED // OPEN DIAGNOSTICS";
+            _messageBoardColor = ok ? CGreen : CBarFail;
+            _tonalScopePanel?.Invalidate();
+            _nixieLampsPanel?.Invalidate();
         }
 
         private void OnTitleBarMouseDown(object? sender, MouseEventArgs e)
@@ -1837,14 +2099,15 @@ namespace RedfurSync
                 ForeColor = accent,
                 BackColor = CBtnBg,
                 FlatStyle = FlatStyle.Flat,
-                Font = Body(8.5f, _scale, FontStyle.Bold),
+                Font = Title(8.5f, _scale, FontStyle.Bold),
                 Cursor = Cursors.Hand,
                 AutoSize = true,
-                Padding = new Padding(10, 4, 10, 4),
-                Margin = new Padding(0, 0, 8, 0),
+                Padding = new Padding((int)(12 * _scale), (int)(5 * _scale), (int)(12 * _scale), (int)(5 * _scale)),
+                Margin = new Padding(0, 0, (int)(8 * _scale), 0),
             };
-            btn.FlatAppearance.BorderColor = CBtnBorder;
-            btn.FlatAppearance.MouseOverBackColor = CBarBg;
+            btn.FlatAppearance.BorderColor = accent;
+            btn.FlatAppearance.BorderSize = 1;
+            btn.FlatAppearance.MouseOverBackColor = Color.FromArgb(45, accent.R, accent.G, accent.B);
             return btn;
         }
 
@@ -1853,10 +2116,10 @@ namespace RedfurSync
             return new TextBox
             {
                 Text = initialText,
-                BackColor = Color.FromArgb(18, 15, 9),
+                BackColor = Color.FromArgb(12, 14, 18),
                 ForeColor = CText,
                 BorderStyle = BorderStyle.FixedSingle,
-                Font = Mono(9f, _scale),
+                Font = Mono(9.5f, _scale),
                 Dock = DockStyle.Fill,
             };
         }

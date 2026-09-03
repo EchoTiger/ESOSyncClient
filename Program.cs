@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -7,6 +8,8 @@ namespace RedfurSync
     internal static class Program
     {
         private static Mutex? _mutex;
+        public const string MutexName = "FissalCogworkCourier_SingleInstance";
+        public const string WakeEventName = "FissalRelay_ActivateEvent";
 
         [STAThread]
         static void Main()
@@ -17,17 +20,27 @@ namespace RedfurSync
             // own scaling factor and re-scales when windows move between them.
             Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
 
-            AppConfig.FaultReporter = (title, message) => MessageBox.Show(message, title);
+            AppConfig.FaultReporter = (title, message) => FissalBox.Show(message, title);
 
-            _mutex = new Mutex(true, "FissalCogworkCourier_SingleInstance", out bool isNew);
+            _mutex = new Mutex(true, MutexName, out bool isNew);
 
             if (!isNew)
             {
-                MessageBox.Show(
-                    "Fissal Relay is already active!\n\nCheck your system tray where your computer's time is!",
-                    "Fissal Relay",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Information);
+                // Signal the running instance to smoothly reveal and bring the Terminal forward!
+                try
+                {
+                    if (EventWaitHandle.TryOpenExisting(WakeEventName, out var wakeEvent))
+                    {
+                        using (wakeEvent)
+                        {
+                            wakeEvent.Set();
+                        }
+                    }
+                }
+                catch
+                {
+                    // Fall back quietly; do not pop up an unstyled generic MessageBox
+                }
                 return;
             }
 

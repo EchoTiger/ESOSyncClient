@@ -435,6 +435,41 @@ namespace RedfurSync
                 Sep         = Color.FromArgb(38, 55, 75),
                 Accent      = Color.FromArgb(255, 140, 58),
                 FocusAccent = Color.FromArgb(255, 179, 71),
+            },
+
+            // ── 12. Stained Glass (Guard-House Cathedral) ──────────────────────────────────
+            ["stainedglass"] = new ThemePalette
+            {
+                Id          = "stainedglass",
+                DisplayName = "Stained Glass",
+                Description = "Obsidian glass, soul gem azure & clockwork amber",
+                Mark        = "◈",
+                Bg          = Color.FromArgb(7, 10, 15),       // #070a0f
+                PanelBg     = Color.FromArgb(13, 19, 29),      // #0d131d
+                PanelBgAlt  = Color.FromArgb(18, 25, 38),      // #121926
+                Border      = Color.FromArgb(56, 189, 248),    // #38bdf8
+                BorderSub   = Color.FromArgb(28, 95, 124),
+                GoldBrt     = Color.FromArgb(245, 158, 11),    // #f59e0b
+                GoldMid     = Color.FromArgb(217, 119, 6),
+                GoldDim     = Color.FromArgb(180, 83, 9),
+                GoldDark    = Color.FromArgb(120, 53, 15),
+                Green       = Color.FromArgb(74, 222, 128),    // #4ade80
+                GreenDim    = Color.FromArgb(34, 197, 94),
+                Text        = Color.FromArgb(226, 232, 240),   // #e2e8f0
+                TextSub     = Color.FromArgb(142, 159, 173),   // #8e9fad
+                BarBg       = Color.FromArgb(15, 23, 42),
+                BarDone     = Color.FromArgb(74, 222, 128),
+                BarFail     = Color.FromArgb(248, 113, 113),   // #f87171
+                Warn        = Color.FromArgb(245, 158, 11),
+                BarActive   = Color.FromArgb(56, 189, 248),
+                BarCancel   = Color.FromArgb(51, 65, 85),
+                BtnBg       = Color.FromArgb(19, 28, 44),
+                BtnBorder   = Color.FromArgb(56, 189, 248),
+                ErrBg       = Color.FromArgb(45, 15, 20),
+                ErrBorder   = Color.FromArgb(150, 40, 50),
+                Sep         = Color.FromArgb(36, 50, 66),
+                Accent      = Color.FromArgb(192, 132, 252),   // #c084fc
+                FocusAccent = Color.FromArgb(56, 189, 248),
             }
         };
 
@@ -697,6 +732,275 @@ namespace RedfurSync
                 g.FillEllipse(rivetBrush, rx, ry, r, r);
                 g.DrawEllipse(highlightPen, rx, ry, r, r);
             }
+        }
+
+        /// <summary>
+        /// Renders an authentic encased Dwemer terminal chassis with multi-layer bevels,
+        /// corner mounting brackets, 3D rivets, and CRT recessed screen shadows.
+        /// </summary>
+        public static void DrawTerminalChassis(Graphics g, int w, int h, float scale)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            // 1. Outer Chassis Metal Border (Multi-tier industrial frame)
+            using (var outerPen = new Pen(CGoldDark, 2f * scale))
+            {
+                g.DrawRectangle(outerPen, 1, 1, w - 2, h - 2);
+            }
+            using (var midPen = new Pen(CBorder, 1f * scale))
+            {
+                g.DrawRectangle(midPen, 3, 3, w - 6, h - 6);
+            }
+            using (var innerPen = new Pen(CBorderSub, 1f * scale))
+            {
+                g.DrawRectangle(innerPen, 5, 5, w - 10, h - 10);
+            }
+
+            // 2. Corner Reinforcement L-Plates (Dwemer brass corner braces)
+            int braceSize = (int)(28 * scale);
+            using var braceBrush = new SolidBrush(Color.FromArgb(50, CGoldDim));
+            using var braceBorderPen = new Pen(CGoldMid, 1f);
+
+            // Top-Left
+            g.FillPolygon(braceBrush, new PointF[] {
+                new PointF(2, 2), new PointF(braceSize, 2), new PointF(braceSize, 6),
+                new PointF(6, 6), new PointF(6, braceSize), new PointF(2, braceSize) });
+            g.DrawPolygon(braceBorderPen, new PointF[] {
+                new PointF(2, 2), new PointF(braceSize, 2), new PointF(braceSize, 6),
+                new PointF(6, 6), new PointF(6, braceSize), new PointF(2, braceSize) });
+
+            // Top-Right
+            g.FillPolygon(braceBrush, new PointF[] {
+                new PointF(w - braceSize, 2), new PointF(w - 2, 2), new PointF(w - 2, braceSize),
+                new PointF(w - 6, braceSize), new PointF(w - 6, 6), new PointF(w - braceSize, 6) });
+            g.DrawPolygon(braceBorderPen, new PointF[] {
+                new PointF(w - braceSize, 2), new PointF(w - 2, 2), new PointF(w - 2, braceSize),
+                new PointF(w - 6, braceSize), new PointF(w - 6, 6), new PointF(w - braceSize, 6) });
+
+            // Bottom-Left
+            g.FillPolygon(braceBrush, new PointF[] {
+                new PointF(2, h - braceSize), new PointF(6, h - braceSize), new PointF(6, h - 6),
+                new PointF(braceSize, h - 6), new PointF(braceSize, h - 2), new PointF(2, h - 2) });
+            g.DrawPolygon(braceBorderPen, new PointF[] {
+                new PointF(2, h - braceSize), new PointF(6, h - braceSize), new PointF(6, h - 6),
+                new PointF(braceSize, h - 6), new PointF(braceSize, h - 2), new PointF(2, h - 2) });
+
+            // Bottom-Right
+            g.FillPolygon(braceBrush, new PointF[] {
+                new PointF(w - 6, h - braceSize), new PointF(w - 2, h - braceSize), new PointF(w - 2, h - 2),
+                new PointF(w - braceSize, h - 2), new PointF(w - braceSize, h - 6), new PointF(w - 6, h - 6) });
+            g.DrawPolygon(braceBorderPen, new PointF[] {
+                new PointF(w - 6, h - braceSize), new PointF(w - 2, h - braceSize), new PointF(w - 2, h - 2),
+                new PointF(w - braceSize, h - 2), new PointF(w - braceSize, h - 6), new PointF(w - 6, h - 6) });
+
+            // 3. 3D Corner Rivets with specular glints & shadow wells
+            int rivetRadius = (int)(7 * scale);
+            int m = (int)(9 * scale);
+            var rivetCenters = new[]
+            {
+                new Point(m, m),
+                new Point(w - m - rivetRadius, m),
+                new Point(m, h - m - rivetRadius),
+                new Point(w - m - rivetRadius, h - m - rivetRadius),
+                // Mid-perimeter decorative bolt studs
+                new Point(w / 2 - rivetRadius / 2, m),
+                new Point(w / 2 - rivetRadius / 2, h - m - rivetRadius)
+            };
+
+            foreach (var pt in rivetCenters)
+            {
+                // Shadow well
+                using var shadowBrush = new SolidBrush(Color.FromArgb(160, 0, 0, 0));
+                g.FillEllipse(shadowBrush, pt.X + 1, pt.Y + 1, rivetRadius, rivetRadius);
+
+                // Brass bolt body
+                using var boltBrush = new LinearGradientBrush(
+                    new Rectangle(pt.X, pt.Y, rivetRadius, rivetRadius),
+                    CGoldMid, CGoldDark, LinearGradientMode.ForwardDiagonal);
+                g.FillEllipse(boltBrush, pt.X, pt.Y, rivetRadius, rivetRadius);
+
+                // Specular highlight glint
+                using var glintBrush = new SolidBrush(Color.FromArgb(200, Color.White));
+                g.FillEllipse(glintBrush, pt.X + 1, pt.Y + 1, Math.Max(2, rivetRadius / 3), Math.Max(2, rivetRadius / 3));
+
+                // Rim ring
+                using var rimPen = new Pen(Color.FromArgb(120, CGoldBrt), 0.75f);
+                g.DrawEllipse(rimPen, pt.X, pt.Y, rivetRadius, rivetRadius);
+            }
+
+            // 4. CRT Bezel Inner Shadow (Deep recessed cathode monitor illusion)
+            int shadowDepth = (int)(16 * scale);
+            using var topShadow = new LinearGradientBrush(
+                new Rectangle(6, 6, w - 12, shadowDepth),
+                Color.FromArgb(110, 0, 0, 0), Color.Transparent, LinearGradientMode.Vertical);
+            g.FillRectangle(topShadow, 6, 6, w - 12, shadowDepth);
+
+            using var bottomShadow = new LinearGradientBrush(
+                new Rectangle(6, h - 6 - shadowDepth, w - 12, shadowDepth),
+                Color.Transparent, Color.FromArgb(100, 0, 0, 0), LinearGradientMode.Vertical);
+            g.FillRectangle(bottomShadow, 6, h - 6 - shadowDepth, w - 12, shadowDepth);
+        }
+
+        /// <summary>
+        /// Renders an authentic physical Vacuum Tube / Nixie status lamp with industrial socket,
+        /// glowing filament, hot burning gas core, and glass dome reflection glints.
+        /// </summary>
+        public static void DrawNixieLamp(Graphics g, Rectangle bounds, string label, Color lampColor, bool isActive, float phase, float scale)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            int tubeDiameter = Math.Min(bounds.Width - 4, (int)(22 * scale));
+            int tubeX = bounds.X + (bounds.Width - tubeDiameter) / 2;
+            int tubeY = bounds.Y + 2;
+
+            // 1. Industrial Outer Socket Ring
+            using var socketShadow = new SolidBrush(Color.FromArgb(180, 0, 0, 0));
+            g.FillEllipse(socketShadow, tubeX + 1, tubeY + 1, tubeDiameter, tubeDiameter);
+
+            using var socketBrush = new LinearGradientBrush(
+                new Rectangle(tubeX, tubeY, tubeDiameter, tubeDiameter),
+                Color.FromArgb(60, 55, 45), Color.FromArgb(15, 14, 12), LinearGradientMode.ForwardDiagonal);
+            g.FillEllipse(socketBrush, tubeX, tubeY, tubeDiameter, tubeDiameter);
+
+            using var socketRingPen = new Pen(CGoldDark, 1f);
+            g.DrawEllipse(socketRingPen, tubeX, tubeY, tubeDiameter, tubeDiameter);
+
+            // 2. Glass Bulb Void Cavity (Inner recessed socket)
+            int glassPad = Math.Max(2, (int)(2 * scale));
+            int bulbSize = tubeDiameter - glassPad * 2;
+            int bulbX = tubeX + glassPad;
+            int bulbY = tubeY + glassPad;
+
+            using var voidBrush = new SolidBrush(Color.FromArgb(255, 3, 3, 5));
+            g.FillEllipse(voidBrush, bulbX, bulbY, bulbSize, bulbSize);
+
+            // 3. Glowing Filament & Trapped Plasma Gas (when active)
+            if (isActive)
+            {
+                int pulseAlpha = (int)(160 + 60 * Math.Sin(phase));
+                pulseAlpha = Math.Clamp(pulseAlpha, 90, 255);
+
+                // Trapped gas halo
+                using var gasPath = new GraphicsPath();
+                gasPath.AddEllipse(bulbX + 1, bulbY + 1, bulbSize - 2, bulbSize - 2);
+                using var gasBrush = new PathGradientBrush(gasPath)
+                {
+                    CenterColor = Color.FromArgb(pulseAlpha, lampColor),
+                    SurroundColors = new[] { Color.Transparent },
+                    FocusScales = new PointF(0.2f, 0.2f)
+                };
+                g.FillPath(gasBrush, gasPath);
+
+                // Wire Filament
+                int cx = bulbX + bulbSize / 2;
+                using var hotWirePen = new Pen(Color.FromArgb(220, Color.White), 1f);
+                g.DrawLine(hotWirePen, cx, bulbY + 3, cx, bulbY + bulbSize - 3);
+
+                // Burning core
+                using var coreBrush = new SolidBrush(Color.FromArgb(255, Color.White));
+                g.FillEllipse(coreBrush, cx - 1, bulbY + bulbSize / 2 - 2, 3, 4);
+
+                // Outer ambient glow ring
+                using var glowPen = new Pen(Color.FromArgb(70, lampColor), 2f);
+                g.DrawEllipse(glowPen, tubeX - 1, tubeY - 1, tubeDiameter + 2, tubeDiameter + 2);
+            }
+            else
+            {
+                // Cold dark filament
+                int cx = bulbX + bulbSize / 2;
+                using var wirePen = new Pen(Color.FromArgb(60, 40, 30), 1f);
+                g.DrawLine(wirePen, cx, bulbY + 3, cx, bulbY + bulbSize - 3);
+            }
+
+            // 4. Glass Dome Glint & Crescent Specular Reflection
+            using var topCrescent = new GraphicsPath();
+            topCrescent.AddArc(bulbX + 1, bulbY + 1, bulbSize - 2, bulbSize - 2, 190, 160);
+            topCrescent.AddArc(bulbX + 1, bulbY + 3, bulbSize - 2, bulbSize - 6, 350, -160);
+            using var crescentBrush = new SolidBrush(Color.FromArgb(isActive ? 140 : 70, 255, 255, 255));
+            g.FillPath(crescentBrush, topCrescent);
+
+            // 5. Label text beneath the lamp
+            int labelY = tubeY + tubeDiameter + 3;
+            var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Near };
+            using var font = Mono(7f, scale, FontStyle.Bold);
+            Color textCol = isActive ? lampColor : CTextSub;
+
+            if (isActive)
+            {
+                DrawGlowingText(g, label, font, textCol, bounds.X + bounds.Width / 2f, labelY, 60, centered: true);
+            }
+            else
+            {
+                using var textBrush = new SolidBrush(textCol);
+                g.DrawString(label, font, textBrush, new RectangleF(bounds.X, labelY, bounds.Width, bounds.Height - labelY), sf);
+            }
+        }
+
+        /// <summary>
+        /// Renders an animated cathode-ray oscilloscope displaying the live Tonal Lattice harmonics.
+        /// </summary>
+        public static void DrawTonalWaveform(Graphics g, Rectangle bounds, float phase, Color waveColor, bool isTransmitting, float scale)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            // 1. Recessed cathode screen backdrop
+            using var bgBrush = new SolidBrush(Color.FromArgb(4, 9, 6));
+            g.FillRectangle(bgBrush, bounds);
+
+            // 2. Oscilloscope Reticle / Grid
+            using var gridPen = new Pen(Color.FromArgb(25, CGreen), 1f);
+            int midY = bounds.Y + bounds.Height / 2;
+            g.DrawLine(gridPen, bounds.X, midY, bounds.Right, midY);
+            for (int x = bounds.X + 20; x < bounds.Right; x += 25)
+            {
+                g.DrawLine(gridPen, x, bounds.Y, x, bounds.Bottom);
+            }
+
+            // 3. Mathematical Tonal Waveform Path
+            int steps = Math.Max(20, bounds.Width / 2);
+            var points = new PointF[steps];
+            float amplitude = isTransmitting ? (bounds.Height * 0.38f) : (bounds.Height * 0.20f);
+            float freq1 = isTransmitting ? 0.08f : 0.045f;
+            float freq2 = isTransmitting ? 0.16f : 0.09f;
+
+            for (int i = 0; i < steps; i++)
+            {
+                float x = bounds.X + (float)i / (steps - 1) * bounds.Width;
+                float t = i + phase;
+                float yVal = (float)(Math.Sin(t * freq1) * 0.7 + Math.Sin(t * freq2) * 0.3);
+                points[i] = new PointF(x, midY + yVal * amplitude);
+            }
+
+            if (points.Length > 1)
+            {
+                // Ambient glow pass
+                using var glowPen = new Pen(Color.FromArgb(60, waveColor), 3f * scale);
+                g.DrawCurve(glowPen, points, 0.5f);
+
+                // Sharp core beam
+                using var beamPen = new Pen(Color.FromArgb(230, waveColor), 1.25f * scale);
+                g.DrawCurve(beamPen, points, 0.5f);
+            }
+
+            // 4. CRT Outer Border & Glint
+            using var borderPen = new Pen(CBorderSub, 1f);
+            g.DrawRectangle(borderPen, bounds);
+        }
+
+        public static void DrawGlowingText(Graphics g, string text, Font font, Color color, float x, float y, int glowAlpha = 40, bool centered = false)
+        {
+            var sf = centered ? new StringFormat { Alignment = StringAlignment.Center } : StringFormat.GenericDefault;
+
+            if (glowAlpha > 0)
+            {
+                using var glowBrush = new SolidBrush(Color.FromArgb(glowAlpha, color));
+                g.DrawString(text, font, glowBrush, new PointF(x, y - 1), sf);
+                g.DrawString(text, font, glowBrush, new PointF(x, y + 1), sf);
+                g.DrawString(text, font, glowBrush, new PointF(x - 1, y), sf);
+                g.DrawString(text, font, glowBrush, new PointF(x + 1, y), sf);
+            }
+            using var coreBrush = new SolidBrush(color);
+            g.DrawString(text, font, coreBrush, new PointF(x, y), sf);
         }
 
         public static GraphicsPath RoundRect(float x, float y, float w, float h, float r)

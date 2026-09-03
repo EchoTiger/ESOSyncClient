@@ -26,6 +26,8 @@ namespace RedfurSync
 
         private UploadProgressForm? _progressForm;
         private RelayMainWindow?    _mainWindow;
+        private EventWaitHandle?    _wakeEvent;
+        private RegisteredWaitHandle? _wakeRegistration;
 
         // Mono glyphs derived from v2 tokens.css --theme-mark '◈' / '◆' — not emoji.
         private const string Checked   = "◆  ";
@@ -55,6 +57,26 @@ namespace RedfurSync
             _watcher = new FileWatcherService(UpdateStatus);
             _watcher.JobsChanged       += OnJobsChanged;
             _watcher.ConnectionChecked += OnConnectionChecked;
+
+            // ── Listen for second-instance launches to smoothly wake and show terminal ──
+            try
+            {
+                _wakeEvent = new EventWaitHandle(false, EventResetMode.AutoReset, Program.WakeEventName);
+                _wakeRegistration = ThreadPool.RegisterWaitForSingleObject(
+                    _wakeEvent,
+                    (_, _) =>
+                    {
+                        if (_disposed || _menu.IsDisposed) return;
+                        _menu.BeginInvoke(() => OpenMainWindow("sync"));
+                    },
+                    null,
+                    -1,
+                    false);
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[TrayApp] Single-instance wake event registration skipped: {ex.Message}");
+            }
 
             // ── Read her unified mind and restore the visual fidelity right as she wakes ──
             var config = AppConfig.Instance;
@@ -97,12 +119,15 @@ namespace RedfurSync
                     "Fissal is carefully monitoring your tracked sales!",
                     Color.FromArgb(60, 180, 220),
                     10,
-                    5000);
+                    5000,
+                    () => OpenMainWindow("sync"));
             else
                 ShowAlert("Fissal's meow was lost in the void…",
                     $"The signal to the moons could not be established:\n{msg}\n\n" +
                     "Fissal will clear her mechanical throat. Do not panic.",
-                    FissalAlert.AlertLevel.TotalError, 9000);
+                    FissalAlert.AlertLevel.TotalError,
+                    9000,
+                    () => OpenMainWindow("diagnostics"));
         }
 
         private void OnTrayClick(object? sender, MouseEventArgs e)
@@ -496,6 +521,9 @@ private void CheckBatchCompletion()
         {
             if (_disposed) return;
             _disposed = true;
+
+            _wakeRegistration?.Unregister(null);
+            _wakeEvent?.Dispose();
 
             _batchAlertTimer?.Stop();
             _batchAlertTimer?.Dispose();
