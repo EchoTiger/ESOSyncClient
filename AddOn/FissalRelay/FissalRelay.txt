@@ -1,0 +1,11 @@
+## Title: |cFF9900Fissal's|r Cogwork Relay
+## Author: Echo & Fissal
+## Version: 1.2.1
+## AddOnVersion: 10201
+## APIVersion: 101048 101049
+## SavedVariables: FissalRelay_SavedVariables
+## DependsOn: LibHistoire>=1062 LibAddonMenu-2.0>=41
+## OptionalDependsOn: LibCustomMenu
+
+FissalRelay.lua
+FissalRelay_UI.lua
