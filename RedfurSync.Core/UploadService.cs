@@ -337,6 +337,23 @@ namespace RedfurSync
             }
         }
 
+        public async Task<bool> UploadKioskObservationsAsync(IReadOnlyList<KioskObservation> kiosks, CancellationToken cancellationToken)
+        {
+            if (string.IsNullOrWhiteSpace(_config.DeviceToken) || kiosks == null || kiosks.Count == 0) return false;
+            try
+            {
+                var payload = JsonSerializer.Serialize(new { kiosks });
+                using var request = CreateSyncRequest(HttpMethod.Post, BuildRelayUri("/kiosks/ingest"),
+                    new StringContent(payload, System.Text.Encoding.UTF8, "application/json"));
+                using var response = await _syncHttp.SendAsync(request, cancellationToken);
+                return response.IsSuccessStatusCode;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private Uri BuildUploadUri() => !string.IsNullOrWhiteSpace(_config.DeviceToken)
             ? BuildRelayUri("/files")
             : new Uri(_config.ServerUrl, UriKind.Absolute);

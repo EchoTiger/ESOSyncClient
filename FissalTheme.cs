@@ -536,9 +536,46 @@ namespace RedfurSync
         public static readonly Color CBtnDark  = Color.FromArgb(85, 85, 85); 
         public static readonly Color CBtnLight = Color.FromArgb(150, 150, 150);
 
-        // ── P/Invoke — the only reliable way to get per-monitor DPI ──────────
         [DllImport("user32.dll")] private static extern int GetDpiForWindow(IntPtr hwnd);
         [DllImport("user32.dll")] private static extern bool IsProcessDPIAware();
+        [DllImport("uxtheme.dll", ExactSpelling = true, CharSet = CharSet.Unicode)]
+        private static extern int SetWindowTheme(IntPtr hWnd, string pszSubAppName, string? pszSubIdList);
+        [DllImport("uxtheme.dll", EntryPoint = "#135", SetLastError = true)]
+        private static extern int SetPreferredAppMode(int mode);
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int attrValue, int attrSize);
+
+        public static void EnableDarkModeSupport()
+        {
+            try { SetPreferredAppMode(2); } catch { }
+        }
+
+        public static void ApplyWindowDarkMode(IntPtr hwnd)
+        {
+            try
+            {
+                if (hwnd == IntPtr.Zero) return;
+                int darkMode = 1;
+                DwmSetWindowAttribute(hwnd, 20, ref darkMode, sizeof(int));
+                DwmSetWindowAttribute(hwnd, 19, ref darkMode, sizeof(int));
+            }
+            catch { }
+        }
+
+        /// <summary>
+        /// Enables the modern Windows dark mode scrollbar theme on controls like FlowLayoutPanel, TextBox, or RichTextBox.
+        /// </summary>
+        public static void ApplyDarkScrollbars(IntPtr handle)
+        {
+            try
+            {
+                if (handle != IntPtr.Zero)
+                {
+                    SetWindowTheme(handle, "DarkMode_Explorer", null);
+                }
+            }
+            catch { /* Ignored on legacy Windows */ }
+        }
 
         /// <summary>
         /// Returns the true DPI scale factor for the monitor a window is on.
@@ -847,11 +884,13 @@ namespace RedfurSync
         /// </summary>
         public static void DrawNixieLamp(Graphics g, Rectangle bounds, string label, Color lampColor, bool isActive, float phase, float scale)
         {
+            if (bounds.Width <= 4 || bounds.Height <= 4) return;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
-            int tubeDiameter = Math.Min(bounds.Width - 4, (int)(22 * scale));
+            int maxDFromH = Math.Max(12, bounds.Height - (int)(16 * scale));
+            int tubeDiameter = Math.Min(bounds.Width - 4, Math.Min(maxDFromH, (int)(28 * scale)));
             int tubeX = bounds.X + (bounds.Width - tubeDiameter) / 2;
-            int tubeY = bounds.Y + 2;
+            int tubeY = bounds.Y + Math.Max(1, (bounds.Height - tubeDiameter - (int)(14 * scale)) / 2);
 
             // 1. Industrial Outer Socket Ring
             using var socketShadow = new SolidBrush(Color.FromArgb(180, 0, 0, 0));
@@ -862,7 +901,7 @@ namespace RedfurSync
                 Color.FromArgb(60, 55, 45), Color.FromArgb(15, 14, 12), LinearGradientMode.ForwardDiagonal);
             g.FillEllipse(socketBrush, tubeX, tubeY, tubeDiameter, tubeDiameter);
 
-            using var socketRingPen = new Pen(CGoldDark, 1f);
+            using var socketRingPen = new Pen(CGoldDark, 1.25f);
             g.DrawEllipse(socketRingPen, tubeX, tubeY, tubeDiameter, tubeDiameter);
 
             // 2. Glass Bulb Void Cavity (Inner recessed socket)
@@ -920,19 +959,19 @@ namespace RedfurSync
             g.FillPath(crescentBrush, topCrescent);
 
             // 5. Label text beneath the lamp
-            int labelY = tubeY + tubeDiameter + 3;
+            int labelY = tubeY + tubeDiameter + (int)(2 * scale);
             var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Near };
-            using var font = Mono(7f, scale, FontStyle.Bold);
+            using var font = Mono(6.8f, scale, FontStyle.Bold);
             Color textCol = isActive ? lampColor : CTextSub;
 
             if (isActive)
             {
-                DrawGlowingText(g, label, font, textCol, bounds.X + bounds.Width / 2f, labelY, 60, centered: true);
+                DrawGlowingText(g, label, font, textCol, bounds.X + bounds.Width / 2f, labelY, 50, centered: true);
             }
             else
             {
                 using var textBrush = new SolidBrush(textCol);
-                g.DrawString(label, font, textBrush, new RectangleF(bounds.X, labelY, bounds.Width, bounds.Height - labelY), sf);
+                g.DrawString(label, font, textBrush, new RectangleF(bounds.X, labelY, bounds.Width, Math.Max(12, bounds.Bottom - labelY)), sf);
             }
         }
 
@@ -982,9 +1021,56 @@ namespace RedfurSync
                 g.DrawCurve(beamPen, points, 0.5f);
             }
 
-            // 4. CRT Outer Border & Glint
+            // 4. CRT Corner Telemetry Badge
+            using var freqFont = Mono(6.5f, scale, FontStyle.Bold);
+            using var freqBrush = new SolidBrush(Color.FromArgb(160, waveColor));
+            g.DrawString(isTransmitting ? "TX // 115.2k MODULATING" : "CH-09 // 115.2k BAUD", freqFont, freqBrush, bounds.X + 6, bounds.Y + 4);
+
+            // 5. CRT Outer Border & Glint
             using var borderPen = new Pen(CBorderSub, 1f);
             g.DrawRectangle(borderPen, bounds);
+        }
+
+        /// <summary>
+        /// Draws an authentic tactile Dwemer toggle switch button (e.g. Tonal Attunement, Allow Tuning).
+        /// </summary>
+        public static void DrawDwemerToggle(Graphics g, Rectangle bounds, string label, bool isChecked, Color activeColor, float scale)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            // Base plate
+            using var bgBrush = new SolidBrush(isChecked ? Color.FromArgb(24, 28, 20) : Color.FromArgb(14, 13, 11));
+            g.FillRectangle(bgBrush, bounds);
+
+            using var borderPen = new Pen(isChecked ? activeColor : CBorderSub, isChecked ? 1.25f : 1f);
+            g.DrawRectangle(borderPen, bounds.X, bounds.Y, bounds.Width - 1, bounds.Height - 1);
+
+            // Left status indicator jewel
+            int jewelSize = (int)(8 * scale);
+            int jewelX = bounds.X + (int)(8 * scale);
+            int jewelY = bounds.Y + (bounds.Height - jewelSize) / 2;
+
+            if (isChecked)
+            {
+                using var glowPen = new Pen(Color.FromArgb(80, activeColor), 2f);
+                g.DrawEllipse(glowPen, jewelX - 1, jewelY - 1, jewelSize + 2, jewelSize + 2);
+                using var jewelBrush = new SolidBrush(activeColor);
+                g.FillEllipse(jewelBrush, jewelX, jewelY, jewelSize, jewelSize);
+            }
+            else
+            {
+                using var offBrush = new SolidBrush(Color.FromArgb(50, 45, 35));
+                g.FillEllipse(offBrush, jewelX, jewelY, jewelSize, jewelSize);
+                using var offPen = new Pen(Color.FromArgb(80, CBorderSub), 1f);
+                g.DrawEllipse(offPen, jewelX, jewelY, jewelSize, jewelSize);
+            }
+
+            // Label text
+            int textX = jewelX + jewelSize + (int)(6 * scale);
+            using var font = Body(8f, scale, isChecked ? FontStyle.Bold : FontStyle.Regular);
+            using var textBrush = new SolidBrush(isChecked ? activeColor : CTextSub);
+            var sf = new StringFormat { LineAlignment = StringAlignment.Center };
+            g.DrawString(label, font, textBrush, new RectangleF(textX, bounds.Y, bounds.Right - textX - 4, bounds.Height), sf);
         }
 
         public static void DrawGlowingText(Graphics g, string text, Font font, Color color, float x, float y, int glowAlpha = 40, bool centered = false)

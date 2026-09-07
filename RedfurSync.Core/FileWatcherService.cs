@@ -21,7 +21,7 @@ namespace RedfurSync
             "GS08Data.lua",  "GS09Data.lua",  "GS10Data.lua",  "GS11Data.lua",
             "GS12Data.lua",  "GS13Data.lua",  "GS14Data.lua",  "GS15Data.lua",
             "GS16Data.lua",  "GS17Data.lua",  "RaffleGold.lua", "RaffleGoldRTP.lua", "RaffleGoldRD.lua",
-            "PriceTableNA.lua", "ItemLookUpTable_EN.lua"
+            "PriceTableNA.lua", "ItemLookUpTable_EN.lua", "FissalRelay.lua"
         };
 
         private readonly AppConfig      _config;
@@ -526,11 +526,17 @@ namespace RedfurSync
             int uploadRetries = 0;
             const int maxUploadRetries = 3; 
 
-            if (MasterMerchantSaleScanner.IsSalesFile(job.FileName))
+            bool isSales = MasterMerchantSaleScanner.IsSalesFile(job.FileName);
+            bool isFissal = FissalRelayScanner.IsFissalRelayFile(job.FileName);
+
+            if (isSales || isFissal)
             {
                 try
                 {
-                    var saleIds = MasterMerchantSaleScanner.ReadSaleIds(job.FilePath);
+                    var saleIds = isFissal
+                        ? FissalRelayScanner.ReadSaleIds(job.FilePath)
+                        : MasterMerchantSaleScanner.ReadSaleIds(job.FilePath);
+
                     if (saleIds.Count > 0)
                     {
                         _onStatus($"Comparing {saleIds.Count:N0} sales in {job.FileName}...");
@@ -550,10 +556,20 @@ namespace RedfurSync
                         if (missing != null)
                             _onStatus($"{missing.Count:N0} new sale(s) found; sending the source file safely...");
                     }
+
+                    if (isFissal)
+                    {
+                        var kiosks = KioskReconScanner.ReadKiosks(job.FilePath);
+                        if (kiosks.Count > 0)
+                        {
+                            _onStatus($"Syncing {kiosks.Count} ground recon kiosk(s)...");
+                            await _uploader.UploadKioskObservationsAsync(kiosks, job.Cts.Token);
+                        }
+                    }
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"[RedfurSync] MM comparison skipped for {job.FileName}: {ex.Message}");
+                    Console.WriteLine($"[RedfurSync] Sale comparison skipped for {job.FileName}: {ex.Message}");
                 }
             }
 
