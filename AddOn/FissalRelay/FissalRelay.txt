@@ -1,7 +1,7 @@
 ## Title: |cFF9900Fissal's|r Cogwork Relay
 ## Author: Echo & Fissal
-## Version: 1.2.1
-## AddOnVersion: 10201
+## Version: 1.2.2
+## AddOnVersion: 10202
 ## APIVersion: 101048 101049
 ## SavedVariables: FissalRelay_SavedVariables
 ## DependsOn: LibHistoire>=1062 LibAddonMenu-2.0>=41

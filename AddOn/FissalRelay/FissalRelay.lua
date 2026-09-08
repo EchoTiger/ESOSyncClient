@@ -10,7 +10,7 @@ FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
 FR.name = "FissalRelay"
-FR.version = "1.2.1"
+FR.version = "1.2.2"
 FR.author = "Echo & Fissal"
 
 -- Defaults for SavedVariables
@@ -38,6 +38,7 @@ local DEFAULT_SAVED_VARS = {
         bumpGuilds = {},
         bumperPos = { x = 0, y = 0 },
         showBumper = true,
+        bankGuilds = {},
     }
 }
 
@@ -493,6 +494,13 @@ function FR:AuditBankDues(guildIndex, limitDays)
 
     local guildId = GetGuildId(guildIndex)
     local guildName = GetGuildName(guildId)
+
+    if not self:CanTrackGuildBank(guildId) then
+        PrintChat(string.format("Cannot audit bank dues for %s: You do not have permission to view bank deposits in this guild.",
+            ColorText(guildName, "FF5555")))
+        return
+    end
+
     local nowTs = GetTimeStamp()
     local cutoffTs = nowTs - (limitDays * 86400)
 
@@ -531,6 +539,38 @@ end
      LIBHISTOIRE PROCESSORS & TURBO PUMP ENGINE
 ========================================================================= ]]--
 
+function FR:CanTrackGuildBank(guildId)
+    if not guildId or guildId == 0 then return false end
+
+    -- 1. Check user preference override in settings if present
+    if self.savedVars and self.savedVars.settings and self.savedVars.settings.bankGuilds then
+        local userVal = self.savedVars.settings.bankGuilds[guildId]
+        if userVal == false then
+            return false
+        end
+    end
+
+    -- 2. Guild Master check (always has full rights)
+    if IsPlayerGuildMaster and IsPlayerGuildMaster(guildId) then
+        return true
+    end
+
+    -- 3. Guild privilege check: Bank unlocked (10+ members)
+    if DoesGuildHavePrivilege and not DoesGuildHavePrivilege(guildId, GUILD_PRIVILEGE_BANK_DEPOSIT) then
+        return false
+    end
+
+    -- 4. Player rank permission check: View Guild Bank Gold
+    -- In ESO, GUILD_PERMISSION_BANK_VIEW_GOLD controls visibility of bank gold and deposit/withdraw history
+    if DoesPlayerHaveGuildPermission and GUILD_PERMISSION_BANK_VIEW_GOLD then
+        if not DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_BANK_VIEW_GOLD) then
+            return false
+        end
+    end
+
+    return true
+end
+
 function FR:FixLibHistoire()
     if not LibHistoire or not LibHistoire.internal or not LibHistoire.internal.historyCache then return end
     local cacheManager = LibHistoire.internal.historyCache
@@ -541,18 +581,32 @@ function FR:FixLibHistoire()
         for _, category in ipairs({ GUILD_HISTORY_EVENT_CATEGORY_TRADER, GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY }) do
             local cache = cacheManager:GetCategoryCache(guildId, category)
             if cache then
-                -- 1. Ensure self.guild exists on the cache object as a runtime fallback for LibHistoire bug
-                cache.guild = guildId
-                cache.guildId = guildId
+                local isBank = (category == GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY)
+                local canTrack = not isBank or self:CanTrackGuildBank(guildId)
 
-                -- 2. Clear initialRequestTime lockout if managed range not established yet (fixes 7-day stall)
-                if cache.saveData and cache.saveData.initialRequestTime and not cache:GetOldestManagedEventInfo() then
-                    cache.saveData.initialRequestTime = nil
-                end
+                if canTrack then
+                    -- 1. Ensure self.guild exists on the cache object as a runtime fallback for LibHistoire bug
+                    cache.guild = guildId
+                    cache.guildId = guildId
 
-                -- 3. Ensure category is auto
-                if cache.GetRequestMode and cache.SetRequestMode and cache:GetRequestMode() == "off" then
-                    cache:SetRequestMode("auto")
+                    -- 2. Clear initialRequestTime lockout if managed range not established yet (fixes 7-day stall)
+                    if cache.saveData and cache.saveData.initialRequestTime and not cache:GetOldestManagedEventInfo() then
+                        cache.saveData.initialRequestTime = nil
+                    end
+
+                    -- 3. Ensure category is auto
+                    if cache.GetRequestMode and cache.SetRequestMode and cache:GetRequestMode() == "off" then
+                        cache:SetRequestMode("auto")
+                    end
+                else
+                    -- No permission for bank deposits: ensure category is OFF so LibHistoire doesn't hammer server
+                    if cache.GetRequestMode and cache.SetRequestMode and cache:GetRequestMode() ~= "off" then
+                        cache:SetRequestMode("off")
+                    end
+                    -- Clean up any stuck pending request for this forbidden category
+                    if cache.DestroyRequest and cache.request then
+                        cache:DestroyRequest()
+                    end
                 end
             end
         end
@@ -572,17 +626,22 @@ function FR:PumpLibHistoire(isManual)
     local numGuilds = GetNumGuilds()
     local unlinkedCount = 0
     local requestedCount = 0
+    local skippedCount = 0
 
     for i = 1, numGuilds do
         local guildId = GetGuildId(i)
         for _, category in ipairs({ GUILD_HISTORY_EVENT_CATEGORY_TRADER, GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY }) do
-            local cache = cacheManager:GetCategoryCache(guildId, category)
-            if cache then
-                if not cache:HasLinked() then
-                    unlinkedCount = unlinkedCount + 1
-                    if not cache:HasPendingRequest() then
-                        cache:RequestMissingData()
-                        requestedCount = requestedCount + 1
+            if category == GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY and not self:CanTrackGuildBank(guildId) then
+                skippedCount = skippedCount + 1
+            else
+                local cache = cacheManager:GetCategoryCache(guildId, category)
+                if cache then
+                    if not cache:HasLinked() then
+                        unlinkedCount = unlinkedCount + 1
+                        if not cache:HasPendingRequest() then
+                            cache:RequestMissingData()
+                            requestedCount = requestedCount + 1
+                        end
                     end
                 end
             end
@@ -595,7 +654,8 @@ function FR:PumpLibHistoire(isManual)
 
     if isManual then
         if unlinkedCount == 0 then
-            self.PrintChat("All 10 history channels are |c00FF00100% linked|r and up-to-date!")
+            local skippedNote = (skippedCount > 0) and string.format(" (%d bank channel(s) skipped: no permission)", skippedCount) or ""
+            self.PrintChat(string.format("All active history channels are |c00FF00100%% linked|r and up-to-date!%s", skippedNote))
         else
             self.PrintChat(string.format("Turbo Pump: Kicked %s request(s). %s channel(s) linking in progress.",
                 self.ColorText(tostring(requestedCount), "FFD700"), self.ColorText(tostring(unlinkedCount), "00FFCC")))
@@ -647,9 +707,8 @@ function FR:SetupProcessors()
     for i = 1, numGuilds do
         local guildId = GetGuildId(i)
 
-        -- Automatically wake up any category that was accidentally toggled 'off' in LibHistoire
+        -- Automatically wake up trader sales category
         EnsureCategoryAuto(guildId, GUILD_HISTORY_EVENT_CATEGORY_TRADER)
-        EnsureCategoryAuto(guildId, GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY)
 
         -- 1. Trader Sales Processor
         if not self.processors["trader_" .. guildId] then
@@ -679,30 +738,52 @@ function FR:SetupProcessors()
         end
 
         -- 2. Bank Currency Processor (for Staff Raffle / Dues tracking)
-        if not self.processors["bank_" .. guildId] then
-            local bankProc = LibHistoire:CreateGuildHistoryProcessor(
-                guildId, GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY, "FissalRelay_Bank"
-            )
+        if self:CanTrackGuildBank(guildId) then
+            EnsureCategoryAuto(guildId, GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY)
 
-            if bankProc then
-                local daysCutoff = GetTimeStamp() - (self.savedVars.historyDepthDays * 86400)
-                bankProc:SetAfterEventTime(daysCutoff)
+            if not self.processors["bank_" .. guildId] then
+                local bankProc = LibHistoire:CreateGuildHistoryProcessor(
+                    guildId, GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY, "FissalRelay_Bank"
+                )
 
-                bankProc:SetEventCallback(function(event)
-                    local eventType = event:GetEventType()
-                    if eventType == GUILD_HISTORY_BANKED_CURRENCY_EVENT_DEPOSITED then
-                        FR:AddBankDeposit(event, guildId)
-                    elseif eventType == GUILD_HISTORY_BANKED_CURRENCY_EVENT_KIOSK_BID then
-                        FR:AddKioskBid(event, guildId)
-                    elseif eventType == GUILD_HISTORY_BANKED_CURRENCY_EVENT_KIOSK_BID_REFUND then
-                        FR:AddKioskBidRefund(event, guildId)
-                    elseif eventType == GUILD_HISTORY_BANKED_CURRENCY_EVENT_KIOSK_PURCHASED then
-                        FR:AddKioskPurchase(event, guildId)
+                if bankProc then
+                    local daysCutoff = GetTimeStamp() - (self.savedVars.historyDepthDays * 86400)
+                    bankProc:SetAfterEventTime(daysCutoff)
+
+                    bankProc:SetEventCallback(function(event)
+                        local eventType = event:GetEventType()
+                        if eventType == GUILD_HISTORY_BANKED_CURRENCY_EVENT_DEPOSITED then
+                            FR:AddBankDeposit(event, guildId)
+                        elseif eventType == GUILD_HISTORY_BANKED_CURRENCY_EVENT_KIOSK_BID then
+                            FR:AddKioskBid(event, guildId)
+                        elseif eventType == GUILD_HISTORY_BANKED_CURRENCY_EVENT_KIOSK_BID_REFUND then
+                            FR:AddKioskBidRefund(event, guildId)
+                        elseif eventType == GUILD_HISTORY_BANKED_CURRENCY_EVENT_KIOSK_PURCHASED then
+                            FR:AddKioskPurchase(event, guildId)
+                        end
+                    end)
+
+                    bankProc:Start()
+                    self.processors["bank_" .. guildId] = bankProc
+                end
+            end
+        else
+            -- If bank processor was previously active on this guild, stop and clean it up
+            if self.processors["bank_" .. guildId] then
+                local bankProc = self.processors["bank_" .. guildId]
+                if bankProc.Stop then bankProc:Stop() end
+                self.processors["bank_" .. guildId] = nil
+            end
+
+            -- Ensure request mode is OFF in LibHistoire
+            if LibHistoire.internal and LibHistoire.internal.historyCache then
+                local cache = LibHistoire.internal.historyCache:GetCategoryCache(guildId, GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY)
+                if cache and cache.SetRequestMode then
+                    cache:SetRequestMode("off")
+                    if cache.DestroyRequest and cache.request then
+                        cache:DestroyRequest()
                     end
-                end)
-
-                bankProc:Start()
-                self.processors["bank_" .. guildId] = bankProc
+                end
             end
         end
     end
@@ -911,12 +992,20 @@ function FR:HandleSlashCommand(arg)
         local kioskCount = NonContiguousCount(self.savedVars.kiosks or {})
         local bidCount = NonContiguousCount(self.savedVars.staff and self.savedVars.staff.bids or {})
         local rosterCount = NonContiguousCount(self.savedVars.staff and self.savedVars.staff.rosterSnapshots or {})
-        PrintChat(string.format("Relay Status: %s Sales • %s Kiosks • %s Bids • %s Rosters • %s Bank Deposits",
+        local bankPermCount, numGuilds = 0, GetNumGuilds()
+        for i = 1, numGuilds do
+            if self:CanTrackGuildBank(GetGuildId(i)) then
+                bankPermCount = bankPermCount + 1
+            end
+        end
+
+        PrintChat(string.format("Relay Status: %s Sales • %s Kiosks • %s Bids • %s Rosters • %s Bank Deposits (%d/%d Guilds Monitored)",
             ColorText(ZO_LocalizeDecimalNumber(saleCount), "00FFCC"),
             ColorText(tostring(kioskCount), "00FF00"),
             ColorText(tostring(bidCount), "FFD700"),
             ColorText(tostring(rosterCount), "00FFFF"),
-            ColorText(ZO_LocalizeDecimalNumber(depositCount), "FFAA00")))
+            ColorText(ZO_LocalizeDecimalNumber(depositCount), "FFAA00"),
+            bankPermCount, numGuilds))
         if self.UpdateHUD then self:UpdateHUD() end
         PlayFissalSound()
     elseif cmd == "prune" then
@@ -1053,6 +1142,14 @@ local function OnAddOnLoaded(eventCode, addOnName)
     -- Register trading house kiosk recon events
     EVENT_MANAGER:RegisterForEvent(FR.name .. "_Kiosk", EVENT_OPEN_TRADING_HOUSE, OnOpenTradingHouse)
     EVENT_MANAGER:RegisterForEvent(FR.name .. "_KioskResp", EVENT_TRADING_HOUSE_RESPONSE_RECEIVED, OnTradingHouseResponse)
+
+    -- Register guild rank update events to dynamically re-evaluate bank permissions
+    EVENT_MANAGER:RegisterForEvent(FR.name .. "_RankUpdate", EVENT_GUILD_RANKS_UPDATED, function()
+        if FR.isReady then FR:SetupProcessors() end
+    end)
+    EVENT_MANAGER:RegisterForEvent(FR.name .. "_MemberRank", EVENT_GUILD_MEMBER_RANK_CHANGED, function()
+        if FR.isReady then FR:SetupProcessors() end
+    end)
 
     -- Register slash commands
     SLASH_COMMANDS["/fissal"] = function(arg) FR:HandleSlashCommand(arg) end

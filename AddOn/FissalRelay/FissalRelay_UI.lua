@@ -54,14 +54,19 @@ local function GetLibHistoireSyncStatus()
     for i = 1, numGuilds do
         local guildId = GetGuildId(i)
         for _, cat in ipairs({ GUILD_HISTORY_EVENT_CATEGORY_TRADER, GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY }) do
-            totalCategories = totalCategories + 1
-            if LibHistoire and LibHistoire.internal and LibHistoire.internal.historyCache then
-                local cache = LibHistoire.internal.historyCache:GetCategoryCache(guildId, cat)
-                if cache then
-                    if cache.HasLinked and cache:HasLinked() then
-                        linkedCategories = linkedCategories + 1
-                    elseif cache.HasPendingRequest and cache:HasPendingRequest() then
-                        requestingCategories = requestingCategories + 1
+            local isBank = (cat == GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY)
+            local canTrack = not isBank or (FR.CanTrackGuildBank and FR:CanTrackGuildBank(guildId))
+
+            if canTrack then
+                totalCategories = totalCategories + 1
+                if LibHistoire and LibHistoire.internal and LibHistoire.internal.historyCache then
+                    local cache = LibHistoire.internal.historyCache:GetCategoryCache(guildId, cat)
+                    if cache then
+                        if cache.HasLinked and cache:HasLinked() then
+                            linkedCategories = linkedCategories + 1
+                        elseif cache.HasPendingRequest and cache:HasPendingRequest() then
+                            requestingCategories = requestingCategories + 1
+                        end
                     end
                 end
             end
@@ -915,7 +920,57 @@ function FR:CreateSettingsMenu()
             end,
             width = "full",
         },
+        {
+            type = "header",
+            name = "Guild Bank Deposit Tracking",
+        },
+        {
+            type = "description",
+            text = "Fissal verifies rank permissions before requesting guild bank deposits and bids. Guilds where you do not have permission to view bank gold are automatically skipped to prevent request stalls and queue lockouts.",
+        },
     }
+
+    local numGuilds = GetNumGuilds()
+    for i = 1, numGuilds do
+        local guildId = GetGuildId(i)
+        local guildName = GetGuildName(guildId)
+        local hasPrivilege = DoesGuildHavePrivilege and DoesGuildHavePrivilege(guildId, GUILD_PRIVILEGE_BANK_DEPOSIT)
+        local hasPermission = DoesPlayerHaveGuildPermission and GUILD_PERMISSION_BANK_VIEW_GOLD and DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_BANK_VIEW_GOLD)
+        local isGM = IsPlayerGuildMaster and IsPlayerGuildMaster(guildId)
+
+        local permStatus
+        if isGM then
+            permStatus = "|c00FF00(Guild Master)|r"
+        elseif hasPermission then
+            permStatus = "|c00FF00(Permission Granted)|r"
+        elseif not hasPrivilege then
+            permStatus = "|c888888(No Guild Bank)|r"
+        else
+            permStatus = "|cFF5555(No Permission - Skipped)|r"
+        end
+
+        table.insert(optionsData, {
+            type = "checkbox",
+            name = string.format("%s %s", guildName, permStatus),
+            tooltip = string.format("Enable or disable bank deposit tracking for %s. When enabled, Fissal requires 'View Guild Bank Gold' permission.", guildName),
+            getFunc = function()
+                if FR.savedVars and FR.savedVars.settings and FR.savedVars.settings.bankGuilds then
+                    local val = FR.savedVars.settings.bankGuilds[guildId]
+                    if val ~= nil then return val end
+                end
+                return (isGM or hasPermission) and true or false
+            end,
+            setFunc = function(value)
+                if not FR.savedVars.settings.bankGuilds then
+                    FR.savedVars.settings.bankGuilds = {}
+                end
+                FR.savedVars.settings.bankGuilds[guildId] = value
+                if FR.SetupProcessors then FR:SetupProcessors() end
+                if FR.UpdateHUD then FR:UpdateHUD() end
+            end,
+            default = (isGM or hasPermission) and true or false,
+        })
+    end
 
     LAM:RegisterAddonPanel("FissalRelay_Options", panelData)
     LAM:RegisterOptionControls("FissalRelay_Options", optionsData)
