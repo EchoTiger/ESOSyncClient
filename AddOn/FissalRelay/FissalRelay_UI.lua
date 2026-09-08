@@ -54,8 +54,7 @@ local function GetLibHistoireSyncStatus()
     for i = 1, numGuilds do
         local guildId = GetGuildId(i)
         for _, cat in ipairs({ GUILD_HISTORY_EVENT_CATEGORY_TRADER, GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY }) do
-            local isBank = (cat == GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY)
-            local canTrack = isBank and (FR.CanTrackGuildBank and FR:CanTrackGuildBank(guildId)) or (FR.CanTrackGuildTrader and FR:CanTrackGuildTrader(guildId))
+            local canTrack = FR.CanTrackCategory and FR:CanTrackCategory(guildId, cat)
 
             if canTrack then
                 totalCategories = totalCategories + 1

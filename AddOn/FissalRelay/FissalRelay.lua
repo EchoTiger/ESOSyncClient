@@ -591,6 +591,15 @@ function FR:CanTrackGuildBank(guildId)
     return true
 end
 
+function FR:CanTrackCategory(guildId, category)
+    if category == GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY then
+        return self:CanTrackGuildBank(guildId)
+    elseif category == GUILD_HISTORY_EVENT_CATEGORY_TRADER then
+        return self:CanTrackGuildTrader(guildId)
+    end
+    return false
+end
+
 function FR:FixLibHistoire()
     if not LibHistoire or not LibHistoire.internal or not LibHistoire.internal.historyCache then return end
     local cacheManager = LibHistoire.internal.historyCache
@@ -601,8 +610,7 @@ function FR:FixLibHistoire()
         for _, category in ipairs({ GUILD_HISTORY_EVENT_CATEGORY_TRADER, GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY }) do
             local cache = cacheManager:GetCategoryCache(guildId, category)
             if cache then
-                local isBank = (category == GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY)
-                local canTrack = isBank and self:CanTrackGuildBank(guildId) or self:CanTrackGuildTrader(guildId)
+                local canTrack = self:CanTrackCategory(guildId, category)
 
                 if canTrack then
                     -- 1. Ensure self.guild exists on the cache object as a runtime fallback for LibHistoire bug
@@ -706,8 +714,7 @@ function FR:PumpLibHistoire(isManual)
     for i = 1, numGuilds do
         local guildId = GetGuildId(i)
         for _, category in ipairs({ GUILD_HISTORY_EVENT_CATEGORY_TRADER, GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY }) do
-            local isBank = (category == GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY)
-            local canTrack = isBank and self:CanTrackGuildBank(guildId) or self:CanTrackGuildTrader(guildId)
+            local canTrack = self:CanTrackCategory(guildId, category)
             if not canTrack then
                 skippedCount = skippedCount + 1
             else
