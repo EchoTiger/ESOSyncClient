@@ -82,7 +82,7 @@ namespace RedfurSync
 
         public static UploadJob CreateUpdateJob(UpdatePayload payload)
         {
-            string localVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
+            string localVersion = RelayVersion.Current;
 
             return new UploadJob 
             {

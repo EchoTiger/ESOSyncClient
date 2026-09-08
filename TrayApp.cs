@@ -13,6 +13,14 @@ namespace RedfurSync
 {
     public sealed class TrayApp : IDisposable
     {
+        private static void TraceLog(string msg)
+        {
+            try {
+                var p = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "debug.log");
+                File.AppendAllText(p, $"[{DateTime.Now:HH:mm:ss.fff}] [TrayApp] {msg}\n");
+            } catch {}
+        }
+
         private readonly NotifyIcon        _trayIcon;
         private readonly ContextMenuStrip  _menu;
         private readonly FileWatcherService _watcher;
@@ -40,6 +48,7 @@ namespace RedfurSync
 
         public TrayApp(bool startMinimized = false)
         {
+            TraceLog("ctor started. startMinimized: " + startMinimized);
             _uiContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
             _menu     = BuildMenu();
             
@@ -88,6 +97,7 @@ namespace RedfurSync
             SetPerformanceMode(config.VisualFidelity, saveConfig: false);
 
             CheckFirstRun();
+            TraceLog("CheckFirstRun done");
 
             if (!startMinimized)
             {
@@ -158,6 +168,7 @@ namespace RedfurSync
 
         private void OpenMainWindow(string tabId = "sync")
         {
+            TraceLog("OpenMainWindow tab: " + tabId);
             if (_menu.InvokeRequired)
             {
                 _menu.BeginInvoke(() => OpenMainWindow(tabId));
@@ -532,6 +543,7 @@ private void CheckBatchCompletion()
 
         public void Dispose()
         {
+            TraceLog("Dispose called! Stack: " + Environment.StackTrace);
             if (_disposed) return;
             _disposed = true;
 

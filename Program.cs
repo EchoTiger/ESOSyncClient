@@ -14,6 +14,7 @@ namespace RedfurSync
         [STAThread]
         static void Main(string[] args)
         {
+            TraceLog("Main started. Args: " + string.Join(" ", args));
             // ── DPI awareness ─────────────────────────────────────────────────
             // Must be called before anything else to prevent blurry text on
             // high-DPI / 4K displays. PerMonitorV2 lets each monitor use its
@@ -49,6 +50,7 @@ namespace RedfurSync
             AppConfig.FaultReporter = (title, message) => FissalBox.Show(message, title);
 
             _mutex = new Mutex(true, MutexName, out bool isNew);
+            TraceLog("Mutex checked. isNew: " + isNew);
 
             if (!isNew)
             {
@@ -134,10 +136,22 @@ namespace RedfurSync
                 }
             }
 
+            TraceLog("Creating TrayApp...");
             using var app = new TrayApp(startMinimized);
+            TraceLog("Starting Application.Run...");
             Application.Run();
+            TraceLog("Application.Run returned!");
 
             _mutex.ReleaseMutex();
+        }
+
+        
+        private static void TraceLog(string msg)
+        {
+            try {
+                var p = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "debug.log");
+                File.AppendAllText(p, $"[{DateTime.Now:HH:mm:ss.fff}] {msg}\n");
+            } catch {}
         }
 
         private static void LogCrash(Exception ex)

@@ -206,8 +206,9 @@ namespace RedfurSync
         private float _dragStartScrollY;
         private int   _isDraggingDiagIdx = -1;
 
-        private float _shimmer, _scanPhase, _globalGlitchX, _globalGlitchY, _marqueeX;
-        private bool  _heavyGlitch;
+        private float _shimmer, _scanPhase, _marqueeX;
+        private float _crtFlicker = 1.0f;
+        private float _rasterJitterPhase = 0f;
         private int   _marqueeWait   = AppConfig.MarqueePause;
 
         private string? _purgingGroupText = null;
@@ -220,7 +221,7 @@ namespace RedfurSync
         private float _slideOffset = 0f;
         private int _slideStartY = 0;
 
-        private enum DisplayState { Glitching, HoldStart, Scrolling, HoldEnd }
+        private enum DisplayState { Fading, HoldStart, Scrolling, HoldEnd }
         private DisplayState _dispState = DisplayState.HoldStart;
         private int _dispWait = AppConfig.MarqueePause, _dispStatusIdx = 0;
         private float _spinPhase = 0f;
@@ -562,21 +563,26 @@ namespace RedfurSync
             if (AppConfig.FX.ScreenScanlines || AppConfig.FX.MCScanlines || AppConfig.FX.GroupSepScanlines || AppConfig.FX.RowBadgeScanlines)
                 _scanPhase = (_scanPhase + AppConfig.ScanlineSpeed) % 4f;
 
-            if (AppConfig.FX.ScreenHeavyGlitch && _rand.Next(1000) < AppConfig.GlitchChancePer1k)
+            _rasterJitterPhase = (_rasterJitterPhase + 0.35f) % 6.28f;
+
+            // Reactive CRT phosphor voltage & luminescence flicker
+            bool hasActiveWork = _jobs.Any(j => j.Status == UploadStatus.Uploading || j.Status == UploadStatus.UpdateReady);
+            if (AppConfig.CurrentMode != FidelityMode.Low)
             {
-                _globalGlitchX = _rand.Next(-4, 5) * _scale;
-                _globalGlitchY = _rand.Next(-2, 3) * _scale;
-                _heavyGlitch   = _rand.Next(100) < AppConfig.HeavyGlitchPct;
+                // Subtle cathode ray voltage ripple (around 96% to 104% luminance)
+                float baseNoise = ((float)_rand.NextDouble() - 0.5f) * (hasActiveWork ? 0.08f : 0.04f);
+                float sinRipple = (float)Math.Sin(_shimmer * 0.8f) * 0.02f;
+                _crtFlicker = Math.Clamp(1.0f + baseNoise + sinRipple, 0.88f, 1.12f);
             }
             else
             {
-                _globalGlitchX = 0; _globalGlitchY = 0; _heavyGlitch = false;
+                _crtFlicker = 1.0f;
             }
 
             if (AppConfig.FX.MCLightsGlow || AppConfig.FX.MarqueeTextAnim)
                 _spinPhase += 0.15f; 
 
-            bool visualChanged = _heavyGlitch; // Base invalidation trigger
+            bool visualChanged = hasActiveWork || AppConfig.CurrentMode == FidelityMode.High;
 
             for (int i = _copyBubbles.Count - 1; i >= 0; i--)
             {
@@ -1099,7 +1105,7 @@ private void EnsureLayoutUpdated()
                 int viewHeight = Height - HeaderH - S(6);
                 var clipRect = new Rectangle(0, HeaderH, Width, viewHeight);
                 g.SetClip(clipRect); 
-                g.TranslateTransform(_globalGlitchX, HeaderH - _scrollY + _globalGlitchY);
+                g.TranslateTransform(0, HeaderH - _scrollY);
 
                 // PASS 1: Draw regular rows and the separator's background layer
                 for (int i = 0; i < _layout.Count; i++)
@@ -1225,21 +1231,28 @@ private void EnsureLayoutUpdated()
                     g.Restore(gState);
                 }
 
-                if (_heavyGlitch && AppConfig.FX.ScreenHeavyGlitch)
-                {
-                    int tearY = (int)(_scrollY + _rand.Next(viewHeight)); 
-                    int tearH = _rand.Next(S(4), S(18));
-                    using var tearBrush = new SolidBrush(Color.FromArgb(40, CText));
-                    g.FillRectangle(tearBrush, 0, tearY, Width, tearH);
-                }
-
                 g.ResetTransform(); 
-                
-                if (AppConfig.FX.ScreenScanlines)
+
+                // --- Authentic CRT Raster Scanlines & Cathode Voltage Modulation ---
+                if (AppConfig.FX.ScreenScanlines || AppConfig.FX.ScreenHeavyGlitch)
                 {
-                    using var screenScanPen = new Pen(Color.FromArgb(90, 10, 5, 2), 1.5f);
-                    for (float sy = HeaderH + _scanPhase; sy < Height; sy += 4)
+                    // Fine CRT scanlines with moving raster phase
+                    int scanlineAlpha = AppConfig.FX.ScreenScanlines ? 55 : 25;
+                    using var screenScanPen = new Pen(Color.FromArgb(scanlineAlpha, 12, 18, 14), 1.2f);
+                    for (float sy = HeaderH + _scanPhase; sy < Height; sy += 3.5f)
                         g.DrawLine(screenScanPen, 0, sy, Width, sy);
+
+                    // Reactive phosphor sweep line (subtle cathode ray sweep across the sync list)
+                    if (AppConfig.CurrentMode != FidelityMode.Low)
+                    {
+                        float sweepY = HeaderH + ((_shimmer * 1.8f) % Math.Max(10, Height - HeaderH));
+                        using var sweepBrush = new LinearGradientBrush(
+                            new RectangleF(0, sweepY - S(15), Width, S(30)),
+                            Color.Transparent,
+                            Color.FromArgb((int)(16 * _crtFlicker), 80, 240, 180),
+                            LinearGradientMode.Vertical);
+                        g.FillRectangle(sweepBrush, 0, sweepY - S(15), Width, S(30));
+                    }
                 }
 
                 if (AppConfig.FX.ScreenVignette)
@@ -1287,25 +1300,45 @@ private void EnsureLayoutUpdated()
 
         private void DrawGlowingText(Graphics g, string text, Font font, Color color, float x, float y, int glowAlpha = 40)
         {
-            if (glowAlpha > 0)
+            // Modulate glow with CRT cathode voltage flicker
+            int effectiveGlow = (int)Math.Clamp(glowAlpha * _crtFlicker, 0, 255);
+            if (effectiveGlow > 0)
             {
-                using var glowBrush = new SolidBrush(Color.FromArgb(glowAlpha, color));
+                using var glowBrush = new SolidBrush(Color.FromArgb(effectiveGlow, color));
                 g.DrawString(text, font, glowBrush, new PointF(x, y - S(1))); g.DrawString(text, font, glowBrush, new PointF(x, y + S(1)));
                 g.DrawString(text, font, glowBrush, new PointF(x - S(1), y)); g.DrawString(text, font, glowBrush, new PointF(x + S(1), y));
+
+                // Subtle phosphor raster trace when screen/heavy glitch is active
+                if (AppConfig.FX.ScreenHeavyGlitch && _crtFlicker > 1.05f)
+                {
+                    using var traceBrush = new SolidBrush(Color.FromArgb(Math.Min(25, effectiveGlow / 2), Color.Cyan));
+                    g.DrawString(text, font, traceBrush, new PointF(x + S(1), y));
+                }
             }
-            using var coreBrush = new SolidBrush(color);
+
+            int coreR = Math.Clamp((int)(color.R * _crtFlicker), 0, 255);
+            int coreG = Math.Clamp((int)(color.G * _crtFlicker), 0, 255);
+            int coreB = Math.Clamp((int)(color.B * _crtFlicker), 0, 255);
+            using var coreBrush = new SolidBrush(Color.FromArgb(color.A, coreR, coreG, coreB));
             g.DrawString(text, font, coreBrush, new PointF(x, y));
         }
 
         private void DrawGlowingTextRect(Graphics g, string text, Font font, Color color, RectangleF rect, StringFormat sf, int glowAlpha = 40)
         {
-            if (glowAlpha > 0)
+            int effectiveGlow = (int)Math.Clamp(glowAlpha * _crtFlicker, 0, 255);
+            if (effectiveGlow > 0)
             {
-                using var glowBrush = new SolidBrush(Color.FromArgb(glowAlpha, color));
-                g.DrawString(text, font, glowBrush, new RectangleF(rect.X, rect.Y - S(1), rect.Width, rect.Height), sf); g.DrawString(text, font, glowBrush, new RectangleF(rect.X, rect.Y + S(1), rect.Width, rect.Height), sf);
-                g.DrawString(text, font, glowBrush, new RectangleF(rect.X - S(1), rect.Y, rect.Width, rect.Height), sf); g.DrawString(text, font, glowBrush, new RectangleF(rect.X + S(1), rect.Y, rect.Width, rect.Height), sf);
+                using var glowBrush = new SolidBrush(Color.FromArgb(effectiveGlow, color));
+                g.DrawString(text, font, glowBrush, new RectangleF(rect.X, rect.Y - S(1), rect.Width, rect.Height), sf);
+                g.DrawString(text, font, glowBrush, new RectangleF(rect.X, rect.Y + S(1), rect.Width, rect.Height), sf);
+                g.DrawString(text, font, glowBrush, new RectangleF(rect.X - S(1), rect.Y, rect.Width, rect.Height), sf);
+                g.DrawString(text, font, glowBrush, new RectangleF(rect.X + S(1), rect.Y, rect.Width, rect.Height), sf);
             }
-            using var coreBrush = new SolidBrush(color);
+
+            int coreR = Math.Clamp((int)(color.R * _crtFlicker), 0, 255);
+            int coreG = Math.Clamp((int)(color.G * _crtFlicker), 0, 255);
+            int coreB = Math.Clamp((int)(color.B * _crtFlicker), 0, 255);
+            using var coreBrush = new SolidBrush(Color.FromArgb(color.A, coreR, coreG, coreB));
             g.DrawString(text, font, coreBrush, rect, sf);
         }
 
@@ -1754,7 +1787,7 @@ private void EnsureLayoutUpdated()
             var trashBtn = TrashBtnRect(job, y, childPad, childW);
             var copyBtn = CopyBtnRect(job, y, childPad, childW);
 
-            string titleStr = "|" + Trunc(syncTimeName, g, _fTitle95, childW - S(100));
+            string titleStr = "|" + Trunc(syncTimeName, g, _fTitle95, childW - S(140));
             var titleSz = g.MeasureString(titleStr, _fTitle95);
 
             int finishedCount = syncBatch.Count(j => j.Status == UploadStatus.Done || j.Status == UploadStatus.UpdateReady || j.Status == UploadStatus.Failed || j.Status == UploadStatus.Cancelled);
@@ -1870,14 +1903,9 @@ private void EnsureLayoutUpdated()
 
         private void DrawHazyText(Graphics g, string text, Font f, Color color, float x, float y)
         {
-            string displayText = text;
-            if (AppConfig.FX.TextHazyGlitch && text.Length > 0 && _rand.Next(1000) < 10) 
-            {
-                char[] chars = displayText.ToCharArray();
-                chars[_rand.Next(chars.Length)] = "01░▒▓■_!*ØX?"[_rand.Next(12)];
-                displayText = new string(chars);
-            }
-            DrawGlowingText(g, displayText, f, color, x, y, AppConfig.FX.HeaderNeonText ? 20 : 0);
+            // Clean CRT typography: maintain full legibility with responsive phosphor luminescence
+            int glowAlpha = AppConfig.FX.HeaderNeonText ? 25 : (AppConfig.CurrentMode != FidelityMode.Low ? 15 : 0);
+            DrawGlowingText(g, text, f, color, x, y, glowAlpha);
         }
 
         private void DrawBtn(Graphics g, Rectangle r, string label, Color accent, Color txtColor, bool hov, bool glow = false)
@@ -2017,39 +2045,31 @@ private void EnsureLayoutUpdated()
         private Rectangle? ActionBtnRect(UploadJob job, int y, int childPad, int childW)
         {
             if (!job.CanRetry && !job.CanCancel && job.Status != UploadStatus.Done && job.Status != UploadStatus.UpdateReady) return null;
-            
-            if (job.IsUpdate)
-            {
-                // Custom position for the Apply button so the hover and click hitboxes perfectly align with the visual rendering
-                return new Rectangle(childPad + S(154), y + S(30), S(28), S(28));
-            }
-
-            int btnSize = S(20), sp = S(5);
-            int gridX = childPad + childW - (btnSize * 2 + sp) - S(8);
-            
-            return new Rectangle(gridX, y + S(8), btnSize, btnSize);
+            int btnSize = S(20), sp = S(4);
+            int startX = childPad + childW - S(6) - (btnSize * 4 + sp * 3);
+            return new Rectangle(startX, y + S(5), btnSize, btnSize);
         }
 
         private Rectangle DiagBtnRect(UploadJob job, int y, int childPad, int childW)
         {
-            int btnSize = S(20), sp = S(5);
-            int gridX = childPad + childW - (btnSize * 2 + sp) - S(8);
-            return new Rectangle(gridX + btnSize + sp, y + S(8), btnSize, btnSize);
+            int btnSize = S(20), sp = S(4);
+            int startX = childPad + childW - S(6) - (btnSize * 4 + sp * 3);
+            return new Rectangle(startX + (btnSize + sp), y + S(5), btnSize, btnSize);
+        }
+
+        private Rectangle? CopyBtnRect(UploadJob job, int y, int childPad, int childW)
+        {
+            int btnSize = S(20), sp = S(4);
+            int startX = childPad + childW - S(6) - (btnSize * 4 + sp * 3);
+            return new Rectangle(startX + (btnSize + sp) * 2, y + S(5), btnSize, btnSize);
         }
 
         private Rectangle? TrashBtnRect(UploadJob job, int y, int childPad, int childW)
         {
             if (job.IsUpdate) return null; 
-            int btnSize = S(20), sp = S(5);
-            int gridX = childPad + childW - (btnSize * 2 + sp) - S(8);
-            return new Rectangle(gridX, y + S(8) + btnSize + sp, btnSize, btnSize);
-        }
-
-        private Rectangle? CopyBtnRect(UploadJob job, int y, int childPad, int childW)
-        {
-            int btnSize = S(20), sp = S(5);
-            int gridX = childPad + childW - (btnSize * 2 + sp) - S(8);
-            return new Rectangle(gridX + btnSize + sp, y + S(8) + btnSize + sp, btnSize, btnSize);
+            int btnSize = S(20), sp = S(4);
+            int startX = childPad + childW - S(6) - (btnSize * 4 + sp * 3);
+            return new Rectangle(startX + (btnSize + sp) * 3, y + S(5), btnSize, btnSize);
         }
 
         private void DrawHeader(Graphics g)
@@ -2178,7 +2198,7 @@ private void EnsureLayoutUpdated()
 
             using var coreNeon = new SolidBrush(Color.FromArgb(150, 255, 255, 200)); g.DrawString("Fissal Relay", _fTitle125Bold, coreNeon, new PointF(titleX, titleY));
 
-            float subX = dx + rimSize + S(5), subY = S(25); string subText = $"Masser Matrix v{(System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(2) ?? "1.00")}";
+            float subX = dx + rimSize + S(5), subY = S(25); string subText = $"Masser Matrix v{RelayVersion.Current}";
             using var subIndentShadow = new SolidBrush(Color.FromArgb(255, 20, 10, 0)); g.DrawString(subText, _fBody95Italic, subIndentShadow, new PointF(subX-2, subY - 2));
             using var subIndentHi = new SolidBrush(Color.FromArgb(170, 190, 190, 190)); g.DrawString(subText, _fBody95Italic, subIndentHi, new PointF(subX, subY + 2));
             using var subCore = new SolidBrush(Color.FromArgb(100, CGoldMid.R, CGoldMid.G, CGoldMid.B)); g.DrawString(subText, _fBody95Italic, subCore, new PointF(subX, subY));
@@ -2261,7 +2281,7 @@ private void EnsureLayoutUpdated()
 
             for (int i = 0; i < 4; i++)
             {
-                bool isActive = statuses.Exists(s => s.type == i) && !(_dispState == DisplayState.Glitching && _dispWait < 10);
+                bool isActive = statuses.Exists(s => s.type == i) && !(_dispState == DisplayState.Fading && _dispWait < 4);
                 bool isCurrent = currentStatus.type == i;
                 int cx = leftLightsStartX + (i * lightSpacing);
                 if (i == 3) cx += S(18); 
@@ -2296,18 +2316,16 @@ private void EnsureLayoutUpdated()
 
             if (AppConfig.FX.MarqueeTextAnim)
             {
-                if (_dispState == DisplayState.Glitching)
+                if (_dispState == DisplayState.Fading)
                 {
-                    if (_dispWait < 10) { 
-                        displayBadge = ""; 
-                    } else {
-                        char[] chars = displayBadge.ToCharArray();
-                        for(int i = 0; i < chars.Length; i++) if (_rand.Next(100) < 12) chars[i] = "░▒_-"[_rand.Next(4)];
-                        displayBadge = new string(chars);
-                    }
-
                     _dispWait--;
-                    if (_dispWait <= 0) { _dispStatusIdx = (_dispStatusIdx + 1) % statuses.Count; _dispState = DisplayState.HoldStart; _marqueeWait = AppConfig.MarqueePause; _marqueeX = 0; }
+                    if (_dispWait <= 0)
+                    {
+                        _dispStatusIdx = (_dispStatusIdx + 1) % statuses.Count;
+                        _dispState = DisplayState.HoldStart;
+                        _marqueeWait = AppConfig.MarqueePause;
+                        _marqueeX = 0;
+                    }
                 }
                 else if (_dispState == DisplayState.HoldStart)
                 {
@@ -2334,18 +2352,16 @@ private void EnsureLayoutUpdated()
                 else if (_dispState == DisplayState.HoldEnd)
                 {
                     _marqueeX = -maxScroll; _marqueeWait--;
-                    if (_marqueeWait <= 0) { _dispState = DisplayState.Glitching; _dispWait = 25; }
+                    if (_marqueeWait <= 0) { _dispState = DisplayState.Fading; _dispWait = 8; }
                 }
             }
             else { _marqueeX = 0; }
 
-            if (_dispState != DisplayState.Glitching && displayBadge.Length > 0 && AppConfig.FX.TextHazyGlitch && _rand.Next(1000) < 5)
-            {
-                char[] chars = displayBadge.ToCharArray(); chars[_rand.Next(chars.Length)] = "01░▒▓"[ _rand.Next(5) ]; displayBadge = new string(chars);
-            }
+            int textAlpha = _dispState == DisplayState.Fading ? Math.Clamp((int)(255 * (_dispWait / 8.0f)), 0, 255) : 255;
+            Color effectiveBadgeColor = Color.FromArgb(textAlpha, badgeColor.R, badgeColor.G, badgeColor.B);
 
             var clipState = g.Save(); g.SetClip(new Rectangle(mcX + S(2), mcY + S(2), mcW - S(4), mcH - S(4)), CombineMode.Intersect);
-            DrawGlowingText(g, displayBadge, _fBody8Reg, badgeColor, mcX + S(6) + _marqueeX, mcY + S(5), AppConfig.FX.HeaderNeonText ? 90 : 0); 
+            DrawGlowingText(g, displayBadge, _fBody8Reg, effectiveBadgeColor, mcX + S(6) + _marqueeX, mcY + S(5), AppConfig.FX.HeaderNeonText ? 90 : 0); 
             g.Restore(clipState);
             
             if (AppConfig.FX.MCGloss)
@@ -2730,7 +2746,6 @@ private bool GetHitRow(float contentY, out int layoutIdx, out RowLayout hitRow)
             string result = noExt + "…" + ext; _truncCache[cacheKey] = result; return result;
         }
 
-        public enum LightFilter { None, Natural, Dusky, Cool }
         /// <summary>
         /// Brightens a color by smoothly interpolating it towards a specific light source.
         /// <param name="amount">0.0f (no change) to 1.0f (maximum highlight)</param>

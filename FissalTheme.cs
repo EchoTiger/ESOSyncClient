@@ -10,6 +10,8 @@ using System.Windows.Forms;
 
 namespace RedfurSync
 {
+    public enum LightFilter { None, Natural, Dusky, Cool }
+
     /// <summary>
     /// Shared theme constants, DPI helpers, palette repository, and font factories for all Fissal windows.
     /// Synchronized with web/v2/src/styles/tokens.css & themeSwitcher.helper.js.
@@ -772,76 +774,95 @@ namespace RedfurSync
         }
 
         /// <summary>
+        /// <summary>
+        /// Renders the signature retro CRT phosphor grid mesh pattern across the background.
+        /// </summary>
+        public static void DrawTerminalMesh(Graphics g, Rectangle bounds, float scale, int alpha = 8)
+        {
+            if (bounds.Width <= 0 || bounds.Height <= 0) return;
+            int step = Math.Max(2, (int)(3 * scale));
+            using var meshPen = new Pen(Color.FromArgb(alpha, 255, 255, 255), 1f);
+            for (int i = bounds.Left; i < bounds.Right; i += step)
+                g.DrawLine(meshPen, i, bounds.Top, i, bounds.Bottom);
+            for (int j = bounds.Top; j < bounds.Bottom; j += step)
+                g.DrawLine(meshPen, bounds.Left, j, bounds.Right, j);
+        }
+
+        /// <summary>
         /// Renders an authentic encased Dwemer terminal chassis with multi-layer bevels,
         /// corner mounting brackets, 3D rivets, and CRT recessed screen shadows.
         /// </summary>
         public static void DrawTerminalChassis(Graphics g, int w, int h, float scale)
         {
+            if (w <= 10 || h <= 10) return;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
-            // 1. Outer Chassis Metal Border (Multi-tier industrial frame)
-            using (var outerPen = new Pen(CGoldDark, 2f * scale))
+            // 0. Retro CRT Phosphor Mesh Grid across chassis base
+            DrawTerminalMesh(g, new Rectangle(0, 0, w, h), scale, 7);
+
+            // 1. Outer Chassis Metal Border (Multi-tier industrial frame, safely inset from window bounds)
+            using (var outerPen = new Pen(CGoldDark, 1.5f * scale))
             {
-                g.DrawRectangle(outerPen, 1, 1, w - 2, h - 2);
+                g.DrawRectangle(outerPen, 1, 1, w - 3, h - 3);
             }
             using (var midPen = new Pen(CBorder, 1f * scale))
             {
-                g.DrawRectangle(midPen, 3, 3, w - 6, h - 6);
+                g.DrawRectangle(midPen, 3, 3, w - 7, h - 7);
             }
             using (var innerPen = new Pen(CBorderSub, 1f * scale))
             {
-                g.DrawRectangle(innerPen, 5, 5, w - 10, h - 10);
+                g.DrawRectangle(innerPen, 5, 5, w - 11, h - 11);
             }
 
             // 2. Corner Reinforcement L-Plates (Dwemer brass corner braces)
-            int braceSize = (int)(28 * scale);
+            int braceSize = (int)(24 * scale);
             using var braceBrush = new SolidBrush(Color.FromArgb(50, CGoldDim));
             using var braceBorderPen = new Pen(CGoldMid, 1f);
 
             // Top-Left
             g.FillPolygon(braceBrush, new PointF[] {
-                new PointF(2, 2), new PointF(braceSize, 2), new PointF(braceSize, 6),
-                new PointF(6, 6), new PointF(6, braceSize), new PointF(2, braceSize) });
+                new PointF(2, 2), new PointF(braceSize, 2), new PointF(braceSize, 5),
+                new PointF(5, 5), new PointF(5, braceSize), new PointF(2, braceSize) });
             g.DrawPolygon(braceBorderPen, new PointF[] {
-                new PointF(2, 2), new PointF(braceSize, 2), new PointF(braceSize, 6),
-                new PointF(6, 6), new PointF(6, braceSize), new PointF(2, braceSize) });
+                new PointF(2, 2), new PointF(braceSize, 2), new PointF(braceSize, 5),
+                new PointF(5, 5), new PointF(5, braceSize), new PointF(2, braceSize) });
 
             // Top-Right
             g.FillPolygon(braceBrush, new PointF[] {
-                new PointF(w - braceSize, 2), new PointF(w - 2, 2), new PointF(w - 2, braceSize),
-                new PointF(w - 6, braceSize), new PointF(w - 6, 6), new PointF(w - braceSize, 6) });
+                new PointF(w - braceSize - 1, 2), new PointF(w - 3, 2), new PointF(w - 3, braceSize),
+                new PointF(w - 6, braceSize), new PointF(w - 6, 5), new PointF(w - braceSize - 1, 5) });
             g.DrawPolygon(braceBorderPen, new PointF[] {
-                new PointF(w - braceSize, 2), new PointF(w - 2, 2), new PointF(w - 2, braceSize),
-                new PointF(w - 6, braceSize), new PointF(w - 6, 6), new PointF(w - braceSize, 6) });
+                new PointF(w - braceSize - 1, 2), new PointF(w - 3, 2), new PointF(w - 3, braceSize),
+                new PointF(w - 6, braceSize), new PointF(w - 6, 5), new PointF(w - braceSize - 1, 5) });
 
             // Bottom-Left
             g.FillPolygon(braceBrush, new PointF[] {
-                new PointF(2, h - braceSize), new PointF(6, h - braceSize), new PointF(6, h - 6),
-                new PointF(braceSize, h - 6), new PointF(braceSize, h - 2), new PointF(2, h - 2) });
+                new PointF(2, h - braceSize - 1), new PointF(5, h - braceSize - 1), new PointF(5, h - 6),
+                new PointF(braceSize, h - 6), new PointF(braceSize, h - 3), new PointF(2, h - 3) });
             g.DrawPolygon(braceBorderPen, new PointF[] {
-                new PointF(2, h - braceSize), new PointF(6, h - braceSize), new PointF(6, h - 6),
-                new PointF(braceSize, h - 6), new PointF(braceSize, h - 2), new PointF(2, h - 2) });
+                new PointF(2, h - braceSize - 1), new PointF(5, h - braceSize - 1), new PointF(5, h - 6),
+                new PointF(braceSize, h - 6), new PointF(braceSize, h - 3), new PointF(2, h - 3) });
 
             // Bottom-Right
             g.FillPolygon(braceBrush, new PointF[] {
-                new PointF(w - 6, h - braceSize), new PointF(w - 2, h - braceSize), new PointF(w - 2, h - 2),
-                new PointF(w - braceSize, h - 2), new PointF(w - braceSize, h - 6), new PointF(w - 6, h - 6) });
+                new PointF(w - 6, h - braceSize - 1), new PointF(w - 3, h - braceSize - 1), new PointF(w - 3, h - 3),
+                new PointF(w - braceSize - 1, h - 3), new PointF(w - braceSize - 1, h - 6), new PointF(w - 6, h - 6) });
             g.DrawPolygon(braceBorderPen, new PointF[] {
-                new PointF(w - 6, h - braceSize), new PointF(w - 2, h - braceSize), new PointF(w - 2, h - 2),
-                new PointF(w - braceSize, h - 2), new PointF(w - braceSize, h - 6), new PointF(w - 6, h - 6) });
+                new PointF(w - 6, h - braceSize - 1), new PointF(w - 3, h - braceSize - 1), new PointF(w - 3, h - 3),
+                new PointF(w - braceSize - 1, h - 3), new PointF(w - braceSize - 1, h - 6), new PointF(w - 6, h - 6) });
 
             // 3. 3D Corner Rivets with specular glints & shadow wells
-            int rivetRadius = (int)(7 * scale);
-            int m = (int)(9 * scale);
+            int rivetRadius = Math.Max(5, (int)(6 * scale));
+            int m = (int)(7 * scale);
             var rivetCenters = new[]
             {
                 new Point(m, m),
-                new Point(w - m - rivetRadius, m),
-                new Point(m, h - m - rivetRadius),
-                new Point(w - m - rivetRadius, h - m - rivetRadius),
-                // Mid-perimeter decorative bolt studs
-                new Point(w / 2 - rivetRadius / 2, m),
-                new Point(w / 2 - rivetRadius / 2, h - m - rivetRadius)
+                new Point(w - m - rivetRadius - 2, m),
+                new Point(m, h - m - rivetRadius - 2),
+                new Point(w - m - rivetRadius - 2, h - m - rivetRadius - 2),
+                // Mid-perimeter decorative bolt studs placed safely on left/right vertical chassis struts
+                new Point(m, h / 2 - rivetRadius / 2),
+                new Point(w - m - rivetRadius - 2, h / 2 - rivetRadius / 2)
             };
 
             foreach (var pt in rivetCenters)
@@ -866,7 +887,7 @@ namespace RedfurSync
             }
 
             // 4. CRT Bezel Inner Shadow (Deep recessed cathode monitor illusion)
-            int shadowDepth = (int)(16 * scale);
+            int shadowDepth = (int)(14 * scale);
             using var topShadow = new LinearGradientBrush(
                 new Rectangle(6, 6, w - 12, shadowDepth),
                 Color.FromArgb(110, 0, 0, 0), Color.Transparent, LinearGradientMode.Vertical);
@@ -1098,6 +1119,207 @@ namespace RedfurSync
             p.AddArc(x,       y+h-r*2, r*2, r*2,  90, 90);
             p.CloseFigure();
             return p;
+        }
+
+        /// <summary>
+        /// Brightens a color by smoothly interpolating it towards a specific light source.
+        /// </summary>
+        public static Color BrightenColor(Color color, float amount, LightFilter filter = LightFilter.None, int? overrideAlpha = null)
+        {
+            amount = Math.Clamp(amount, 0f, 1f);
+            Color target = filter switch {
+                LightFilter.Natural => Color.FromArgb(255, 250, 235),
+                LightFilter.Dusky   => Color.FromArgb(255, 190, 130),
+                LightFilter.Cool    => Color.FromArgb(220, 240, 255),
+                _                   => Color.FromArgb(255, 255, 255)
+            };
+            int r = (int)(color.R + ((target.R - color.R) * amount));
+            int g = (int)(color.G + ((target.G - color.G) * amount));
+            int b = (int)(color.B + ((target.B - color.B) * amount));
+            int a = overrideAlpha ?? color.A;
+            return Color.FromArgb(Math.Clamp(a, 0, 255), r, g, b);
+        }
+
+        /// <summary>
+        /// Darkens a color by smoothly interpolating it towards a specific shadow tone.
+        /// </summary>
+        public static Color DarkenColor(Color color, float amount, LightFilter filter = LightFilter.None, int? overrideAlpha = null)
+        {
+            amount = Math.Clamp(amount, 0f, 1f);
+            Color target = filter switch {
+                LightFilter.Natural => Color.FromArgb(15, 20, 35),
+                LightFilter.Dusky   => Color.FromArgb(35, 15, 20),
+                LightFilter.Cool    => Color.FromArgb(10, 15, 25),
+                _                   => Color.FromArgb(0, 0, 0)
+            };
+            int r = (int)(color.R + ((target.R - color.R) * amount));
+            int g = (int)(color.G + ((target.G - color.G) * amount));
+            int b = (int)(color.B + ((target.B - color.B) * amount));
+            int a = overrideAlpha ?? color.A;
+            return Color.FromArgb(Math.Clamp(a, 0, 255), r, g, b);
+        }
+
+        /// <summary>
+        /// Renders an authentic physical Vacuum Tube / Nixie status bulb with dark industrial socket housing,
+        /// deep recessed void, hot trapped plasma gas glow, physical wire filament with burning point and halo,
+        /// heavy glass dome crescent reflections, and micro refraction lines.
+        /// </summary>
+        public static void DrawDwemerVacuumTube(Graphics g, Rectangle bounds, Color coreColor, Color auraColor, int glowAlpha, float scale)
+        {
+            if (bounds.Width <= 4 || bounds.Height <= 4) return;
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+
+            int rimSize = Math.Min(bounds.Width, bounds.Height);
+            int dx = bounds.X + (bounds.Width - rimSize) / 2;
+            int dy = bounds.Y + (bounds.Height - rimSize) / 2;
+
+            int glassPad = Math.Max(2, (int)(2 * scale));
+            int gSize = rimSize - glassPad * 2;
+            int gx = dx + glassPad;
+            int gy = dy + glassPad;
+
+            // 1. Outer industrial socket housing
+            using var housingShadow = new SolidBrush(Color.FromArgb(180, 0, 0, 0));
+            g.FillEllipse(housingShadow, dx + (int)(1 * scale), dy + (int)(1 * scale), rimSize, rimSize);
+
+            using var housingBrush = new LinearGradientBrush(
+                new Rectangle(dx, dy, rimSize, rimSize),
+                Color.FromArgb(45, 45, 50), Color.FromArgb(10, 10, 12), LinearGradientMode.ForwardDiagonal);
+            g.FillEllipse(housingBrush, dx, dy, rimSize, rimSize);
+
+            using var housingRing = new Pen(Color.FromArgb(120, 160, 160, 160), 1f);
+            g.DrawEllipse(housingRing, dx, dy, rimSize, rimSize);
+
+            // 2. Deep void of the bulb cavity
+            using var cavityBrush = new SolidBrush(Color.FromArgb(255, 2, 2, 3));
+            g.FillEllipse(cavityBrush, gx, gy, gSize, gSize);
+
+            // Extreme inner shadow to pull the void backward
+            using var voidPath = new GraphicsPath();
+            voidPath.AddEllipse(gx, gy, gSize, gSize);
+            using var voidDepth = new PathGradientBrush(voidPath)
+            {
+                CenterColor = Color.Transparent,
+                SurroundColors = new[] { Color.FromArgb(255, 0, 0, 0) },
+                FocusScales = new PointF(0.3f, 0.3f)
+            };
+            g.FillEllipse(voidDepth, gx, gy, gSize, gSize);
+
+            // 3. Glowing filament and trapped gas
+            int pulseAlpha = Math.Max(50, glowAlpha);
+
+            // Background gas glow inside the tube
+            int gasPad = Math.Max(2, (int)(3 * scale));
+            using var gasPath = new GraphicsPath();
+            gasPath.AddEllipse(gx + gasPad, gy + (int)(2 * scale), gSize - gasPad * 2, gSize - (int)(4 * scale));
+            using var gasGlow = new PathGradientBrush(gasPath)
+            {
+                CenterColor = BrightenColor(coreColor, 0.11f, LightFilter.None, Math.Min(255, (int)(pulseAlpha * 1.8f))),
+                SurroundColors = new[] { Color.Transparent },
+                FocusScales = new PointF(0.12f, 0.77f)
+            };
+            g.FillPath(gasGlow, gasPath);
+
+            // Physical wire/filament running up the center
+            int cx = gx + gSize / 2;
+            using var wirePen = new Pen(Color.FromArgb(85, 0, 0, 0), Math.Max(1.5f, 2.5f * scale));
+            g.DrawLine(wirePen, cx, gy + (int)(4 * scale), cx, gy + gSize - (int)(4 * scale));
+
+            using var hotWirePen = new Pen(Color.FromArgb(pulseAlpha, auraColor), 1f);
+            g.DrawLine(hotWirePen, cx, gy + (int)(1 * scale), cx, gy + gSize - (int)(4 * scale));
+
+            // Bright burning core on the filament
+            int coreH = Math.Max(2, (int)(4 * scale));
+            int coreW = Math.Max(2, (int)(2 * scale));
+            using var burnCore = new SolidBrush(BrightenColor(auraColor, 0.85f, LightFilter.Natural));
+            g.FillEllipse(burnCore, cx - coreW / 2, gy + gSize / 2 - coreH / 2, coreW, coreH);
+
+            int haloH = Math.Max(4, (int)(6 * scale));
+            int haloW = Math.Max(3, (int)(4 * scale));
+            using var burnHalo = new SolidBrush(BrightenColor(auraColor, 0.45f, LightFilter.Dusky, pulseAlpha));
+            g.FillEllipse(burnHalo, cx - haloW / 2, gy + gSize / 2 - haloH / 2, haloW, haloH);
+
+            // 4. Heavy glass dome reflections to seal the bulb
+            using var glassEdge = new Pen(Color.FromArgb(255, 0, 0, 0), Math.Max(1f, 1.5f * scale));
+            g.DrawEllipse(glassEdge, gx + 1, gy + 1, gSize - 2, gSize - 2);
+
+            // Sharp crescent reflection on the top curve
+            using var topCrescent = new GraphicsPath();
+            topCrescent.AddArc(gx + 2, gy + 2, gSize - 4, gSize - 4, 180, 180);
+            topCrescent.AddArc(gx + 2, gy + 4, gSize - 4, Math.Max(2, gSize - 9), 0, -180);
+            using var crescentBrush = new SolidBrush(Color.FromArgb(120, 255, 255, 255));
+            g.FillPath(crescentBrush, topCrescent);
+
+            // Subtle ambient bounce on the bottom lip
+            using var botLip = new GraphicsPath();
+            botLip.AddArc(gx + 4, gy + 4, Math.Max(2, gSize - 8), Math.Max(2, gSize - 8), 20, 140);
+            using var botLipPen = new Pen(Color.FromArgb(25, 255, 255, 255), 1f);
+            g.DrawPath(botLipPen, botLip);
+
+            // Subtle crack & refraction highlight for ruggedness
+            using var crackPen = new Pen(Color.FromArgb(50, 255, 255, 255), 1f);
+            g.DrawLine(crackPen, gx + (int)(6 * scale), gy + (int)(15 * scale), gx + (int)(10 * scale), gy + (int)(12 * scale));
+            g.DrawLine(crackPen, gx + (int)(10 * scale), gy + (int)(12 * scale), gx + (int)(15 * scale), gy + (int)(9 * scale));
+
+            using var refractPen = new Pen(Color.FromArgb(30, coreColor), 1f);
+            g.DrawLine(refractPen, gx + (int)(10 * scale), gy + (int)(13 * scale), gx + (int)(14 * scale), gy + (int)(10 * scale));
+        }
+
+        /// <summary>
+        /// Renders an authentic tactile circular industrial button with gasket well, 3D cap gradient,
+        /// specular glass dome reflection, and crisp glyph.
+        /// </summary>
+        public static void DrawDwemerCircularButton(Graphics g, Rectangle bounds, string symbol, Color baseColor, bool isHover, bool isPressed, float scale)
+        {
+            g.SmoothingMode = SmoothingMode.AntiAlias;
+            int dia = Math.Min(bounds.Width, bounds.Height);
+            int cx = bounds.X + (bounds.Width - dia) / 2;
+            int cy = bounds.Y + (bounds.Height - dia) / 2;
+
+            // 1. Recessed gasket well
+            using var gasketBrush = new SolidBrush(Color.FromArgb(20, 18, 16));
+            g.FillEllipse(gasketBrush, cx, cy, dia, dia);
+            using var gasketRim = new Pen(Color.FromArgb(50, 45, 40), 1.5f);
+            g.DrawEllipse(gasketRim, cx, cy, dia, dia);
+
+            // 2. Raised circular button cap
+            int pad = Math.Max(2, (int)(3 * scale));
+            int btnDia = dia - pad * 2;
+            int btnX = cx + pad;
+            int btnY = cy + pad + (isPressed ? (int)(1 * scale) : 0);
+
+            var btnRect = new Rectangle(btnX, btnY, btnDia, btnDia);
+
+            // Shadow under button if not pressed
+            if (!isPressed)
+            {
+                using var shadowBrush = new SolidBrush(Color.FromArgb(140, 0, 0, 0));
+                g.FillEllipse(shadowBrush, btnX, btnY + (int)(1.5f * scale), btnDia, btnDia);
+            }
+
+            // Cap gradient
+            Color topCol = isHover ? BrightenColor(baseColor, 0.25f, LightFilter.Natural) : baseColor;
+            Color botCol = isHover ? BrightenColor(baseColor, 0.05f) : DarkenColor(baseColor, 0.35f);
+            using var capBrush = new LinearGradientBrush(btnRect, topCol, botCol, LinearGradientMode.Vertical);
+            g.FillEllipse(capBrush, btnRect);
+
+            using var capRimPen = new Pen(Color.FromArgb(isHover ? 180 : 100, CGoldMid), 1f);
+            g.DrawEllipse(capRimPen, btnRect);
+
+            // 3. Specular glass dome reflection (top half)
+            using var domeBrush = new LinearGradientBrush(
+                new Rectangle(btnX, btnY, btnDia, Math.Max(2, btnDia / 2)),
+                Color.FromArgb(isHover ? 120 : 80, 255, 255, 255), Color.Transparent, LinearGradientMode.Vertical);
+            g.FillPie(domeBrush, btnX, btnY, btnDia, btnDia, 180, 180);
+
+            using var domeHighlight = new Pen(Color.FromArgb(100, 255, 255, 255), 1f);
+            g.DrawArc(domeHighlight, btnX + 1, btnY + 1, Math.Max(2, btnDia - 2), Math.Max(2, btnDia - 2), 200, 140);
+
+            // 4. Center symbol
+            using var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+            using var symFont = Mono(8f, scale, FontStyle.Bold);
+            using var symBrush = new SolidBrush(Color.FromArgb(230, 255, 255, 255));
+            g.DrawString(symbol, symFont, symBrush, new RectangleF(btnX, btnY + (isPressed ? 1 : 0), btnDia, btnDia), sf);
         }
     }
 }

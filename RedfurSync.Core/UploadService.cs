@@ -47,21 +47,8 @@ namespace RedfurSync
                 
                 if (payload != null && !string.IsNullOrWhiteSpace(payload.Version))
                 {
-                    // Parse both strings into proper Version objects
-                    bool isServerVerValid = Version.TryParse(payload.Version, out Version? serverVersion);
-                    bool isLocalVerValid = Version.TryParse(currentVersion, out Version? localVersion);
-
-                    if (isServerVerValid && isLocalVerValid && serverVersion != null && localVersion != null)
+                    if (RelayVersion.IsServerNewer(payload.Version, currentVersion) && IsValidUpdatePayload(payload))
                     {
-                        // Now it truly checks if the server is offering a BIGGER number
-                        if (serverVersion > localVersion && IsValidUpdatePayload(payload))
-                        {
-                            return payload;
-                        }
-                    }
-                    else if (payload.Version != currentVersion && IsValidUpdatePayload(payload))
-                    {
-                        // A soft fallback just in case non-standard strings (like "1.1a") are used
                         return payload;
                     }
                 }
@@ -377,7 +364,7 @@ namespace RedfurSync
             return request;
         }
 
-        private static string CurrentVersion => Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
+        private static string CurrentVersion => RelayVersion.Current;
 
         private async Task ReportEventAsync(string type, string? targetVersion = null, string? filename = null,
             long? bytes = null, long? durationMs = null, string? detail = null)
