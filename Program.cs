@@ -12,7 +12,7 @@ namespace RedfurSync
         public const string WakeEventName = "FissalRelay_ActivateEvent";
 
         [STAThread]
-        static void Main()
+        static void Main(string[] args)
         {
             // ── DPI awareness ─────────────────────────────────────────────────
             // Must be called before anything else to prevent blurry text on
@@ -122,7 +122,19 @@ namespace RedfurSync
             Application.EnableVisualStyles();
             Application.SetCompatibleTextRenderingDefault(false);
 
-            using var app = new TrayApp();
+            bool startMinimized = false;
+            foreach (var arg in args)
+            {
+                if (arg.Equals("--startup", StringComparison.OrdinalIgnoreCase) ||
+                    arg.Equals("--minimized", StringComparison.OrdinalIgnoreCase) ||
+                    arg.Equals("--tray", StringComparison.OrdinalIgnoreCase))
+                {
+                    startMinimized = true;
+                    break;
+                }
+            }
+
+            using var app = new TrayApp(startMinimized);
             Application.Run();
 
             _mutex.ReleaseMutex();

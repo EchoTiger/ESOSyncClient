@@ -24,6 +24,7 @@ namespace RedfurSync
         private ToolStripMenuItem _perfMedItem  = null!;
         private ToolStripMenuItem _perfHighItem = null!;
 
+        private readonly SynchronizationContext? _uiContext;
         private UploadProgressForm? _progressForm;
         private RelayMainWindow?    _mainWindow;
         private EventWaitHandle?    _wakeEvent;
@@ -37,8 +38,9 @@ namespace RedfurSync
         private bool _batchHadError    = false;
         private bool _batchHadSuccess  = false;
 
-        public TrayApp()
+        public TrayApp(bool startMinimized = false)
         {
+            _uiContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
             _menu     = BuildMenu();
             
             // Force the menu handle to exist immediately so we can safely invoke on it
@@ -66,8 +68,11 @@ namespace RedfurSync
                     _wakeEvent,
                     (_, _) =>
                     {
-                        if (_disposed || _menu.IsDisposed) return;
-                        _menu.BeginInvoke(() => OpenMainWindow("sync"));
+                        if (_disposed) return;
+                        if (_uiContext != null)
+                            _uiContext.Post(_ => OpenMainWindow("sync"), null);
+                        else if (!_menu.IsDisposed)
+                            _menu.BeginInvoke(() => OpenMainWindow("sync"));
                     },
                     null,
                     -1,
@@ -83,6 +88,14 @@ namespace RedfurSync
             SetPerformanceMode(config.VisualFidelity, saveConfig: false);
 
             CheckFirstRun();
+
+            if (!startMinimized)
+            {
+                if (_uiContext != null)
+                    _uiContext.Post(_ => OpenMainWindow("sync"), null);
+                else
+                    OpenMainWindow("sync");
+            }
         }
         private System.Windows.Forms.Timer? _batchAlertTimer;
         private bool _disposed;
