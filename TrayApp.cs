@@ -26,6 +26,7 @@ namespace RedfurSync
         private readonly FileWatcherService _watcher;
         private ToolStripMenuItem _statusItem  = null!;
         private ToolStripMenuItem _startupItem = null!;
+        private ToolStripMenuItem _silentSyncItem = null!;
         
         // Performance menu items
         private ToolStripMenuItem _perfLowItem  = null!;
@@ -132,18 +133,24 @@ namespace RedfurSync
             bool on = StartupHelper.IsStartupEnabled();
             if (config.RunOnStartup && !on) StartupHelper.SetStartup(true);
             UpdateStartupText(config.RunOnStartup || on);
+            UpdateSilentSyncText(config.SilentSync);
             var _ = _watcher.StartAsync();
         }
 
         private void OnConnectionChecked(bool ok, string msg)
         {
             if (ok)
-                ShowCustomAlert("Frequencies Synced!",
-                    "Fissal is carefully monitoring your tracked sales!",
-                    Color.FromArgb(60, 180, 220),
-                    10,
-                    5000,
-                    () => OpenMainWindow("sync"));
+            {
+                if (!AppConfig.Instance.SilentSync)
+                {
+                    ShowCustomAlert("Frequencies Synced!",
+                        "Fissal is carefully monitoring your tracked sales!",
+                        Color.FromArgb(60, 180, 220),
+                        10,
+                        5000,
+                        () => OpenMainWindow("sync"));
+                }
+            }
             else
                 ShowAlert("Fissal's meow was lost in the void…",
                     $"The signal to the moons could not be established:\n{msg}\n\n" +
@@ -235,7 +242,10 @@ private void CheckBatchCompletion()
                 {
                     var activeJobs = recentGroup.Where(j => j.Status is UploadStatus.Uploading or UploadStatus.Queued).ToList();
                     string names = activeJobs.Count == 1 ? activeJobs[0].FileName : $"{activeJobs.Count} files";
-                    ShowCustomAlert("Transmission Initiated", $"Fissal is syncing {names} to the Redfur lattice!", Color.FromArgb(200, 160, 60), 6, 4000, OpenProgressForm);
+                    if (!AppConfig.Instance.SilentSync)
+                    {
+                        ShowCustomAlert("Transmission Initiated", $"Fissal is syncing {names} to the Redfur lattice!", Color.FromArgb(200, 160, 60), 6, 4000, OpenProgressForm);
+                    }
                 }
 
                 if (_prevActiveCount > 0)
@@ -274,7 +284,10 @@ private void CheckBatchCompletion()
                                          $"✦ Verified: {totalSynced} files\n" +
                                          $"✦ Errors: 0\n\n" +
                                          $"All data securely delivered to the lattice!";
-                            ShowCustomAlert("Sync Complete!", msg, Color.FromArgb(60, 180, 220), 6, 6000, OpenProgressForm);
+                            if (!AppConfig.Instance.SilentSync)
+                            {
+                                ShowCustomAlert("Sync Complete!", msg, Color.FromArgb(60, 180, 220), 6, 6000, OpenProgressForm);
+                            }
                         }
                     }
                     _batchHadError   = false;
@@ -342,6 +355,20 @@ private void CheckBatchCompletion()
                 UpdateStartupText(nowOn);
             };
             menu.Items.Add(_startupItem);
+
+            _silentSyncItem = new ToolStripMenuItem((AppConfig.Instance.SilentSync ? Checked : Unchecked) + "Silent Background Sync")
+            {
+                ToolTipText = "Mute routine popups and chimes during automatic background file syncs."
+            };
+            _silentSyncItem.Click += (_, _) =>
+            {
+                var cfg = AppConfig.Instance;
+                bool nowSilent = !cfg.SilentSync;
+                cfg.SilentSync = nowSilent;
+                cfg.Save();
+                UpdateSilentSyncText(nowSilent);
+            };
+            menu.Items.Add(_silentSyncItem);
             menu.Items.Add(new ToolStripSeparator());
 
             menu.Items.Add("⚡  Open Relay Terminal",     null, (_, _) => OpenMainWindow("sync"));
@@ -381,6 +408,13 @@ private void CheckBatchCompletion()
         {
             if (_menu.InvokeRequired) { _menu.BeginInvoke(() => UpdateStartupText(on)); return; }
             _startupItem.Text = (on ? Checked : Unchecked) + "Run Fissal on startup";
+        }
+
+        private void UpdateSilentSyncText(bool silent)
+        {
+            if (_menu.InvokeRequired) { _menu.BeginInvoke(() => UpdateSilentSyncText(silent)); return; }
+            if (_silentSyncItem != null)
+                _silentSyncItem.Text = (silent ? Checked : Unchecked) + "Silent Background Sync";
         }
 
         private void UpdateStatus(string msg)

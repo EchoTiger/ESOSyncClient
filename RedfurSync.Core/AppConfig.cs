@@ -86,6 +86,9 @@ namespace RedfurSync
         [JsonPropertyName("RunOnStartup")]
         public bool   RunOnStartup { get; set; } = true;
 
+        [JsonPropertyName("SilentSync")]
+        public bool   SilentSync   { get; set; } = true;
+
         [JsonPropertyName("FissalHarnessEnabled")]
         public bool FissalHarnessEnabled { get; set; } = false;
 

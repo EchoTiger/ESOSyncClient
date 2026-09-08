@@ -26,7 +26,7 @@ namespace RedfurSync
         {
             return "If a local settings change is needed, append exactly one line in this format: "
                 + "<fissal-action>{\"action\":\"set_setting\",\"setting\":\"DebounceMs\",\"value\":\"5000\",\"reason\":\"brief reason\"}</fissal-action>. "
-                + "Allowed settings: DisplayName, RunOnStartup, DebounceMs, MaxLogsKept, AppScale, VisualFidelity. "
+                + "Allowed settings: DisplayName, RunOnStartup, SilentSync, DebounceMs, MaxLogsKept, AppScale, VisualFidelity. "
                 + "Do not claim the change succeeded; the Relay executes, validates, and reports the result locally.";
         }
 
@@ -79,6 +79,10 @@ namespace RedfurSync
                     var previousStartup = _config.RunOnStartup;
                     _config.RunOnStartup = ParseBool(value);
                     return previousStartup.ToString();
+                case "silentsync":
+                    var previousSilent = _config.SilentSync;
+                    _config.SilentSync = ParseBool(value);
+                    return previousSilent.ToString();
                 case "debouncems":
                     var previousDebounce = _config.DebounceMs;
                     _config.DebounceMs = ParseInt(value, 500, 60000, "DebounceMs");

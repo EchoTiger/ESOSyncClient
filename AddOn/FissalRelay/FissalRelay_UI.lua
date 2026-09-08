@@ -55,7 +55,7 @@ local function GetLibHistoireSyncStatus()
         local guildId = GetGuildId(i)
         for _, cat in ipairs({ GUILD_HISTORY_EVENT_CATEGORY_TRADER, GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY }) do
             local isBank = (cat == GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY)
-            local canTrack = not isBank or (FR.CanTrackGuildBank and FR:CanTrackGuildBank(guildId))
+            local canTrack = isBank and (FR.CanTrackGuildBank and FR:CanTrackGuildBank(guildId)) or (FR.CanTrackGuildTrader and FR:CanTrackGuildTrader(guildId))
 
             if canTrack then
                 totalCategories = totalCategories + 1
@@ -240,7 +240,16 @@ function FR:CreateHUD()
             table.insert(lines, "|c888888Connecting to LibHistoire cache...|r")
         else
             for _, d in ipairs(details) do
-                local tStatus = d.trader.linked and "|c00FF00[Linked]|r" or (d.trader.pending and "|cFF9900[Fetching...]|r" or "|cFFCC00[Unlinked]|r")
+                local tStatus
+                if not d.trader.canTrack then
+                    tStatus = "|c666666[Excluded - No Trader]|r"
+                elseif d.trader.linked then
+                    tStatus = "|c00FF00[Linked]|r"
+                elseif d.trader.pending then
+                    tStatus = "|cFF9900[Fetching...]|r"
+                else
+                    tStatus = "|cFFCC00[Unlinked]|r"
+                end
                 local bStatus
                 if not d.bank.canTrack then
                     bStatus = "|c666666[Excluded - No Perms]|r"
@@ -962,15 +971,60 @@ function FR:CreateSettingsMenu()
         },
         {
             type = "header",
-            name = "Guild Bank Deposit Tracking",
+            name = "Guild Trader Sales Tracking",
         },
         {
             type = "description",
-            text = "Fissal verifies rank permissions before requesting guild bank deposits and bids. Guilds where you do not have permission to view bank gold are automatically skipped to prevent request stalls and queue lockouts.",
+            text = "Fissal monitors your guild store sales using LibHistoire. Guilds that do not have a Trading House unlocked (less than 50 members) are automatically excluded to prevent request lockouts.",
         },
     }
 
     local numGuilds = GetNumGuilds()
+    for i = 1, numGuilds do
+        local guildId = GetGuildId(i)
+        local guildName = GetGuildName(guildId)
+        local hasTrader = DoesGuildHavePrivilege and DoesGuildHavePrivilege(guildId, GUILD_PRIVILEGE_TRADING_HOUSE)
+
+        local traderStatus
+        if hasTrader then
+            traderStatus = "|c00FF00(Store Active)|r"
+        else
+            traderStatus = "|c888888(No Trading House - Skipped)|r"
+        end
+
+        table.insert(optionsData, {
+            type = "checkbox",
+            name = string.format("%s %s", guildName, traderStatus),
+            tooltip = string.format("Enable or disable trader sales tracking for %s.", guildName),
+            getFunc = function()
+                if FR.savedVars and FR.savedVars.settings and FR.savedVars.settings.traderGuilds then
+                    local val = FR.savedVars.settings.traderGuilds[guildId]
+                    if val ~= nil then return val end
+                end
+                return hasTrader and true or false
+            end,
+            setFunc = function(value)
+                if not FR.savedVars.settings.traderGuilds then
+                    FR.savedVars.settings.traderGuilds = {}
+                end
+                FR.savedVars.settings.traderGuilds[guildId] = value
+                if FR.SetupProcessors then FR:SetupProcessors() end
+                if FR.UpdateHUD then FR:UpdateHUD() end
+            end,
+            default = hasTrader and true or false,
+        })
+    end
+
+    table.insert(optionsData, {
+        type = "header",
+        name = "Guild Bank Deposit Tracking",
+    })
+    table.insert(optionsData, {
+        type = "description",
+        text = "Fissal verifies rank permissions before requesting guild bank deposits and bids. Guilds where you do not have permission to view bank gold are automatically skipped to prevent request stalls and queue lockouts.",
+    })
+
+    numGuilds = GetNumGuilds()
     for i = 1, numGuilds do
         local guildId = GetGuildId(i)
         local guildName = GetGuildName(guildId)

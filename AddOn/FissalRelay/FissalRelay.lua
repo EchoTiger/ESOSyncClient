@@ -539,6 +539,26 @@ end
      LIBHISTOIRE PROCESSORS & TURBO PUMP ENGINE
 ========================================================================= ]]--
 
+function FR:CanTrackGuildTrader(guildId)
+    if not guildId or guildId == 0 then return false end
+
+    -- 1. Check user preference override in settings if present
+    if self.savedVars and self.savedVars.settings and self.savedVars.settings.traderGuilds then
+        local userVal = self.savedVars.settings.traderGuilds[guildId]
+        if userVal == false then
+            return false
+        end
+    end
+
+    -- 2. Guild privilege check: Trading House unlocked (50+ members)
+    -- In ESO, GUILD_PRIVILEGE_TRADING_HOUSE controls whether a guild has a guild store / kiosk
+    if DoesGuildHavePrivilege and not DoesGuildHavePrivilege(guildId, GUILD_PRIVILEGE_TRADING_HOUSE) then
+        return false
+    end
+
+    return true
+end
+
 function FR:CanTrackGuildBank(guildId)
     if not guildId or guildId == 0 then return false end
 
@@ -582,7 +602,7 @@ function FR:FixLibHistoire()
             local cache = cacheManager:GetCategoryCache(guildId, category)
             if cache then
                 local isBank = (category == GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY)
-                local canTrack = not isBank or self:CanTrackGuildBank(guildId)
+                local canTrack = isBank and self:CanTrackGuildBank(guildId) or self:CanTrackGuildTrader(guildId)
 
                 if canTrack then
                     -- 1. Ensure self.guild exists on the cache object as a runtime fallback for LibHistoire bug
@@ -599,7 +619,7 @@ function FR:FixLibHistoire()
                         cache:SetRequestMode("auto")
                     end
                 else
-                    -- No permission for bank deposits: ensure category is OFF so LibHistoire doesn't hammer server
+                    -- No permission/privilege for this category: ensure category is OFF so LibHistoire doesn't hammer server
                     if cache.GetRequestMode and cache.SetRequestMode and cache:GetRequestMode() ~= "off" then
                         cache:SetRequestMode("off")
                     end
@@ -627,9 +647,14 @@ function FR:GetLibHistoireChannelDetails()
         local guildName = GetGuildName(guildId) or ("Guild " .. tostring(guildId))
 
         -- Trader cache
+        local canTrackTrader = self:CanTrackGuildTrader(guildId)
         local traderCache = cacheManager:GetCategoryCache(guildId, GUILD_HISTORY_EVENT_CATEGORY_TRADER)
-        local traderLinked = traderCache and traderCache.HasLinked and traderCache:HasLinked() or false
-        local traderPending = traderCache and ((traderCache.HasPendingRequest and traderCache:HasPendingRequest()) or (traderCache.request ~= nil)) or false
+        local traderLinked = false
+        local traderPending = false
+        if canTrackTrader and traderCache then
+            traderLinked = traderCache.HasLinked and traderCache:HasLinked() or false
+            traderPending = (traderCache.HasPendingRequest and traderCache:HasPendingRequest()) or (traderCache.request ~= nil) or false
+        end
 
         -- Bank cache
         local canTrackBank = self:CanTrackGuildBank(guildId)
@@ -645,6 +670,7 @@ function FR:GetLibHistoireChannelDetails()
             guildId = guildId,
             guildName = guildName,
             trader = {
+                canTrack = canTrackTrader,
                 linked = traderLinked,
                 pending = traderPending,
             },
@@ -680,7 +706,9 @@ function FR:PumpLibHistoire(isManual)
     for i = 1, numGuilds do
         local guildId = GetGuildId(i)
         for _, category in ipairs({ GUILD_HISTORY_EVENT_CATEGORY_TRADER, GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY }) do
-            if category == GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY and not self:CanTrackGuildBank(guildId) then
+            local isBank = (category == GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY)
+            local canTrack = isBank and self:CanTrackGuildBank(guildId) or self:CanTrackGuildTrader(guildId)
+            if not canTrack then
                 skippedCount = skippedCount + 1
             else
                 local cache = cacheManager:GetCategoryCache(guildId, category)
@@ -806,33 +834,51 @@ function FR:SetupProcessors()
     for i = 1, numGuilds do
         local guildId = GetGuildId(i)
 
-        -- Automatically wake up trader sales category
-        EnsureCategoryAuto(guildId, GUILD_HISTORY_EVENT_CATEGORY_TRADER)
-
         -- 1. Trader Sales Processor
-        if not self.processors["trader_" .. guildId] then
-            local processor = LibHistoire:CreateGuildHistoryProcessor(
-                guildId, GUILD_HISTORY_EVENT_CATEGORY_TRADER, "FissalRelay_Trader"
-            )
+        if self:CanTrackGuildTrader(guildId) then
+            EnsureCategoryAuto(guildId, GUILD_HISTORY_EVENT_CATEGORY_TRADER)
 
-            if processor then
-                local lastId = self.savedVars.lastSeenEventId[guildId]
-                if lastId then
-                    local converted = tonumber(lastId)
-                    if converted then processor:SetAfterEventId(converted) end
-                else
-                    local daysCutoff = GetTimeStamp() - (self.savedVars.historyDepthDays * 86400)
-                    processor:SetAfterEventTime(daysCutoff)
-                end
+            if not self.processors["trader_" .. guildId] then
+                local processor = LibHistoire:CreateGuildHistoryProcessor(
+                    guildId, GUILD_HISTORY_EVENT_CATEGORY_TRADER, "FissalRelay_Trader"
+                )
 
-                processor:SetEventCallback(function(event)
-                    if event:GetEventType() == GUILD_HISTORY_TRADER_EVENT_ITEM_SOLD then
-                        FR:AddSale(event, guildId)
+                if processor then
+                    local lastId = self.savedVars.lastSeenEventId[guildId]
+                    if lastId then
+                        local converted = tonumber(lastId)
+                        if converted then processor:SetAfterEventId(converted) end
+                    else
+                        local daysCutoff = GetTimeStamp() - (self.savedVars.historyDepthDays * 86400)
+                        processor:SetAfterEventTime(daysCutoff)
                     end
-                end)
 
-                processor:Start()
-                self.processors["trader_" .. guildId] = processor
+                    processor:SetEventCallback(function(event)
+                        if event:GetEventType() == GUILD_HISTORY_TRADER_EVENT_ITEM_SOLD then
+                            FR:AddSale(event, guildId)
+                        end
+                    end)
+
+                    processor:Start()
+                    self.processors["trader_" .. guildId] = processor
+                end
+            end
+        else
+            -- Non-trading guild or trader tracking disabled: clean up processor & turn off LibHistoire cache
+            if self.processors["trader_" .. guildId] then
+                local proc = self.processors["trader_" .. guildId]
+                if proc.Stop then proc:Stop() end
+                self.processors["trader_" .. guildId] = nil
+            end
+
+            if LibHistoire.internal and LibHistoire.internal.historyCache then
+                local cache = LibHistoire.internal.historyCache:GetCategoryCache(guildId, GUILD_HISTORY_EVENT_CATEGORY_TRADER)
+                if cache and cache.SetRequestMode then
+                    cache:SetRequestMode("off")
+                    if cache.DestroyRequest and cache.request then
+                        cache:DestroyRequest()
+                    end
+                end
             end
         end
 
@@ -1091,20 +1137,24 @@ function FR:HandleSlashCommand(arg)
         local kioskCount = NonContiguousCount(self.savedVars.kiosks or {})
         local bidCount = NonContiguousCount(self.savedVars.staff and self.savedVars.staff.bids or {})
         local rosterCount = NonContiguousCount(self.savedVars.staff and self.savedVars.staff.rosterSnapshots or {})
-        local bankPermCount, numGuilds = 0, GetNumGuilds()
+        local traderPermCount, bankPermCount, numGuilds = 0, 0, GetNumGuilds()
         for i = 1, numGuilds do
-            if self:CanTrackGuildBank(GetGuildId(i)) then
+            local gId = GetGuildId(i)
+            if self:CanTrackGuildTrader(gId) then
+                traderPermCount = traderPermCount + 1
+            end
+            if self:CanTrackGuildBank(gId) then
                 bankPermCount = bankPermCount + 1
             end
         end
 
-        PrintChat(string.format("Relay Status: %s Sales • %s Kiosks • %s Bids • %s Rosters • %s Bank Deposits (%d/%d Guilds Monitored)",
+        PrintChat(string.format("Relay Status: %s Sales • %s Kiosks • %s Bids • %s Rosters • %s Bank Deposits (%d Traders, %d Banks Monitored)",
             ColorText(ZO_LocalizeDecimalNumber(saleCount), "00FFCC"),
             ColorText(tostring(kioskCount), "00FF00"),
             ColorText(tostring(bidCount), "FFD700"),
             ColorText(tostring(rosterCount), "00FFFF"),
             ColorText(ZO_LocalizeDecimalNumber(depositCount), "FFAA00"),
-            bankPermCount, numGuilds))
+            traderPermCount, bankPermCount))
         if self.UpdateHUD then self:UpdateHUD() end
         PlayFissalSound()
     elseif cmd == "prune" then
