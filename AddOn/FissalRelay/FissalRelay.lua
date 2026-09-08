@@ -10,7 +10,7 @@ FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
 FR.name = "FissalRelay"
-FR.version = "1.2.2"
+FR.version = "1.2.3"
 FR.author = "Echo & Fissal"
 
 -- Defaults for SavedVariables
@@ -613,6 +613,52 @@ function FR:FixLibHistoire()
     end
 end
 
+function FR:GetLibHistoireChannelDetails()
+    local details = {}
+    if not LibHistoire or not LibHistoire.internal or not LibHistoire.internal.historyCache then
+        return details
+    end
+
+    local cacheManager = LibHistoire.internal.historyCache
+    local numGuilds = GetNumGuilds()
+
+    for i = 1, numGuilds do
+        local guildId = GetGuildId(i)
+        local guildName = GetGuildName(guildId) or ("Guild " .. tostring(guildId))
+
+        -- Trader cache
+        local traderCache = cacheManager:GetCategoryCache(guildId, GUILD_HISTORY_EVENT_CATEGORY_TRADER)
+        local traderLinked = traderCache and traderCache.HasLinked and traderCache:HasLinked() or false
+        local traderPending = traderCache and ((traderCache.HasPendingRequest and traderCache:HasPendingRequest()) or (traderCache.request ~= nil)) or false
+
+        -- Bank cache
+        local canTrackBank = self:CanTrackGuildBank(guildId)
+        local bankCache = cacheManager:GetCategoryCache(guildId, GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY)
+        local bankLinked = false
+        local bankPending = false
+        if canTrackBank and bankCache then
+            bankLinked = bankCache.HasLinked and bankCache:HasLinked() or false
+            bankPending = (bankCache.HasPendingRequest and bankCache:HasPendingRequest()) or (bankCache.request ~= nil) or false
+        end
+
+        table.insert(details, {
+            guildId = guildId,
+            guildName = guildName,
+            trader = {
+                linked = traderLinked,
+                pending = traderPending,
+            },
+            bank = {
+                canTrack = canTrackBank,
+                linked = bankLinked,
+                pending = bankPending,
+            },
+        })
+    end
+
+    return details
+end
+
 function FR:PumpLibHistoire(isManual)
     if not LibHistoire or not LibHistoire.internal or not LibHistoire.internal.historyCache then
         if isManual then self.PrintChat("LibHistoire cache not ready.") end
@@ -620,6 +666,7 @@ function FR:PumpLibHistoire(isManual)
     end
 
     self:FixLibHistoire()
+    self.requestWatchdog = self.requestWatchdog or {}
 
     local cacheManager = LibHistoire.internal.historyCache
     local requestManager = cacheManager.requestManager
@@ -627,6 +674,8 @@ function FR:PumpLibHistoire(isManual)
     local unlinkedCount = 0
     local requestedCount = 0
     local skippedCount = 0
+    local clearedStuckCount = 0
+    local now = GetTimeStamp()
 
     for i = 1, numGuilds do
         local guildId = GetGuildId(i)
@@ -636,12 +685,61 @@ function FR:PumpLibHistoire(isManual)
             else
                 local cache = cacheManager:GetCategoryCache(guildId, category)
                 if cache then
+                    local channelKey = string.format("%d_%d", guildId, category)
                     if not cache:HasLinked() then
                         unlinkedCount = unlinkedCount + 1
-                        if not cache:HasPendingRequest() then
-                            cache:RequestMissingData()
-                            requestedCount = requestedCount + 1
+
+                        -- 1. Proactively call VerifyRequest to clean up completed/invalid requests and re-queue unqueued ones
+                        if cache.VerifyRequest then
+                            cache:VerifyRequest()
                         end
+
+                        -- 2. Watchdog: Catch requests stalled > 15 seconds due to dropped Megaserver packets or lost responses
+                        local hasPending = (cache.HasPendingRequest and cache:HasPendingRequest()) or (cache.request ~= nil)
+                        if hasPending then
+                            if not self.requestWatchdog[channelKey] then
+                                self.requestWatchdog[channelKey] = now
+                            elseif (now - self.requestWatchdog[channelKey]) >= 15 then
+                                if cache.DestroyRequest and cache.request then
+                                    cache:DestroyRequest()
+                                    clearedStuckCount = clearedStuckCount + 1
+                                end
+                                self.requestWatchdog[channelKey] = nil
+                                hasPending = false
+                            end
+                        else
+                            self.requestWatchdog[channelKey] = nil
+                        end
+
+                        -- 3. If request is clear, request missing data or trigger event processor
+                        if not hasPending then
+                            if cache.IsManagedRangeConnectedToPresent and cache:IsManagedRangeConnectedToPresent() then
+                                -- Range reached present: wake up processing task to catch up to index 1
+                                if cache.OnCategoryUpdated then
+                                    cache:OnCategoryUpdated()
+                                end
+                            elseif not cache:GetOldestManagedEventInfo() then
+                                -- No managed range established yet: queue initial handshake
+                                if cache.QueueInitialRequest then
+                                    cache:QueueInitialRequest()
+                                    requestedCount = requestedCount + 1
+                                    self.requestWatchdog[channelKey] = now
+                                elseif cache.RequestMissingData then
+                                    cache:RequestMissingData()
+                                    requestedCount = requestedCount + 1
+                                    self.requestWatchdog[channelKey] = now
+                                end
+                            else
+                                -- Standard missing historical range
+                                if cache.RequestMissingData then
+                                    cache:RequestMissingData()
+                                    requestedCount = requestedCount + 1
+                                    self.requestWatchdog[channelKey] = now
+                                end
+                            end
+                        end
+                    else
+                        self.requestWatchdog[channelKey] = nil
                     end
                 end
             end
@@ -657,8 +755,9 @@ function FR:PumpLibHistoire(isManual)
             local skippedNote = (skippedCount > 0) and string.format(" (%d bank channel(s) skipped: no permission)", skippedCount) or ""
             self.PrintChat(string.format("All active history channels are |c00FF00100%% linked|r and up-to-date!%s", skippedNote))
         else
-            self.PrintChat(string.format("Turbo Pump: Kicked %s request(s). %s channel(s) linking in progress.",
-                self.ColorText(tostring(requestedCount), "FFD700"), self.ColorText(tostring(unlinkedCount), "00FFCC")))
+            local clearedNote = (clearedStuckCount > 0) and string.format(" (%d stalled request(s) cleared)", clearedStuckCount) or ""
+            self.PrintChat(string.format("Turbo Pump: Kicked %s request(s). %s channel(s) linking in progress.%s",
+                self.ColorText(tostring(requestedCount), "FFD700"), self.ColorText(tostring(unlinkedCount), "00FFCC"), clearedNote))
         end
         self.PlayFissalSound()
     end

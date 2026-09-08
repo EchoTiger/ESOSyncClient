@@ -228,6 +228,46 @@ function FR:CreateHUD()
         end)
     end
 
+    -- History Sync Channel Tooltip Breakdown
+    local syncLbl = wm:GetControlByName("FissalRelay_HUD_Sync_Lbl")
+    local syncVal = self.hudElements.syncVal
+
+    local function ShowSyncTooltip(ctrl)
+        InitializeTooltip(InformationTooltip, ctrl, TOP, 0, -4)
+        local details = FR.GetLibHistoireChannelDetails and FR:GetLibHistoireChannelDetails() or {}
+        local lines = { "|cFF9900History Sync Telemetry|r" }
+        if #details == 0 then
+            table.insert(lines, "|c888888Connecting to LibHistoire cache...|r")
+        else
+            for _, d in ipairs(details) do
+                local tStatus = d.trader.linked and "|c00FF00[Linked]|r" or (d.trader.pending and "|cFF9900[Fetching...]|r" or "|cFFCC00[Unlinked]|r")
+                local bStatus
+                if not d.bank.canTrack then
+                    bStatus = "|c666666[Excluded - No Perms]|r"
+                elseif d.bank.linked then
+                    bStatus = "|c00FF00[Linked]|r"
+                elseif d.bank.pending then
+                    bStatus = "|cFF9900[Fetching...]|r"
+                else
+                    bStatus = "|cFFCC00[Unlinked]|r"
+                end
+                table.insert(lines, string.format("|cFFFFFF%s|r\n  Sales: %s  •  Bank: %s", d.guildName, tStatus, bStatus))
+            end
+        end
+        SetTooltipText(InformationTooltip, table.concat(lines, "\n"))
+    end
+
+    if syncLbl then
+        syncLbl:SetMouseEnabled(true)
+        syncLbl:SetHandler("OnMouseEnter", ShowSyncTooltip)
+        syncLbl:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
+    end
+    if syncVal then
+        syncVal:SetMouseEnabled(true)
+        syncVal:SetHandler("OnMouseEnter", ShowSyncTooltip)
+        syncVal:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
+    end
+
     -- 10. Bottom Divider Line
     local divider2 = wm:CreateControl("$(parent)_Div2", hud, CT_TEXTURE)
     divider2:SetAnchor(TOPLEFT, hud, TOPLEFT, 8, 154)
