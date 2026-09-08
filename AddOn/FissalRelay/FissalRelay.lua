@@ -29,7 +29,7 @@ local DEFAULT_SAVED_VARS = {
     },
     settings = {
         chatAnnouncements = true,
-        soundEffects = true,
+        soundEffects = false,
         trackAllGuilds = true,
         autoRosterSnapshotOnLogin = true,
         announceKioskRecon = true,
@@ -65,7 +65,7 @@ end
 FR.PrintChat = PrintChat
 
 local function PlayFissalSound()
-    if not FR.savedVars or FR.savedVars.settings.soundEffects then
+    if FR.savedVars and FR.savedVars.settings and FR.savedVars.settings.soundEffects == true then
         PlaySound(SOUNDS.LOCKPICKING_UNLOCKED)
     end
 end
