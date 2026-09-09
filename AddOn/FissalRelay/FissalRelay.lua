@@ -10,7 +10,7 @@ FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
 FR.name = "FissalRelay"
-FR.version = "1.2.3"
+FR.version = "1.2.4"
 FR.author = "Echo & Fissal"
 
 -- Defaults for SavedVariables
@@ -602,6 +602,27 @@ end
 
 function FR:FixLibHistoire()
     if not LibHistoire or not LibHistoire.internal or not LibHistoire.internal.historyCache then return end
+
+    -- Runtime patch: Ensure GuildHistoryServerRequest:ShouldContinue allows paginated initial requests
+    if LibHistoire.internal.class and LibHistoire.internal.class.GuildHistoryServerRequest then
+        local GHSR = LibHistoire.internal.class.GuildHistoryServerRequest
+        if not GHSR._fissalPatched then
+            GHSR.ShouldContinue = function(self)
+                if self.cache:IsManagedRangeConnectedToPresent() or not self.cache:IsAutoRequesting() then
+                    return false
+                end
+                if self.request then
+                    return self.request:IsValid() and not self.request:IsComplete()
+                end
+                if self:IsInitialRequest() then
+                    return false
+                end
+                return true
+            end
+            GHSR._fissalPatched = true
+        end
+    end
+
     local cacheManager = LibHistoire.internal.historyCache
     local numGuilds = GetNumGuilds()
 
@@ -721,6 +742,8 @@ function FR:PumpLibHistoire(isManual)
                 local cache = cacheManager:GetCategoryCache(guildId, category)
                 if cache then
                     local channelKey = string.format("%d_%d", guildId, category)
+                    local currentEvents = GetNumGuildHistoryEvents(guildId, category)
+
                     if not cache:HasLinked() then
                         unlinkedCount = unlinkedCount + 1
 
@@ -729,21 +752,34 @@ function FR:PumpLibHistoire(isManual)
                             cache:VerifyRequest()
                         end
 
-                        -- 2. Watchdog: Catch requests stalled > 15 seconds due to dropped Megaserver packets or lost responses
+                        -- 2. Smart Activity Watchdog: Never kill active in-flight requests!
                         local hasPending = (cache.HasPendingRequest and cache:HasPendingRequest()) or (cache.request ~= nil)
+                        local prevEvents = self.lastEventCounts and self.lastEventCounts[channelKey] or 0
+
+                        self.lastEventCounts = self.lastEventCounts or {}
+                        if currentEvents > prevEvents then
+                            -- Active event stream arriving from server! Refresh watchdog timer
+                            self.lastEventCounts[channelKey] = currentEvents
+                            self.requestWatchdog[channelKey] = now
+                        end
+
                         if hasPending then
                             if not self.requestWatchdog[channelKey] then
                                 self.requestWatchdog[channelKey] = now
-                            elseif (now - self.requestWatchdog[channelKey]) >= 15 then
+                                self.lastEventCounts[channelKey] = currentEvents
+                            elseif (now - self.requestWatchdog[channelKey]) >= 120 then
+                                -- Only destroy if completely frozen with 0 events arriving for >120 seconds
                                 if cache.DestroyRequest and cache.request then
                                     cache:DestroyRequest()
                                     clearedStuckCount = clearedStuckCount + 1
                                 end
                                 self.requestWatchdog[channelKey] = nil
+                                self.lastEventCounts[channelKey] = nil
                                 hasPending = false
                             end
                         else
                             self.requestWatchdog[channelKey] = nil
+                            self.lastEventCounts[channelKey] = currentEvents
                         end
 
                         -- 3. If request is clear, request missing data or trigger event processor
@@ -775,6 +811,7 @@ function FR:PumpLibHistoire(isManual)
                         end
                     else
                         self.requestWatchdog[channelKey] = nil
+                        if self.lastEventCounts then self.lastEventCounts[channelKey] = currentEvents end
                     end
                 end
             end

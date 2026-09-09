@@ -215,8 +215,8 @@ namespace RedfurSync
 
         private const string AddonManifestTemplate = @"## Title: |cFF9900Fissal's|r Cogwork Relay
 ## Author: Echo & Fissal
-## Version: 1.2.3
-## AddOnVersion: 10203
+## Version: 1.2.4
+## AddOnVersion: 10204
 ## APIVersion: 101048 101049
 ## SavedVariables: FissalRelay_SavedVariables
 ## DependsOn: LibHistoire>=1062 LibAddonMenu-2.0>=41
@@ -230,7 +230,7 @@ FissalRelay_UI.lua
 FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 FR.name = ""FissalRelay""
-FR.version = ""1.2.3""
+FR.version = ""1.2.4""
 FR.processors = {}
 
 local DEFAULT_SAVED_VARS = {
