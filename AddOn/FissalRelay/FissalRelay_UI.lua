@@ -789,7 +789,7 @@ function FR:CreateSettingsMenu()
             tooltip = "Play soft brass lockpicking cues when Fissal executes commands.",
             getFunc = function() return FR.savedVars.settings.soundEffects end,
             setFunc = function(value) FR.savedVars.settings.soundEffects = value end,
-            default = true,
+            default = false,
         },
         {
             type = "slider",

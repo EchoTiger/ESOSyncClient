@@ -268,6 +268,7 @@ namespace RedfurSync
         private TextBox _txtServerUrl = null!;
         private Label _lblPairingStatus = null!;
         private Label _lblDeviceInfo = null!;
+        private Button _btnSilentSync = null!;
         private Button _btnPairDevice = null!;
         private Button _btnSaveSetup = null!;
         private Button _btnTestConnection = null!;
@@ -543,7 +544,7 @@ namespace RedfurSync
                 // 4. 3D Embossed Subtitle & Active Palette Badge
                 float subX = titleX;
                 float subY = titleY + (int)(22 * _scale);
-                string subText = $"Masser Matrix v1.4.1 • [{Current.DisplayName.ToUpperInvariant()}]";
+                string subText = $"Masser Matrix v{RelayVersion.Current} • [{Current.DisplayName.ToUpperInvariant()}]";
                 using var fSub = Mono(7.2f, _scale, FontStyle.Bold);
 
                 // 3D Indent shadow
@@ -883,7 +884,7 @@ namespace RedfurSync
 
                 using var f2 = Mono(7f, _scale, FontStyle.Regular);
                 using var b2 = new SolidBrush(CTextSub);
-                g.DrawString("v1.4.1 • WIN-X64", f2, b2, (int)(8 * _scale), (int)(24 * _scale));
+                g.DrawString($"v{RelayVersion.Current} • WIN-X64", f2, b2, (int)(8 * _scale), (int)(24 * _scale));
 
                 using var f3 = Mono(7f, _scale, FontStyle.Bold);
                 using var b3 = new SolidBrush(CGreen);
@@ -1345,7 +1346,7 @@ namespace RedfurSync
 
         private void SeedInitialTelemetry()
         {
-            LogTelemetry("SYSTEM", "Fissal Relay client online (v1.4.1) • Connected to homelab lattice.", CGreen);
+            LogTelemetry("SYSTEM", $"Fissal Relay client online (v{RelayVersion.Current}) • Connected to homelab lattice.", CGreen);
             LogTelemetry("HARVEST", "Continuous sales and bank deposit ingestion engine active.", CGreen);
             LogTelemetry("RECON", "In-person guild kiosk observer active on EVENT_OPEN_TRADING_HOUSE.", CGoldBrt);
             LogTelemetry("WATCH", "Monitoring ESO SavedVariables directory for live trade and raffle data.", CGreen);
@@ -3049,7 +3050,7 @@ namespace RedfurSync
             {
                 Dock = DockStyle.Top,
                 ColumnCount = 2,
-                RowCount = 7,
+                RowCount = 8,
                 BackColor = CPanelBg,
                 Padding = new Padding(16),
                 AutoSize = true,
@@ -3117,6 +3118,20 @@ namespace RedfurSync
             };
             formPanel.Controls.Add(_lblDeviceInfo, 1, 5);
 
+            // Silent Background Sync
+            formPanel.Controls.Add(MakeFieldLabel("Background Alerts:"), 0, 6);
+            _btnSilentSync = MakeStyledButton("", CGreen);
+            _btnSilentSync.AutoSize = true;
+            _btnSilentSync.Click += (_, _) =>
+            {
+                var cfg = AppConfig.Instance;
+                cfg.SilentSync = !cfg.SilentSync;
+                cfg.Save();
+                UpdateSilentSyncButton();
+            };
+            UpdateSilentSyncButton();
+            formPanel.Controls.Add(_btnSilentSync, 1, 6);
+
             // Action Buttons
             var btnRow = new FlowLayoutPanel
             {
@@ -3151,7 +3166,7 @@ namespace RedfurSync
             };
             btnRow.Controls.Add(_btnTestConnection);
 
-            formPanel.Controls.Add(btnRow, 1, 6);
+            formPanel.Controls.Add(btnRow, 1, 7);
 
             layout.Controls.Add(formPanel, 0, 0);
             _setupView.Controls.Add(layout);
@@ -3213,6 +3228,15 @@ namespace RedfurSync
             _lblPairingStatus.ForeColor = paired ? CGreen : CBarFail;
 
             _lblDeviceInfo.Text = $"Token Storage: DPAPI Encrypted (CurrentUser)\nUpdate Endpoint: {cfg.UpdateUrl}";
+            UpdateSilentSyncButton();
+        }
+
+        private void UpdateSilentSyncButton()
+        {
+            if (_btnSilentSync == null || _btnSilentSync.IsDisposed) return;
+            bool silent = AppConfig.Instance.SilentSync;
+            _btnSilentSync.Text = silent ? "◆  SILENT BACKGROUND SYNC (MUTED)" : "◇  SILENT BACKGROUND SYNC (ALERTS ACTIVE)";
+            _btnSilentSync.ForeColor = silent ? CGreen : CWarn;
         }
 
         // ═════════════════════════════════════════════════════════════════════

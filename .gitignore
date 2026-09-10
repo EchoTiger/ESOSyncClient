@@ -2,3 +2,6 @@ bin/
 obj/
 publish/
 publish_win/
+AddOn/**/Client/
+*.user
+*.exe

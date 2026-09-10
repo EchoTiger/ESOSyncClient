@@ -10,7 +10,7 @@ FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
 FR.name = "FissalRelay"
-FR.version = "1.2.4"
+FR.version = "1.2.5"
 FR.author = "Echo & Fissal"
 
 -- Defaults for SavedVariables
@@ -747,65 +747,74 @@ function FR:PumpLibHistoire(isManual)
                     if not cache:HasLinked() then
                         unlinkedCount = unlinkedCount + 1
 
-                        -- 1. Proactively call VerifyRequest to clean up completed/invalid requests and re-queue unqueued ones
-                        if cache.VerifyRequest then
-                            cache:VerifyRequest()
-                        end
-
-                        -- 2. Smart Activity Watchdog: Never kill active in-flight requests!
-                        local hasPending = (cache.HasPendingRequest and cache:HasPendingRequest()) or (cache.request ~= nil)
-                        local prevEvents = self.lastEventCounts and self.lastEventCounts[channelKey] or 0
-
-                        self.lastEventCounts = self.lastEventCounts or {}
-                        if currentEvents > prevEvents then
-                            -- Active event stream arriving from server! Refresh watchdog timer
-                            self.lastEventCounts[channelKey] = currentEvents
+                        local isProcessing = (cache.IsProcessing and cache:IsProcessing())
+                        if isProcessing then
+                            -- LibHistoire is actively processing events toward index 1 (linking).
+                            -- DO NOT call VerifyRequest, RequestMissingData, or OnCategoryUpdated
+                            -- because OnCategoryUpdated calls RestartProcessingTask, which cancels
+                            -- the active processingTask and creates an infinite cancellation loop!
                             self.requestWatchdog[channelKey] = now
-                        end
-
-                        if hasPending then
-                            if not self.requestWatchdog[channelKey] then
-                                self.requestWatchdog[channelKey] = now
-                                self.lastEventCounts[channelKey] = currentEvents
-                            elseif (now - self.requestWatchdog[channelKey]) >= 120 then
-                                -- Only destroy if completely frozen with 0 events arriving for >120 seconds
-                                if cache.DestroyRequest and cache.request then
-                                    cache:DestroyRequest()
-                                    clearedStuckCount = clearedStuckCount + 1
-                                end
-                                self.requestWatchdog[channelKey] = nil
-                                self.lastEventCounts[channelKey] = nil
-                                hasPending = false
-                            end
                         else
-                            self.requestWatchdog[channelKey] = nil
-                            self.lastEventCounts[channelKey] = currentEvents
-                        end
+                            -- 1. Proactively call VerifyRequest to clean up completed/invalid requests and re-queue unqueued ones
+                            if cache.VerifyRequest then
+                                cache:VerifyRequest()
+                            end
 
-                        -- 3. If request is clear, request missing data or trigger event processor
-                        if not hasPending then
-                            if cache.IsManagedRangeConnectedToPresent and cache:IsManagedRangeConnectedToPresent() then
-                                -- Range reached present: wake up processing task to catch up to index 1
-                                if cache.OnCategoryUpdated then
-                                    cache:OnCategoryUpdated()
-                                end
-                            elseif not cache:GetOldestManagedEventInfo() then
-                                -- No managed range established yet: queue initial handshake
-                                if cache.QueueInitialRequest then
-                                    cache:QueueInitialRequest()
-                                    requestedCount = requestedCount + 1
+                            -- 2. Smart Activity Watchdog: Never kill active in-flight requests!
+                            local hasPending = (cache.HasPendingRequest and cache:HasPendingRequest()) or (cache.request ~= nil)
+                            local prevEvents = self.lastEventCounts and self.lastEventCounts[channelKey] or 0
+
+                            self.lastEventCounts = self.lastEventCounts or {}
+                            if currentEvents > prevEvents then
+                                -- Active event stream arriving from server! Refresh watchdog timer
+                                self.lastEventCounts[channelKey] = currentEvents
+                                self.requestWatchdog[channelKey] = now
+                            end
+
+                            if hasPending then
+                                if not self.requestWatchdog[channelKey] then
                                     self.requestWatchdog[channelKey] = now
-                                elseif cache.RequestMissingData then
-                                    cache:RequestMissingData()
-                                    requestedCount = requestedCount + 1
-                                    self.requestWatchdog[channelKey] = now
+                                    self.lastEventCounts[channelKey] = currentEvents
+                                elseif (now - self.requestWatchdog[channelKey]) >= 120 then
+                                    -- Only destroy if completely frozen with 0 events arriving for >120 seconds
+                                    if cache.DestroyRequest and cache.request then
+                                        cache:DestroyRequest()
+                                        clearedStuckCount = clearedStuckCount + 1
+                                    end
+                                    self.requestWatchdog[channelKey] = nil
+                                    self.lastEventCounts[channelKey] = nil
+                                    hasPending = false
                                 end
                             else
-                                -- Standard missing historical range
-                                if cache.RequestMissingData then
-                                    cache:RequestMissingData()
-                                    requestedCount = requestedCount + 1
-                                    self.requestWatchdog[channelKey] = now
+                                self.requestWatchdog[channelKey] = nil
+                                self.lastEventCounts[channelKey] = currentEvents
+                            end
+
+                            -- 3. If request is clear, request missing data or trigger event processor
+                            if not hasPending then
+                                if cache.IsManagedRangeConnectedToPresent and cache:IsManagedRangeConnectedToPresent() then
+                                    -- Range reached present: wake up processing task to catch up to index 1 if not already processing
+                                    if cache.OnCategoryUpdated and not (cache.IsProcessing and cache:IsProcessing()) then
+                                        cache:OnCategoryUpdated()
+                                    end
+                                elseif not cache:GetOldestManagedEventInfo() then
+                                    -- No managed range established yet: queue initial handshake
+                                    if cache.QueueInitialRequest then
+                                        cache:QueueInitialRequest()
+                                        requestedCount = requestedCount + 1
+                                        self.requestWatchdog[channelKey] = now
+                                    elseif cache.RequestMissingData then
+                                        cache:RequestMissingData()
+                                        requestedCount = requestedCount + 1
+                                        self.requestWatchdog[channelKey] = now
+                                    end
+                                else
+                                    -- Standard missing historical range
+                                    if cache.RequestMissingData then
+                                        cache:RequestMissingData()
+                                        requestedCount = requestedCount + 1
+                                        self.requestWatchdog[channelKey] = now
+                                    end
                                 end
                             end
                         end

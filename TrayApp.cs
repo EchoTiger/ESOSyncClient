@@ -276,7 +276,10 @@ private void CheckBatchCompletion()
                                          $"✦ Verified: {totalSynced} files\n" +
                                          $"✖ Errors: {totalErrors} files\n\n" +
                                          $"Interference detected! Open diagnostics to review log anomalies.";
-                            ShowAlert("Sync Completed With Errors", msg, FissalAlert.AlertLevel.TotalError, 10000, OpenProgressForm);
+                            if (!AppConfig.Instance.SilentSync)
+                            {
+                                ShowAlert("Sync Completed With Errors", msg, FissalAlert.AlertLevel.TotalError, 10000, OpenProgressForm);
+                            }
                         }
                         else if (_batchHadSuccess)
                         {

@@ -14,6 +14,7 @@ namespace RedfurSync
 
         private const int WS_EX_NOACTIVATE = 0x08000000;
         private const int WS_EX_TOOLWINDOW = 0x00000080;
+        private const int WS_EX_TOPMOST    = 0x00000008;
 
         private readonly string _alertTitle;
         private readonly string _alertText;
@@ -88,7 +89,6 @@ namespace RedfurSync
             AutoScaleMode = AutoScaleMode.None;
             FormBorderStyle = FormBorderStyle.None;
             ShowInTaskbar = false;
-            TopMost = true;
             BackColor = CBg;
             DoubleBuffered = true;
             StartPosition = FormStartPosition.Manual;
@@ -294,7 +294,7 @@ namespace RedfurSync
             get
             {
                 var cp = base.CreateParams;
-                cp.ExStyle |= WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW;
+                cp.ExStyle |= WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_TOPMOST;
                 return cp;
             }
         }
