@@ -123,7 +123,7 @@ function FR:CreateHUD()
     local backdrop = wm:CreateControl("$(parent)_Backdrop", hud, CT_BACKDROP)
     backdrop:SetAnchorFill()
     backdrop:SetCenterColor(0.04, 0.04, 0.06, 0.85)
-    backdrop:SetEdgeColor(0.20, 0.17, 0.12, 0.92)
+    backdrop:SetEdgeColor(0.75, 0.50, 0.10, 0.95)  -- H1: stronger amber edge for bright env contrast
     backdrop:SetEdgeTexture("", 8, 1, 0)
 
     -- 3. Clock Addon Status Meter Munge Texture
@@ -191,31 +191,44 @@ function FR:CreateHUD()
     divider:SetColor(0.8, 0.5, 0.1, 0.4)
 
     -- 9. Telemetry Meter Rows (Enlarged with ZoFontGame & ZoFontGameBold)
-    local function CreateMeterRow(name, labelText, yOffset)
+    -- H2: Anchor-chain row builder — rows link to each other, not hardcoded Y offsets.
+    --     Safe to add/remove rows without touching every sibling.
+    local ROW_GAP = 4
+    local function CreateMeterRowAnchored(name, labelText, prevCtrl)
         local lbl = wm:CreateControl("$(parent)_" .. name .. "_Lbl", hud, CT_LABEL)
-        lbl:SetAnchor(TOPLEFT, hud, TOPLEFT, 12, yOffset)
+        lbl:SetAnchor(TOPLEFT, prevCtrl, BOTTOMLEFT, 4, ROW_GAP)
         lbl:SetFont("ZoFontGame")
         lbl:SetColor(0.75, 0.75, 0.75, 1)
         lbl:SetText(labelText)
 
         local val = wm:CreateControl("$(parent)_" .. name .. "_Val", hud, CT_LABEL)
-        val:SetAnchor(TOPRIGHT, hud, TOPRIGHT, -12, yOffset)
+        val:SetAnchor(TOPRIGHT, prevCtrl, BOTTOMRIGHT, -12, ROW_GAP)
         val:SetFont("ZoFontGameBold")
         val:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
         val:SetText("--")
+        -- H3: clamp width and ellipsis so long LibHistoire strings dont overflow
+        val:SetWidth(175)
+        val:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
 
-        return val
+        return lbl, val
     end
 
+    -- H2: Instantiate rows in anchor chain off the header divider
+    local _salesLbl,  _salesVal  = CreateMeterRowAnchored("Sales",   "Sales Ingest:",  divider)
+    local _syncLbl,   _syncVal   = CreateMeterRowAnchored("Sync",    "History Sync:",  _salesLbl)
+    local _kiosksLbl, _kiosksVal = CreateMeterRowAnchored("Kiosks",  "Kiosks & Bids:", _syncLbl)
+    local _rosterLbl, _rosterVal = CreateMeterRowAnchored("Rosters", "Roster & Dues:", _kiosksLbl)
+    local _readyLbl,  _readyVal  = CreateMeterRowAnchored("Ready",   "Upload Status:", _rosterLbl)
+
     self.hudElements = {
-        salesVal  = CreateMeterRow("Sales",   "Sales Ingest:",     36),
-        syncVal   = CreateMeterRow("Sync",    "History Sync:",     59),
-        kiosksVal = CreateMeterRow("Kiosks",  "Kiosks & Bids:",    82),
-        rosterVal = CreateMeterRow("Rosters", "Roster & Dues:",    105),
-        readyVal  = CreateMeterRow("Ready",   "Upload Status:",    128),
+        salesVal  = _salesVal,
+        syncVal   = _syncVal,
+        kiosksVal = _kiosksVal,
+        rosterVal = _rosterVal,
+        readyVal  = _readyVal,
     }
 
-    local readyLbl = wm:GetControlByName("FissalRelay_HUD_Ready_Lbl")
+    local readyLbl = _readyLbl  -- H2: direct ref from anchor-chain instantiation
     if readyLbl then
         readyLbl:SetMouseEnabled(true)
         readyLbl:SetHandler("OnMouseEnter", function(ctrl)
@@ -228,8 +241,8 @@ function FR:CreateHUD()
     end
 
     -- History Sync Channel Tooltip Breakdown
-    local syncLbl = wm:GetControlByName("FissalRelay_HUD_Sync_Lbl")
-    local syncVal = self.hudElements.syncVal
+    local syncLbl = _syncLbl   -- H2: direct ref from anchor-chain instantiation
+    local syncVal = _syncVal   -- H2: direct ref
 
     local function ShowSyncTooltip(ctrl)
         InitializeTooltip(InformationTooltip, ctrl, TOP, 0, -4)
@@ -276,17 +289,17 @@ function FR:CreateHUD()
         syncVal:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
     end
 
-    -- 10. Bottom Divider Line
+    -- 10. Bottom Divider Line -- anchors to last row bottom (H2 anchor chain)
     local divider2 = wm:CreateControl("$(parent)_Div2", hud, CT_TEXTURE)
-    divider2:SetAnchor(TOPLEFT, hud, TOPLEFT, 8, 154)
-    divider2:SetAnchor(TOPRIGHT, hud, TOPRIGHT, -8, 154)
+    divider2:SetAnchor(TOPLEFT, _readyLbl, BOTTOMLEFT, -4, ROW_GAP + 2)
+    divider2:SetAnchor(TOPRIGHT, hud, TOPRIGHT, -8, 0)
     divider2:SetHeight(1)
     divider2:SetColor(0.3, 0.3, 0.35, 0.4)
 
-    -- 11. Footer Heartbeat & Status Indicator
+    -- 11. Footer Heartbeat & Status -- anchors to divider2 bottom (H2 anchor chain)
     local footer = wm:CreateControl("$(parent)_Footer", hud, CT_LABEL)
-    footer:SetAnchor(TOPLEFT, hud, TOPLEFT, 12, 162)
-    footer:SetAnchor(TOPRIGHT, hud, TOPRIGHT, -12, 162)
+    footer:SetAnchor(TOPLEFT, divider2, BOTTOMLEFT, 4, ROW_GAP)
+    footer:SetAnchor(TOPRIGHT, hud, TOPRIGHT, -12, 0)
     footer:SetFont("ZoFontGameSmall")
     footer:SetText("|c00FF00●|r Courier Ready • LibHistoire: Auto • /fissal")
     self.hudElements.footer = footer
@@ -449,7 +462,10 @@ function FR:CreateBumperUI()
 
     -- 1. Main TopLevelWindow (Draggable & clamped)
     local bumper = wm:CreateTopLevelWindow("FissalRelay_Bumper")
-    bumper:SetDimensions(320, 240)
+    -- H6: dynamic height so it doesn't have dead whitespace for < 5 guilds
+    local _guildCount = math.min(GetNumGuilds(), 5)
+    local _bumperH = 115 + math.max(1, _guildCount) * 26
+    bumper:SetDimensions(320, _bumperH)
     bumper:SetClampedToScreen(true)
     bumper:SetMouseEnabled(true)
     bumper:SetMovable(true)
@@ -595,18 +611,29 @@ function FR:CreateBumperUI()
     end)
     self.bumperActionBtn = bumpBtn
 
-    -- 13. ReloadUI Button
-    local reloadBtn = wm:CreateControl("$(parent)_ReloadBtn", bumper, CT_BUTTON)
-    reloadBtn:SetAnchor(LEFT, bumpBtn, RIGHT, 8, 0)
-    reloadBtn:SetDimensions(80, 24)
-    reloadBtn:SetFont("ZoFontGameSmall")
-    reloadBtn:SetNormalFontColor(1, 0.8, 0.2, 1)
-    reloadBtn:SetMouseOverFontColor(1, 1, 1, 1)
-    reloadBtn:SetText("ReloadUI")
-    reloadBtn:SetHandler("OnClicked", function()
-        ReloadUI()
+    -- 13. ReloadUI relocated to right-click context on bumper header title (H7 safety fix)
+    --     No longer next to the Bump button — prevents accidental UI reloads mid-session.
+    local headerClickZone = wm:CreateControl("$(parent)_HeaderClick", bumper, CT_CONTROL)
+    headerClickZone:SetAnchor(TOPLEFT, bumper, TOPLEFT, 0, 0)
+    headerClickZone:SetDimensions(320, 30)
+    headerClickZone:SetMouseEnabled(true)
+    headerClickZone:SetHandler("OnMouseUp", function(ctrl, btn)
+        if btn == MOUSE_BUTTON_INDEX_RIGHT then
+            ClearMenu()
+            AddMenuItem("|cFF9900[Debug]|r Reload UI", function()
+                ReloadUI()
+            end)
+            ShowMenu(ctrl)
+        end
     end)
-    self.bumperReloadBtn = reloadBtn
+    headerClickZone:SetHandler("OnMouseEnter", function(ctrl)
+        InitializeTooltip(InformationTooltip, ctrl, BOTTOM, 0, 4)
+        SetTooltipText(InformationTooltip, "Right-click for debug options.")
+    end)
+    headerClickZone:SetHandler("OnMouseExit", function()
+        ClearTooltip(InformationTooltip)
+    end)
+    self.bumperReloadBtn = nil  -- no longer a standalone button (H7)
 
     -- 14. Guild Store Scene Integration (Only visible when store opens, or toggled)
     self.bumperWindow = bumper
@@ -652,9 +679,11 @@ function FR:UpdateBumperUI(customStatus)
 
             local isSelected = self:IsGuildBumpSelected(gId)
             if isSelected then
-                rowData.checkBtn:SetText("|cFFD700[✓]|r")
+                -- H5: filled amber square for selected guild
+                rowData.checkBtn:SetText("|cFFB347■|r")
             else
-                rowData.checkBtn:SetText("|c555555[ ]|r")
+                -- H5: hollow square for unselected guild
+                rowData.checkBtn:SetText("|c555555□|r")
             end
 
             local function ToggleRow()

@@ -33,24 +33,29 @@ namespace RedfurSync
             foreach (var line in File.ReadLines(filePath))
             {
                 var span = line.AsSpan().TrimStart();
-                
+
                 if (span.StartsWith("[\"id\"]"))
                 {
-                    int startQuote = span.IndexOf('"', 6);
+                    // Fix: ReadOnlySpan<char>.IndexOf(char, int) removed in .NET 8+.
+                    // Use Slice(offset).IndexOf('"') and add offset back.
+                    int startQuote = span.Slice(6).IndexOf('"');
                     if (startQuote != -1)
                     {
-                        int endQuote = span.IndexOf('"', startQuote + 1);
+                        startQuote += 6; // absolute index
+                        int endQuote = span.Slice(startQuote + 1).IndexOf('"');
                         if (endQuote != -1)
                         {
+                            endQuote += startQuote + 1; // absolute index
                             saleIds.Add(span.Slice(startQuote + 1, endQuote - startQuote - 1).ToString());
                         }
                     }
                 }
                 else if (span.StartsWith("[\"") && span.EndsWith("{"))
                 {
-                    int endQuote = span.IndexOf('"', 2);
+                    int endQuote = span.Slice(2).IndexOf('"');
                     if (endQuote != -1)
                     {
+                        endQuote += 2; // absolute index
                         var idPart = span.Slice(2, endQuote - 2);
                         if (idPart.Length > 0 && char.IsDigit(idPart[0]))
                         {

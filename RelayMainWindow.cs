@@ -932,7 +932,7 @@ namespace RedfurSync
 
         private void AddNavButton(FlowLayoutPanel container, string id, string title, string description)
         {
-            int btnHeight = (int)(42 * _scale);
+            int btnHeight = (int)(52 * _scale);  // D1: was 42px, bigger visual weight
             int btnWidth = (int)(188 * _scale);
 
             var itemPanel = new DoubleBufferedPanel
@@ -1279,6 +1279,15 @@ namespace RedfurSync
             dualMonitorStrip.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));                  // Ticker
             dualMonitorStrip.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
+            // D8: label the oscilloscope so users know what it shows
+            var oscLabel = new Label
+            {
+                Text = "UPLOAD ACTIVITY",
+                ForeColor = Color.FromArgb(120, CGoldBrt),
+                Font = Mono(7f, _scale, FontStyle.Bold),
+                AutoSize = true,
+                Margin = new Padding(0, (int)(4 * _scale), 0, 0),
+            };
             _oscilloscopePanel = new DoubleBufferedPanel
             {
                 Dock = DockStyle.Fill,
@@ -1980,8 +1989,11 @@ namespace RedfurSync
             bool isExpanded = IsSessionExpanded(session);
 
             controls.ChevronLabel.Text = isExpanded ? "▼" : "▶";
+            // D4b: detail column hidden in collapsed state to reduce info density
+            if (controls.DetailLabel != null) controls.DetailLabel.Visible = isExpanded;
             controls.TitleLabel.Text = session.Title;
             controls.SubtitleLabel.Text = $"{session.TotalCount} files • {session.TotalSizeDisplay}";
+            controls.SubtitleLabel.ForeColor = isExpanded ? CTextSub : Color.FromArgb(100, CTextSub);  // D4: ghost when collapsed
 
             controls.StatusLabel.Text = session.AggregateStatus switch
             {
@@ -2666,6 +2678,9 @@ namespace RedfurSync
             var btn = MakeStyledButton($"{icon} {label}", CGoldMid);
             btn.Height = (int)(28 * _scale);
             btn.Font = Body(8f, _scale);
+            // D10: tooltip makes it clear these pre-fill the prompt box (not free-form AI)
+            var tip = new ToolTip { InitialDelay = 400, ReshowDelay = 200 };
+            tip.SetToolTip(btn, $"Quick Action — loads \"{label}\" into the prompt box. Press Send to transmit.");
             btn.Click += (_, _) =>
             {
                 _prompt.Text = prompt;
@@ -3683,7 +3698,7 @@ namespace RedfurSync
             return new TextBox
             {
                 Text = initialText,
-                BackColor = Color.FromArgb(12, 14, 18),
+                BackColor = CBg,  // D9: was hardcoded #0C0E12, now theme-aware
                 ForeColor = CText,
                 BorderStyle = BorderStyle.FixedSingle,
                 Font = Mono(9.5f, _scale),
