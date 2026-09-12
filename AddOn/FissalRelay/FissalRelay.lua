@@ -10,7 +10,7 @@ FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
 FR.name = "FissalRelay"
-FR.version = "1.2.5"
+FR.version = "1.2.6"
 FR.author = "Echo & Fissal"
 
 -- Defaults for SavedVariables
@@ -80,7 +80,7 @@ function FR:AddSale(event, guildId)
     if not info then return false end
 
     local eventId = event:GetEventId()
-    local eventIdStr = tostring(eventId)
+    local eventIdStr = Id64ToString(eventId)
     if self.savedVars.sales[eventIdStr] then
         return false -- Duplicate already saved
     end
@@ -126,7 +126,7 @@ function FR:AddBankDeposit(event, guildId)
     if not info or info.currencyType ~= CURT_MONEY then return false end
 
     local eventId = event:GetEventId()
-    local eventIdStr = tostring(eventId)
+    local eventIdStr = Id64ToString(eventId)
     if self.savedVars.staff.bankDeposits[eventIdStr] then
         return false
     end
@@ -152,7 +152,7 @@ function FR:AddKioskBid(event, guildId)
     if not info then return false end
 
     local eventId = event:GetEventId()
-    local eventIdStr = tostring(eventId)
+    local eventIdStr = Id64ToString(eventId)
     if not self.savedVars.staff.bids then self.savedVars.staff.bids = {} end
     if self.savedVars.staff.bids[eventIdStr] then
         return false
@@ -192,7 +192,7 @@ function FR:AddKioskBidRefund(event, guildId)
     if not info then return false end
 
     local eventId = event:GetEventId()
-    local eventIdStr = tostring(eventId)
+    local eventIdStr = Id64ToString(eventId)
     if not self.savedVars.staff.bidRefunds then self.savedVars.staff.bidRefunds = {} end
     if self.savedVars.staff.bidRefunds[eventIdStr] then
         return false
@@ -230,7 +230,7 @@ function FR:AddKioskPurchase(event, guildId)
     if not info then return false end
 
     local eventId = event:GetEventId()
-    local eventIdStr = tostring(eventId)
+    local eventIdStr = Id64ToString(eventId)
     if not self.savedVars.staff.bids then self.savedVars.staff.bids = {} end
 
     local guildName = GetGuildName(guildId)

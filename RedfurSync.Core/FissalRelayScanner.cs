@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Text.RegularExpressions;
 
 namespace RedfurSync
 {
@@ -21,14 +20,6 @@ namespace RedfurSync
 
     public static class FissalRelayScanner
     {
-        private static readonly Regex SaleIdPattern = new(
-            @"^\s*\[""id""\]\s*=\s*""(?<id>\d{1,20})"",?\s*$",
-            RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
-        private static readonly Regex KeySaleIdPattern = new(
-            @"^\s*\[""(?<id>\d{1,20})""\]\s*=\s*\{",
-            RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
         public static bool IsFissalRelayFile(string fileName)
         {
             return string.Equals(fileName, "FissalRelay.lua", StringComparison.OrdinalIgnoreCase);
@@ -41,17 +32,30 @@ namespace RedfurSync
 
             foreach (var line in File.ReadLines(filePath))
             {
-                var match = SaleIdPattern.Match(line);
-                if (match.Success)
+                var span = line.AsSpan().TrimStart();
+                
+                if (span.StartsWith("[\"id\"]"))
                 {
-                    saleIds.Add(match.Groups["id"].Value);
-                }
-                else
-                {
-                    var matchKey = KeySaleIdPattern.Match(line);
-                    if (matchKey.Success)
+                    int startQuote = span.IndexOf('"', 6);
+                    if (startQuote != -1)
                     {
-                        saleIds.Add(matchKey.Groups["id"].Value);
+                        int endQuote = span.IndexOf('"', startQuote + 1);
+                        if (endQuote != -1)
+                        {
+                            saleIds.Add(span.Slice(startQuote + 1, endQuote - startQuote - 1).ToString());
+                        }
+                    }
+                }
+                else if (span.StartsWith("[\"") && span.EndsWith("{"))
+                {
+                    int endQuote = span.IndexOf('"', 2);
+                    if (endQuote != -1)
+                    {
+                        var idPart = span.Slice(2, endQuote - 2);
+                        if (idPart.Length > 0 && char.IsDigit(idPart[0]))
+                        {
+                            saleIds.Add(idPart.ToString());
+                        }
                     }
                 }
 
