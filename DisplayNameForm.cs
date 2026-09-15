@@ -236,7 +236,7 @@ namespace RedfurSync
 
             Height = _saveBtn.Bottom + _pad;
 
-            Controls.AddRange(new Control[] { inputHousing, codeHousing, _checkBtn, _saveBtn, _cancelBtn });
+            Controls.AddRange(new Control[] { inputHousing, _checkNameBtn, codeHousing, _checkBtn, _saveBtn, _cancelBtn });
             Shown += (_, _) => { _input.Focus(); _input.SelectAll(); };
 
             // ── The Drag Snare ──

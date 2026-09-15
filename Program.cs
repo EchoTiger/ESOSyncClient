@@ -54,22 +54,42 @@ namespace RedfurSync
 
             if (!isNew)
             {
-                // Signal the running instance to smoothly reveal and bring the Terminal forward!
+                // Try to signal the running instance to wake
+                bool signaled = false;
                 try
                 {
                     if (EventWaitHandle.TryOpenExisting(WakeEventName, out var wakeEvent))
                     {
-                        using (wakeEvent)
-                        {
-                            wakeEvent.Set();
-                        }
+                        using (wakeEvent) { wakeEvent.Set(); }
+                        signaled = true;
                     }
                 }
-                catch
+                catch { }
+
+                if (signaled)
                 {
-                    // Fall back quietly; do not pop up an unstyled generic MessageBox
+                    // Another instance is alive and was signaled — exit gracefully
+                    return;
                 }
-                return;
+
+                // The previous instance is likely dead (crashed without releasing mutex).
+                // Try to acquire ownership with a short timeout.
+                TraceLog("Wake event not found — previous instance may be dead. Attempting mutex takeover...");
+                try
+                {
+                    bool acquired = _mutex.WaitOne(TimeSpan.FromSeconds(2), false);
+                    if (!acquired)
+                    {
+                        TraceLog("Could not acquire mutex. Another instance may still be running.");
+                        return;
+                    }
+                    TraceLog("Mutex acquired — previous instance was dead. Proceeding as primary.");
+                }
+                catch (AbandonedMutexException)
+                {
+                    // Mutex was abandoned by the crashed process — we now own it
+                    TraceLog("Abandoned mutex recovered. Proceeding as primary.");
+                }
             }
 
             // Only the primary instance may clean a stale ".old" — a second instance
@@ -110,6 +130,7 @@ namespace RedfurSync
                 catch (Exception ex)
                 {
                     System.Diagnostics.Debug.WriteLine($"[Program] Relocation failed: {ex.Message}");
+                    TraceLog($"Relocation FAILED: {ex.Message}\n{ex.StackTrace}");
                 }
             }
             else

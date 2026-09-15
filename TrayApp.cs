@@ -102,10 +102,15 @@ namespace RedfurSync
 
             if (!startMinimized)
             {
+                // If the watcher never started (user canceled first-run), show setup tab
+                // so the app visibly launches instead of sitting invisibly in the tray
+                string initialTab = string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken)
+                    && string.IsNullOrWhiteSpace(AppConfig.Instance.ApiKey)
+                    ? "setup" : "sync";
                 if (_uiContext != null)
-                    _uiContext.Post(_ => OpenMainWindow("sync"), null);
+                    _uiContext.Post(_ => OpenMainWindow(initialTab), null);
                 else
-                    OpenMainWindow("sync");
+                    OpenMainWindow(initialTab);
             }
         }
         private System.Windows.Forms.Timer? _batchAlertTimer;
