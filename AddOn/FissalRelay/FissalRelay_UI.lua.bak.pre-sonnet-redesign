@@ -123,7 +123,7 @@ function FR:CreateHUD()
     local backdrop = wm:CreateControl("$(parent)_Backdrop", hud, CT_BACKDROP)
     backdrop:SetAnchorFill()
     backdrop:SetCenterColor(0.04, 0.04, 0.06, 0.85)
-    backdrop:SetEdgeColor(0.75, 0.50, 0.10, 0.95)  -- H1: stronger amber edge for bright env contrast
+    backdrop:SetEdgeColor(0.20, 0.17, 0.12, 0.92)
     backdrop:SetEdgeTexture("", 8, 1, 0)
 
     -- 3. Clock Addon Status Meter Munge Texture
@@ -203,27 +203,19 @@ function FR:CreateHUD()
         val:SetFont("ZoFontGameBold")
         val:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
         val:SetText("--")
-        val:SetWidth(205)
-        val:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
 
-        return lbl, val
+        return val
     end
 
-    local _salesLbl,  _salesVal  = CreateMeterRow("Sales",   "Sales Ingest:",     36)
-    local _syncLbl,   _syncVal   = CreateMeterRow("Sync",    "History Sync:",     59)
-    local _kiosksLbl, _kiosksVal = CreateMeterRow("Kiosks",  "Kiosks & Bids:",    82)
-    local _rosterLbl, _rosterVal = CreateMeterRow("Rosters", "Roster & Dues:",    105)
-    local _readyLbl,  _readyVal  = CreateMeterRow("Ready",   "Upload Status:",    128)
-
     self.hudElements = {
-        salesVal  = _salesVal,
-        syncVal   = _syncVal,
-        kiosksVal = _kiosksVal,
-        rosterVal = _rosterVal,
-        readyVal  = _readyVal,
+        salesVal  = CreateMeterRow("Sales",   "Sales Ingest:",     36),
+        syncVal   = CreateMeterRow("Sync",    "History Sync:",     59),
+        kiosksVal = CreateMeterRow("Kiosks",  "Kiosks & Bids:",    82),
+        rosterVal = CreateMeterRow("Rosters", "Roster & Dues:",    105),
+        readyVal  = CreateMeterRow("Ready",   "Upload Status:",    128),
     }
 
-    local readyLbl = _readyLbl
+    local readyLbl = wm:GetControlByName("FissalRelay_HUD_Ready_Lbl")
     if readyLbl then
         readyLbl:SetMouseEnabled(true)
         readyLbl:SetHandler("OnMouseEnter", function(ctrl)
@@ -236,8 +228,8 @@ function FR:CreateHUD()
     end
 
     -- History Sync Channel Tooltip Breakdown
-    local syncLbl = _syncLbl
-    local syncVal = _syncVal
+    local syncLbl = wm:GetControlByName("FissalRelay_HUD_Sync_Lbl")
+    local syncVal = self.hudElements.syncVal
 
     local function ShowSyncTooltip(ctrl)
         InitializeTooltip(InformationTooltip, ctrl, TOP, 0, -4)
@@ -589,8 +581,7 @@ function FR:CreateBumperUI()
     -- 12. Bump Action Button [⚡ Bump Selected Guilds]
     local bumpBtn = wm:CreateControl("$(parent)_BumpBtn", bumper, CT_BUTTON)
     bumpBtn:SetAnchor(BOTTOMLEFT, bumper, BOTTOMLEFT, 12, -8)
-    bumpBtn:SetAnchor(BOTTOMRIGHT, bumper, BOTTOMRIGHT, -12, -8)
-    bumpBtn:SetHeight(24)
+    bumpBtn:SetDimensions(205, 24)
     bumpBtn:SetFont("ZoFontGameBold")
     bumpBtn:SetNormalFontColor(0, 1, 0.8, 1)
     bumpBtn:SetMouseOverFontColor(1, 0.9, 0.4, 1)
@@ -604,29 +595,18 @@ function FR:CreateBumperUI()
     end)
     self.bumperActionBtn = bumpBtn
 
-    -- 13. ReloadUI relocated to right-click context on bumper header title (H7 safety fix)
-    --     No longer next to the Bump button — prevents accidental UI reloads mid-session.
-    local headerClickZone = wm:CreateControl("$(parent)_HeaderClick", bumper, CT_CONTROL)
-    headerClickZone:SetAnchor(TOPLEFT, bumper, TOPLEFT, 0, 0)
-    headerClickZone:SetDimensions(320, 30)
-    headerClickZone:SetMouseEnabled(true)
-    headerClickZone:SetHandler("OnMouseUp", function(ctrl, btn)
-        if btn == MOUSE_BUTTON_INDEX_RIGHT then
-            ClearMenu()
-            AddMenuItem("|cFF9900[Debug]|r Reload UI", function()
-                ReloadUI()
-            end)
-            ShowMenu(ctrl)
-        end
+    -- 13. ReloadUI Button
+    local reloadBtn = wm:CreateControl("$(parent)_ReloadBtn", bumper, CT_BUTTON)
+    reloadBtn:SetAnchor(LEFT, bumpBtn, RIGHT, 8, 0)
+    reloadBtn:SetDimensions(80, 24)
+    reloadBtn:SetFont("ZoFontGameSmall")
+    reloadBtn:SetNormalFontColor(1, 0.8, 0.2, 1)
+    reloadBtn:SetMouseOverFontColor(1, 1, 1, 1)
+    reloadBtn:SetText("ReloadUI")
+    reloadBtn:SetHandler("OnClicked", function()
+        ReloadUI()
     end)
-    headerClickZone:SetHandler("OnMouseEnter", function(ctrl)
-        InitializeTooltip(InformationTooltip, ctrl, BOTTOM, 0, 4)
-        SetTooltipText(InformationTooltip, "Right-click for debug options.")
-    end)
-    headerClickZone:SetHandler("OnMouseExit", function()
-        ClearTooltip(InformationTooltip)
-    end)
-    self.bumperReloadBtn = nil  -- no longer a standalone button (H7)
+    self.bumperReloadBtn = reloadBtn
 
     -- 14. Guild Store Scene Integration (Only visible when store opens, or toggled)
     self.bumperWindow = bumper
@@ -672,11 +652,9 @@ function FR:UpdateBumperUI(customStatus)
 
             local isSelected = self:IsGuildBumpSelected(gId)
             if isSelected then
-                -- H5: filled amber square for selected guild
-                rowData.checkBtn:SetText("|cFFB347■|r")
+                rowData.checkBtn:SetText("|cFFD700[✓]|r")
             else
-                -- H5: hollow square for unselected guild
-                rowData.checkBtn:SetText("|c555555□|r")
+                rowData.checkBtn:SetText("|c555555[ ]|r")
             end
 
             local function ToggleRow()

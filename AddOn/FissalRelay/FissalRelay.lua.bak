@@ -10,7 +10,7 @@ FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
 FR.name = "FissalRelay"
-FR.version = "1.2.8"
+FR.version = "1.2.7"
 FR.author = "Echo & Fissal"
 
 -- Defaults for SavedVariables
@@ -113,23 +113,10 @@ function FR:AddSale(event, guildId)
         wasKiosk = wasKiosk,
     }
 
-    -- Keep track of latest event ID for this guild.
-    -- IDs are 64-bit integers stored as strings; compare numerically to avoid
-    -- lexicographic ordering bugs with IDs of different string lengths.
-    local currentLast = self.savedVars.lastSeenEventId[tostring(guildId)]
-    local isNewer = not currentLast
-    if not isNewer then
-        -- Use LibHistoire's CompareEventIds if available, else numeric compare.
-        if LibHistoire and LibHistoire.CompareEventIds then
-            isNewer = LibHistoire:CompareEventIds(eventIdStr, currentLast) > 0
-        else
-            -- Numeric compare: pad to equal length then lex is safe.
-            local a, b = tonumber(eventIdStr), tonumber(currentLast)
-            isNewer = a and b and a > b
-        end
-    end
-    if isNewer then
-        self.savedVars.lastSeenEventId[tostring(guildId)] = eventIdStr
+    -- Keep track of latest event ID for this guild
+    local currentLast = self.savedVars.lastSeenEventId[guildId]
+    if not currentLast or eventIdStr > currentLast then
+        self.savedVars.lastSeenEventId[guildId] = eventIdStr
     end
 
     return true
@@ -286,31 +273,12 @@ function FR:PruneExpiredData(isManual)
         end
     end
 
-    -- Prune staff bank deposits, bids, and bid refunds with the same cutoff.
-    local prunedStaffCount = 0
-    for _, tbl in ipairs({ self.savedVars.staff.bankDeposits, self.savedVars.staff.bids, self.savedVars.staff.bidRefunds }) do
-        if tbl then
-            for id, entry in pairs(tbl) do
-                local ts = tonumber(entry and entry.timestamp)
-                if ts and ts < cutoff then
-                    tbl[id] = nil
-                    prunedStaffCount = prunedStaffCount + 1
-                end
-            end
-        end
-    end
-
-    local totalPruned = prunedSalesCount + prunedStaffCount
-    if totalPruned > 0 then
-        local msg = string.format("Pruning Engine: Purged %s expired records (> %d days old).",
-            ColorText(ZO_LocalizeDecimalNumber(totalPruned), "FFD700"), historyDepthDays)
-        if prunedStaffCount > 0 then
-            msg = msg .. string.format(" (%d staff/bank entries included)", prunedStaffCount)
-        end
-        PrintChat(msg)
+    if prunedSalesCount > 0 then
+        PrintChat(string.format("Pruning Engine: Purged %s expired sales records (> %d days old).",
+            ColorText(ZO_LocalizeDecimalNumber(prunedSalesCount), "FFD700"), historyDepthDays))
         PlayFissalSound()
     elseif isManual then
-        PrintChat(string.format("Pruning Engine: All records are within the %d-day retention window (0 purged).",
+        PrintChat(string.format("Pruning Engine: All sales records are within the %d-day retention window (0 purged).",
             historyDepthDays))
     end
 
@@ -400,9 +368,14 @@ function FR:ScanOwnedKiosks()
                 prevObs.guildName = guildName
             end
 
-            -- Note: Do NOT prematurely mark pending bids as "Won" here just because we currently
-            -- hold the stall from the prior week. Active bids placed during the week remain "Pending"
-            -- until the upcoming Tuesday reset actually passes.
+            -- Correlate with pending bids: if we own this trader, mark our bid as Won!
+            if self.savedVars.staff and self.savedVars.staff.bids then
+                for _, bid in pairs(self.savedVars.staff.bids) do
+                    if bid.guildId == guildId and bid.kioskName == traderName and bid.status == "Pending" then
+                        bid.status = "Won"
+                    end
+                end
+            end
 
             found = found + 1
         end
@@ -487,8 +460,7 @@ function FR:AuditInactives(guildIndex, minDays)
 
     table.sort(inactives, function(a, b) return a.days > b.days end)
 
-    -- Key by guildId (stable) rather than guildName (can change).
-    self.savedVars.staff.inactivityAudits[tostring(guildId)] = {
+    self.savedVars.staff.inactivityAudits[guildName] = {
         guildId = guildId,
         minDays = minDays,
         auditedAt = GetTimeStamp(),
@@ -913,7 +885,7 @@ function FR:PumpLibHistoire(isManual)
                                 if not self.requestWatchdog[channelKey] then
                                     self.requestWatchdog[channelKey] = now
                                     self.lastEventCounts[channelKey] = currentEvents
-                                elseif type(self.requestWatchdog[channelKey]) == "number" and (now - self.requestWatchdog[channelKey]) >= 120 then
+                                elseif (now - self.requestWatchdog[channelKey]) >= 120 then
                                     -- Only destroy if completely frozen with 0 events arriving for >120 seconds
                                     if cache.DestroyRequest and cache.request then
                                         cache:DestroyRequest()
@@ -978,7 +950,7 @@ function FR:PumpLibHistoire(isManual)
             self.PrintChat(string.format("Turbo Pump: Kicked %s request(s). %s channel(s) linking in progress.%s",
                 self.ColorText(tostring(requestedCount), "FFD700"), self.ColorText(tostring(unlinkedCount), "00FFCC"), clearedNote))
         end
-        PlayFissalSound()
+        self.PlayFissalSound()
     end
 
     self:UpdateCategorySyncTelemetry()
@@ -1036,18 +1008,10 @@ function FR:SetupProcessors()
                 )
 
                 if processor then
-                    local lastId = self.savedVars.lastSeenEventId[tostring(guildId)]
+                    local lastId = self.savedVars.lastSeenEventId[guildId]
                     if lastId then
-                        -- Use StringToId64 to preserve full 64-bit precision.
-                        -- tonumber() silently truncates IDs beyond 2^53 (~9 quadrillion).
-                        local id64 = StringToId64 and StringToId64(lastId)
-                        if id64 then
-                            processor:SetAfterEventId(id64)
-                        else
-                            -- Graceful fallback: no StringToId64, resume from time window
-                            local daysCutoff = GetTimeStamp() - (self.savedVars.historyDepthDays * 86400)
-                            processor:SetAfterEventTime(daysCutoff)
-                        end
+                        local converted = tonumber(lastId)
+                        if converted then processor:SetAfterEventId(converted) end
                     else
                         local daysCutoff = GetTimeStamp() - (self.savedVars.historyDepthDays * 86400)
                         processor:SetAfterEventTime(daysCutoff)
@@ -1435,20 +1399,20 @@ function FR:HandleSlashCommand(arg)
         local days = tonumber(args[3]) or 7
         self:AuditBankDues(gIdx, days)
     elseif cmd == "turbo" or cmd == "pump" then
-        PrintChat("Activating Fissal Clockwork Turbo Pumper...")
+        self.PrintChat("Activating Fissal Clockwork Turbo Pumper...")
         self:PumpLibHistoire(true)
     elseif cmd == "sync" then
-        PrintChat("Aligning clockwork dials and history pipelines...")
+        self.PrintChat("Aligning clockwork dials and history pipelines...")
         self:SetupProcessors()
         self:PumpLibHistoire(true)
         local snapped = self:TakeRosterSnapshot()
         local kiosksFound = self:ScanOwnedKiosks()
         local bidCount = NonContiguousCount(self.savedVars.staff and self.savedVars.staff.bids or {})
         local saleCount = NonContiguousCount(self.savedVars.sales)
-        PrintChat(string.format("All listeners aligned. %d rosters snapped, %d kiosks, %d bids recorded. %s sales ready for courier dispatch.",
-            snapped, kiosksFound, bidCount, ColorText(tostring(saleCount), "00FFCC")))
+        self.PrintChat(string.format("All listeners aligned. %d rosters snapped, %d kiosks, %d bids recorded. %s sales ready for courier dispatch.",
+            snapped, kiosksFound, bidCount, self.ColorText(tostring(saleCount), "00FFCC")))
         if self.UpdateHUD then self:UpdateHUD() end
-        PlayFissalSound()
+        self.PlayFissalSound()
     elseif cmd == "roster" then
         local snapped = self:TakeRosterSnapshot()
         PrintChat(string.format("Roster snapshot captured for %d guild(s)! Saved for courier sync.", snapped))

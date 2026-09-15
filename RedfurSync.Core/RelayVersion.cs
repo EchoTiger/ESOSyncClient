@@ -22,7 +22,7 @@ namespace RedfurSync
                     ver = typeof(RelayVersion).Assembly.GetName().Version;
                 }
 
-                _cachedVersion = ver != null ? $"{ver.Major}.{ver.Minor}.{Math.Max(0, ver.Build)}" : "1.4.4";
+                _cachedVersion = ver != null ? $"{ver.Major}.{ver.Minor}.{Math.Max(0, ver.Build)}" : "1.4.6";
                 return _cachedVersion;
             }
         }

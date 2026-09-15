@@ -435,9 +435,11 @@ namespace RedfurSync
             }
 
             int lockWaitRetries = 0;
+            using var lockWaitCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             while (IsFileLocked(filePath) && lockWaitRetries < 5)
             {
-                await Task.Delay(2000); 
+                try { await Task.Delay(2000, lockWaitCts.Token); }
+                catch (OperationCanceledException) { break; }
                 lockWaitRetries++;
             }
 
@@ -541,7 +543,7 @@ namespace RedfurSync
                     {
                         _onStatus($"Comparing {saleIds.Count:N0} sales in {job.FileName}...");
                         var missing = await _uploader.GetMissingSaleIdsAsync(saleIds, job.Cts.Token);
-                        if (missing is { Count: 0 })
+                        if (missing is { Count: 0 } && !isFissal)
                         {
                             job.Progress = 1f;
                             job.Status = UploadStatus.Done;
@@ -554,7 +556,12 @@ namespace RedfurSync
                             return;
                         }
                         if (missing != null)
-                            _onStatus($"{missing.Count:N0} new sale(s) found; sending the source file safely...");
+                        {
+                            if (missing.Count > 0)
+                                _onStatus($"{missing.Count:N0} new sale(s) found; sending the source file safely...");
+                            else if (isFissal)
+                                _onStatus($"Sales are current; dispatching {job.FileName} for bank deposits and telemetry...");
+                        }
                     }
 
                     if (isFissal)

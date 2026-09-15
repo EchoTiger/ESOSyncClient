@@ -1,27 +1,45 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Text.RegularExpressions;
 
 namespace RedfurSync
 {
     internal static class MasterMerchantSaleScanner
     {
-        // PERF Track C: replace Regex with AsSpan trim/StartsWith to avoid 200k Match allocs — TODO Track C
-        // Span approach sketch: line.AsSpan().Trim().StartsWith("[\"id\"]", Ordinal) then slice between quotes and TryParse.
-        // Kept Regex for now for correctness; TODO is to swap to manual span parse in next pass.
-        private static readonly Regex SaleIdPattern = new(
-            "^\\s*\\[\"id\"\\]\\s*=\\s*\"(?<id>\\d{1,20})\",?\\s*$",
-            RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
+        // Span-based parse: avoids 200 k+ Regex Match allocations on large sales files.
+        // Lines matched:   ["id"] = "123456789",
         public static IReadOnlyList<string> ReadSaleIds(string filePath, int maxIds = 200_000)
         {
             var saleIds = new HashSet<string>(StringComparer.Ordinal);
             foreach (var line in File.ReadLines(filePath))
             {
-                var match = SaleIdPattern.Match(line);
-                if (!match.Success) continue;
-                saleIds.Add(match.Groups["id"].Value);
+                var span = line.AsSpan().Trim();
+
+                // Must start with ["id"]
+                if (!span.StartsWith("[\"id\"]", StringComparison.Ordinal)) continue;
+                span = span.Slice(6).TrimStart();   // skip ["id"] + whitespace
+
+                // Expect '='
+                if (span.IsEmpty || span[0] != '=') continue;
+                span = span.Slice(1).TrimStart();
+
+                // Expect opening quote
+                if (span.IsEmpty || span[0] != '\"') continue;
+                span = span.Slice(1);
+
+                // Find closing quote — value must be all digits, 1-20 chars
+                int closeQuote = span.IndexOf('\"');
+                if (closeQuote <= 0) continue;
+
+                var idSpan = span.Slice(0, closeQuote);
+                if (idSpan.Length > 20) continue;
+
+                bool allDigits = true;
+                for (int i = 0; i < idSpan.Length; i++)
+                    if (!char.IsAsciiDigit(idSpan[i])) { allDigits = false; break; }
+                if (!allDigits) continue;
+
+                saleIds.Add(idSpan.ToString());
                 if (saleIds.Count > maxIds)
                     throw new InvalidDataException($"Master Merchant file contains more than {maxIds:N0} sale IDs.");
             }

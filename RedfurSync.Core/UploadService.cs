@@ -86,9 +86,9 @@ namespace RedfurSync
                 using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
                 int bytesRead;
 
-                while ((bytesRead = await contentStream.ReadAsync(buffer, 0, buffer.Length, job.Cts.Token)) != 0)
+                while ((bytesRead = await contentStream.ReadAsync(buffer.AsMemory(0, buffer.Length), job.Cts.Token)) != 0)
                 {
-                    await fileStream.WriteAsync(buffer, 0, bytesRead, job.Cts.Token);
+                    await fileStream.WriteAsync(buffer.AsMemory(0, bytesRead), job.Cts.Token);
                     hasher.AppendData(buffer, 0, bytesRead);
                     totalRead += bytesRead;
                     if (totalRead > 500L * 1024 * 1024) throw new InvalidOperationException("Update exceeds the allowed size.");

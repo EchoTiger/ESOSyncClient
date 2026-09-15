@@ -44,6 +44,20 @@ public static class KioskReconScanner
         @"\[""([^""]+)""\]\s*=\s*\{([^}]+)\}",
         RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
+    // Per-key regex cache so inner patterns are JIT-compiled once per unique key name.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Regex> _stringPatternCache = new();
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Regex> _integerPatternCache = new();
+
+    private static Regex GetStringPattern(string key) =>
+        _stringPatternCache.GetOrAdd(key, k => new Regex(
+            $@"\[""{k}""\]\s*=\s*""([^""]*)""",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant));
+
+    private static Regex GetIntegerPattern(string key) =>
+        _integerPatternCache.GetOrAdd(key, k => new Regex(
+            $@"\[""{k}""\]\s*=\s*(\d+)",
+            RegexOptions.Compiled | RegexOptions.CultureInvariant));
+
     public static List<KioskObservation> ReadKiosks(string filePath)
     {
         var observations = new List<KioskObservation>();
@@ -77,19 +91,21 @@ public static class KioskReconScanner
 
             string GetString(string key)
             {
-                var m = Regex.Match(block, $@"\[""{key}""\]\s*=\s*""([^""]*)""", RegexOptions.CultureInvariant);
+                // Build the pattern on-demand. The key is a safe alphanumeric identifier from
+                // the outer KioskBlockRegex capture group, so no Regex.Escape is required.
+                var m = GetStringPattern(key).Match(block);
                 return m.Success ? m.Groups[1].Value.Trim() : "";
             }
 
             long GetLong(string key)
             {
-                var m = Regex.Match(block, $@"\[""{key}""\]\s*=\s*(\d+)", RegexOptions.CultureInvariant);
+                var m = GetIntegerPattern(key).Match(block);
                 return m.Success && long.TryParse(m.Groups[1].Value, out var val) ? val : 0;
             }
 
             int GetInt(string key)
             {
-                var m = Regex.Match(block, $@"\[""{key}""\]\s*=\s*(\d+)", RegexOptions.CultureInvariant);
+                var m = GetIntegerPattern(key).Match(block);
                 return m.Success && int.TryParse(m.Groups[1].Value, out var val) ? val : 0;
             }
 
