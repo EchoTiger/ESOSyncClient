@@ -278,6 +278,8 @@ namespace RedfurSync
         private Button _btnOpenSavedVars = null!;
         private Button _btnUpdateTtcPriceTable = null!;
         private Label _lblSetupAddonStatus = null!;
+        private TableLayoutPanel? _addonLayout;
+        private TableLayoutPanel? _setupLayout;
 
         // ── 3. Setup Controls ──
         private TextBox _txtDisplayName = null!;
@@ -317,21 +319,62 @@ namespace RedfurSync
 
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.CenterScreen;
-            MinimumSize = new Size(880, 560);
-            Size = new Size(980, 620);
             BackColor = CBg;
             ForeColor = CText;
             ShowInTaskbar = true;
             Text = "Fissal Relay // Dwemer Tonal Terminal";
 
-            _scale = GetScale(Handle);
+            // Determine true monitor DPI scaling before computing sizes
+            _scale = FissalTheme.GetSystemScale();
+            if (IsHandleCreated)
+            {
+                float winScale = GetScale(Handle);
+                if (winScale > 0) _scale = winScale;
+            }
+            else
+            {
+                try
+                {
+                    var scr = Screen.FromPoint(Cursor.Position) ?? Screen.PrimaryScreen;
+                    if (scr != null)
+                    {
+                        using var g = Graphics.FromHwnd(IntPtr.Zero);
+                        _scale = g.DpiX / 96f;
+                    }
+                }
+                catch { }
+            }
 
-            TraceLog("BuildShell starting");
-            BuildShell();
-            TraceLog("BuildViewPanels starting");
-            BuildViewPanels();
-            TraceLog("SwitchTab starting");
-            SwitchTab("sync");
+            int baseW = 1060;
+            int baseH = 690;
+            int initialW = (int)(baseW * _scale);
+            int initialH = (int)(baseH * _scale);
+
+            var activeScreen = Screen.FromPoint(Cursor.Position) ?? Screen.PrimaryScreen;
+            if (activeScreen != null)
+            {
+                var work = activeScreen.WorkingArea;
+                if (initialW > work.Width * 0.94f) initialW = (int)(work.Width * 0.94f);
+                if (initialH > work.Height * 0.94f) initialH = (int)(work.Height * 0.94f);
+            }
+
+            MinimumSize = new Size((int)(920 * _scale), (int)(580 * _scale));
+            Size = new Size(initialW, initialH);
+
+            SuspendLayout();
+            try
+            {
+                TraceLog("BuildShell starting");
+                BuildShell();
+                TraceLog("BuildViewPanels starting");
+                BuildViewPanels();
+                TraceLog("SwitchTab starting");
+                SwitchTab("sync");
+            }
+            finally
+            {
+                ResumeLayout(true);
+            }
             TraceLog("ctor finished");
 
             _watcher.JobsChanged += OnWatcherJobsChanged;
@@ -385,9 +428,14 @@ namespace RedfurSync
                 BeginInvoke(() => NavigateToTab(tabId));
                 return;
             }
-            TraceLog("NavigateToTab: Show()");
-            Show();
-            TraceLog("NavigateToTab: Show() returned");
+            TraceLog("NavigateToTab: SwitchTab before Show()");
+            SwitchTab(tabId);
+            if (!Visible)
+            {
+                TraceLog("NavigateToTab: Show()");
+                Show();
+                TraceLog("NavigateToTab: Show() returned");
+            }
             if (WindowState == FormWindowState.Minimized)
             {
                 WindowState = FormWindowState.Normal;
@@ -397,7 +445,16 @@ namespace RedfurSync
             BringToFront();
             TopMost = false;
             try { SetForegroundWindow(Handle); } catch { }
-            SwitchTab(tabId);
+        }
+
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                var cp = base.CreateParams;
+                cp.ExStyle |= 0x02000000; // WS_EX_COMPOSITED: Paints all descendants using double-buffering
+                return cp;
+            }
         }
 
         // ── Window Resizing & Frame Handling ─────────────────────────────────
@@ -459,7 +516,7 @@ namespace RedfurSync
                 Margin = new Padding((int)(4 * _scale), (int)(4 * _scale), (int)(4 * _scale), (int)(4 * _scale)),
                 Padding = new Padding((int)(8 * _scale), (int)(4 * _scale), (int)(8 * _scale), (int)(4 * _scale)),
             };
-            _headerConsole.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(320 * _scale))); // Left Identity Plate
+            _headerConsole.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(270 * _scale))); // Left Identity Plate
             _headerConsole.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));                   // Center Micro-Display CRT Console
             _headerConsole.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(115 * _scale))); // Right Window Controls
             _headerConsole.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -757,6 +814,15 @@ namespace RedfurSync
                 var textSz = g.MeasureString(displayBadge, textFont);
                 float drawX = (int)(12 * _scale);
                 float drawY = (h - textSz.Height) / 2f;
+
+                // Smooth marquee scroll if text overflows the CRT viewable boundary
+                if (textSz.Width > textMaxW)
+                {
+                    float overflow = textSz.Width - textMaxW;
+                    float cycle = (_animFrame * 1.5f) % (overflow + (80 * _scale));
+                    if (cycle > overflow) cycle = 0; // pause at start before scrolling
+                    drawX -= cycle;
+                }
 
                 // Subtle phosphor glow
                 using (var glowTextBrush = new SolidBrush(Color.FromArgb(50, badgeColor)))
@@ -3091,6 +3157,16 @@ namespace RedfurSync
                 Padding = new Padding((int)(16 * _scale)),
                 BackColor = Color.Transparent,
             };
+            layout.HorizontalScroll.Enabled = false;
+            layout.HorizontalScroll.Visible = false;
+            layout.HandleCreated += (_, _) => FissalTheme.ApplyDarkScrollbars(layout.Handle);
+            layout.Resize += (_, _) =>
+            {
+                layout.HorizontalScroll.Maximum = 0;
+                layout.HorizontalScroll.Visible = false;
+            };
+            _addonLayout = layout;
+
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -3106,16 +3182,17 @@ namespace RedfurSync
                 AutoSize = true,
                 Margin = new Padding(0, 0, 0, (int)(12 * _scale)),
             };
-            formPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(180 * _scale)));
+            formPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(160 * _scale)));
             formPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
             var sectionLabel = new Label
             {
                 Text = "FISSAL'S COGWORK RELAY — ESO ADDON INSTALL & SYNC",
+                UseMnemonic = false,
                 ForeColor = CGoldBrt,
                 Font = Title(11f, _scale, FontStyle.Bold),
                 AutoSize = true,
-                Margin = new Padding(0, 0, 0, 16),
+                Margin = new Padding(0, 0, 0, (int)(14 * _scale)),
             };
             formPanel.Controls.Add(sectionLabel, 0, 0);
             formPanel.SetColumnSpan(sectionLabel, 2);
@@ -3132,6 +3209,7 @@ namespace RedfurSync
             _lblAddonStatusBadge = new Label
             {
                 Text = "Checking addon status...",
+                UseMnemonic = false,
                 ForeColor = CGoldBrt,
                 Font = Mono(9.5f, _scale, FontStyle.Bold),
                 AutoSize = true,
@@ -3139,10 +3217,11 @@ namespace RedfurSync
             _lblAddonStatusDetail = new Label
             {
                 Text = "Scanning Elder Scrolls Online directories...",
+                UseMnemonic = false,
                 ForeColor = CTextSub,
                 Font = Mono(8f, _scale),
                 AutoSize = true,
-                Margin = new Padding(0, 3, 0, 0),
+                Margin = new Padding(0, (int)(3 * _scale), 0, 0),
             };
             statusFlow.Controls.Add(_lblAddonStatusBadge);
             statusFlow.Controls.Add(_lblAddonStatusDetail);
@@ -3234,11 +3313,13 @@ namespace RedfurSync
             {
                 Dock = DockStyle.Fill,
                 FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = true,
                 AutoSize = true,
-                Margin = new Padding(0, 8, 0, 0),
+                Margin = new Padding(0, (int)(6 * _scale), 0, 0),
             };
 
             _btnInstallOrUpdateAddon = MakeStyledButton("Install / Update Addon", CGreen);
+            _btnInstallOrUpdateAddon.Margin = new Padding(0, 0, (int)(8 * _scale), (int)(6 * _scale));
             _btnInstallOrUpdateAddon.Click += (_, _) =>
             {
                 string? path = _txtAddonEsoPath.Text.Trim();
@@ -3260,6 +3341,7 @@ namespace RedfurSync
             actionFlow.Controls.Add(_btnInstallOrUpdateAddon);
 
             _btnRefreshAddon = MakeStyledButton("Check Status", CGoldBrt);
+            _btnRefreshAddon.Margin = new Padding(0, 0, (int)(8 * _scale), (int)(6 * _scale));
             _btnRefreshAddon.Click += async (_, _) =>
             {
                 _btnRefreshAddon.Enabled = false;
@@ -3273,6 +3355,7 @@ namespace RedfurSync
             actionFlow.Controls.Add(_btnRefreshAddon);
 
             _btnOpenSavedVars = MakeStyledButton("Open SavedVariables", CTextSub);
+            _btnOpenSavedVars.Margin = new Padding(0, 0, (int)(8 * _scale), (int)(6 * _scale));
             _btnOpenSavedVars.Click += (_, _) =>
             {
                 string live = _txtAddonEsoPath.Text.Trim();
@@ -3305,16 +3388,17 @@ namespace RedfurSync
                 AutoSize = true,
                 Margin = new Padding(0, 0, 0, (int)(12 * _scale)),
             };
-            depsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(180 * _scale)));
+            depsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(160 * _scale)));
             depsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
             var depsHeader = new Label
             {
                 Text = "REQUIRED ESO LIBRARIES & DATA UTILITIES",
+                UseMnemonic = false,
                 ForeColor = CGoldBrt,
                 Font = Title(11f, _scale, FontStyle.Bold),
                 AutoSize = true,
-                Margin = new Padding(0, 0, 0, 16),
+                Margin = new Padding(0, 0, 0, (int)(14 * _scale)),
             };
             depsPanel.Controls.Add(depsHeader, 0, 0);
             depsPanel.SetColumnSpan(depsHeader, 2);
@@ -3377,10 +3461,11 @@ namespace RedfurSync
             var guideHeader = new Label
             {
                 Text = "IN-GAME COMMANDS & COURIER PROTOCOL",
+                UseMnemonic = false,
                 ForeColor = CGoldBrt,
                 Font = Title(11f, _scale, FontStyle.Bold),
                 AutoSize = true,
-                Margin = new Padding(0, 0, 0, 12),
+                Margin = new Padding(0, 0, 0, (int)(12 * _scale)),
             };
             guidePanel.Controls.Add(guideHeader, 0, 0);
 
@@ -3484,8 +3569,18 @@ namespace RedfurSync
                 ColumnCount = 1,
                 RowCount = 2,
                 AutoScroll = true,
-                Padding = new Padding(16),
+                Padding = new Padding((int)(16 * _scale)),
             };
+            layout.HorizontalScroll.Enabled = false;
+            layout.HorizontalScroll.Visible = false;
+            layout.HandleCreated += (_, _) => FissalTheme.ApplyDarkScrollbars(layout.Handle);
+            layout.Resize += (_, _) =>
+            {
+                layout.HorizontalScroll.Maximum = 0;
+                layout.HorizontalScroll.Visible = false;
+            };
+            _setupLayout = layout;
+
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
@@ -3495,20 +3590,21 @@ namespace RedfurSync
                 ColumnCount = 2,
                 RowCount = 9,
                 BackColor = CPanelBg,
-                Padding = new Padding(16),
+                Padding = new Padding((int)(16 * _scale)),
                 AutoSize = true,
             };
-            formPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(180 * _scale)));
+            formPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(160 * _scale)));
             formPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
             // Section Header
             var sectionLabel = new Label
             {
                 Text = "RELAY CONFIGURATION & DEVICE PAIRING",
+                UseMnemonic = false,
                 ForeColor = CGoldBrt,
                 Font = Title(11f, _scale, FontStyle.Bold),
                 AutoSize = true,
-                Margin = new Padding(0, 0, 0, 16),
+                Margin = new Padding(0, 0, 0, (int)(14 * _scale)),
             };
             formPanel.Controls.Add(sectionLabel, 0, 0);
             formPanel.SetColumnSpan(sectionLabel, 2);
@@ -3715,7 +3811,7 @@ namespace RedfurSync
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
                 RowCount = 3,
-                Padding = new Padding(12),
+                Padding = new Padding((int)(12 * _scale)),
             };
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, (int)(40 * _scale)));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -3725,6 +3821,7 @@ namespace RedfurSync
             var header = new Label
             {
                 Text = "SELECT TERMINAL THEME & VISUAL FIDELITY",
+                UseMnemonic = false,
                 ForeColor = CGoldBrt,
                 Font = Title(11f, _scale, FontStyle.Bold),
                 Dock = DockStyle.Fill,
@@ -3739,8 +3836,9 @@ namespace RedfurSync
                 FlowDirection = FlowDirection.LeftToRight,
                 WrapContents = true,
                 BackColor = Color.FromArgb(10, 9, 7),
-                Padding = new Padding(8),
+                Padding = new Padding((int)(8 * _scale)),
             };
+            _themeCardsHost.HandleCreated += (_, _) => FissalTheme.ApplyDarkScrollbars(_themeCardsHost.Handle);
             PopulateThemeCards();
             layout.Controls.Add(_themeCardsHost, 0, 1);
 
@@ -3954,7 +4052,7 @@ namespace RedfurSync
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
                 RowCount = 3,
-                Padding = new Padding(12),
+                Padding = new Padding((int)(12 * _scale)),
             };
             layout.RowStyles.Add(new RowStyle(SizeType.Absolute, (int)(80 * _scale)));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -3967,7 +4065,7 @@ namespace RedfurSync
                 ColumnCount = 2,
                 RowCount = 3,
                 BackColor = CPanelBg,
-                Padding = new Padding(10, 6, 10, 6),
+                Padding = new Padding((int)(10 * _scale), (int)(6 * _scale), (int)(10 * _scale), (int)(6 * _scale)),
             };
             topCard.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(140 * _scale)));
             topCard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -4004,7 +4102,7 @@ namespace RedfurSync
                 Dock = DockStyle.Fill,
                 FlowDirection = FlowDirection.LeftToRight,
                 BackColor = CPanelBg,
-                Padding = new Padding(8, 6, 8, 6),
+                Padding = new Padding((int)(8 * _scale), (int)(6 * _scale), (int)(8 * _scale), (int)(6 * _scale)),
             };
 
             _btnOpenConfigDir = MakeStyledButton("Open AppData Folder", CGoldMid);
@@ -4191,6 +4289,12 @@ namespace RedfurSync
                     FissalTheme.ApplyDarkScrollbars(_prompt.Handle);
                 if (_diagLogBox != null && _diagLogBox.IsHandleCreated)
                     FissalTheme.ApplyDarkScrollbars(_diagLogBox.Handle);
+                if (_addonLayout != null && _addonLayout.IsHandleCreated)
+                    FissalTheme.ApplyDarkScrollbars(_addonLayout.Handle);
+                if (_setupLayout != null && _setupLayout.IsHandleCreated)
+                    FissalTheme.ApplyDarkScrollbars(_setupLayout.Handle);
+                if (_themeCardsHost != null && _themeCardsHost.IsHandleCreated)
+                    FissalTheme.ApplyDarkScrollbars(_themeCardsHost.Handle);
             }
             catch { }
         }
