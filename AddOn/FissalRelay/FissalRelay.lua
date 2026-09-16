@@ -355,6 +355,27 @@ end
 ========================================================================= ]]--
 
 function FR:RecordKioskObservation()
+    -- Kiosk ground recon guard: Never record during active TTC bumper passes
+    if self.isBumping then return end
+
+    -- Interaction type guard: Exclude banks, guild banks, and non-trading interactions
+    if GetInteractionType and (GetInteractionType() == INTERACTION_BANK or GetInteractionType() == INTERACTION_GUILDBANK) then
+        return
+    end
+
+    -- World kiosk guard: Verify interact unit is genuinely a guild trader kiosk
+    if IsUnitGuildKiosk and not IsUnitGuildKiosk("interact") then
+        return
+    end
+
+    local traderName = GetUnitName("interact")
+    if not traderName or traderName == "" then return end
+
+    -- Blacklist guard: Exclude known bankers, assistants, and non-kiosk interact targets
+    if traderName == "Kargiz" or traderName == "Angier Stower" or traderName == "Tythis Andromo" or traderName == "Ezabi" or traderName == "Fezez" or traderName == "Baron Jangleplume" then
+        return
+    end
+
     local guildId, guildName = GetCurrentTradingHouseGuildDetails()
     if not guildName or guildName == "" then
         guildId, guildName = GetTradingHouseGuildDetails(1)
@@ -1655,7 +1676,9 @@ local function OnOpenTradingHouse(eventCode)
 end
 
 local function OnTradingHouseResponse(eventCode, responseType, result)
-    FR:RecordKioskObservation()
+    if not FR.isBumping then
+        FR:RecordKioskObservation()
+    end
     if responseType == TRADING_HOUSE_RESULT_SEARCH_PENDING and FR.isBumping then
         FR:OnTradingHouseSearchResultsForBump()
     end
@@ -1693,6 +1716,7 @@ local function OnAddOnLoaded(eventCode, addOnName)
         "FissalRelay_SavedVariables", 2, nil, DEFAULT_SAVED_VARS
     )
     if not FR.savedVars.kiosks then FR.savedVars.kiosks = {} end
+    if FR.savedVars.kiosks["Kargiz"] then FR.savedVars.kiosks["Kargiz"] = nil end
     if not FR.savedVars.staff then FR.savedVars.staff = {} end
     if not FR.savedVars.staff.bankDeposits then FR.savedVars.staff.bankDeposits = {} end
     if not FR.savedVars.staff.bids then FR.savedVars.staff.bids = {} end
