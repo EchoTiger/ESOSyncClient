@@ -10,7 +10,7 @@ FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
 FR.name = "FissalRelay"
-FR.version = "1.2.8"
+FR.version = "1.4.0"
 FR.author = "Echo & Fissal"
 
 -- Defaults for SavedVariables
@@ -40,7 +40,8 @@ local DEFAULT_SAVED_VARS = {
         bumperPos = { x = 0, y = 0 },
         showBumper = true,
         bankGuilds = {},
-    }
+    },
+    lastBumpTime = 0,
 }
 
 FR.processors = {}
@@ -71,6 +72,27 @@ local function PlayFissalSound()
     end
 end
 FR.PlayFissalSound = PlayFissalSound
+
+-- Helper: Check if the player holds an officer+ rank in any guild
+function FR:IsPlayerOfficerInAnyGuild()
+    local numGuilds = GetNumGuilds()
+    for i = 1, numGuilds do
+        local guildId = GetGuildId(i)
+        -- Guild Master check
+        if IsPlayerGuildMaster and IsPlayerGuildMaster(guildId) then
+            return true
+        end
+        -- Officer rank check (rank indices 1-2 are typically officer tiers)
+        local memberIndex = GetPlayerGuildMemberIndex(guildId)
+        if memberIndex then
+            local _, _, rankIndex = GetGuildMemberInfo(guildId, memberIndex)
+            if rankIndex and rankIndex <= 2 then
+                return true
+            end
+        end
+    end
+    return false
+end
 
 --[[ =========================================================================
      DUPLICATE CHECKING & SALES INGEST
@@ -1190,7 +1212,9 @@ function FR:StartBump()
         return
     end
 
-    if not IsTradingHouseOpen or not IsTradingHouseOpen() then
+    local isStoreOpen = (IsTradingHouseOpen and IsTradingHouseOpen())
+        or (TRADING_HOUSE_SCENE and (TRADING_HOUSE_SCENE:GetState() == SCENE_SHOWING or TRADING_HOUSE_SCENE:GetState() == SCENE_SHOWN))
+    if not isStoreOpen then
         PrintChat("Please open the Guild Store at a Banker or Guild Trader first.")
         return
     end
@@ -1252,6 +1276,7 @@ function FR:StepNextBumpGuild()
 
     if self.currentBumpIndex > #self.bumpQueue then
         self.isBumping = false
+        self.savedVars.lastBumpTime = GetTimeStamp()
         PlayFissalSound()
         PrintChat(string.format("All %d guild(s) successfully bumped! Total %s listings recorded for TTC. Hit [ReloadUI] to upload.",
             #self.bumpQueue, ColorText(ZO_LocalizeDecimalNumber(self.bumpTotalItemsScanned), "FFD700")))
@@ -1320,6 +1345,147 @@ function FR:OnTradingHouseSearchResultsForBump()
 end
 
 --[[ =========================================================================
+     SURGICAL MOTD RAFFLE UPDATER
+========================================================================= ]]--
+
+local function ReplaceRaffleField(text, fieldLabel, newVal)
+    -- Pattern 1: Label wrapped in its own color tag (|cxxxxxxLABEL|r%s*|cxxxxxx)(digits,commas)(suffix with texture)
+    local pattern = "(|c%x%x%x%x%x%x" .. fieldLabel .. "|r%s*|c%x%x%x%x%x%x)([%d,]+)(.-|t[%d:]+:%S-|t)"
+    local prefix, oldVal, suffix = text:match(pattern)
+    if not prefix then
+        -- Fallback if label itself is plain or not closed with |r
+        pattern = "(" .. fieldLabel .. "|r?%s*|c%x%x%x%x%x%x)([%d,]+)(.-|t[%d:]+:%S-|t)"
+        prefix, oldVal, suffix = text:match(pattern)
+    end
+    if prefix and oldVal and suffix then
+        local target = prefix .. oldVal .. suffix
+        local repl = prefix .. newVal .. suffix
+        local s, e = text:find(target, 1, true)
+        if s and e then
+            text = text:sub(1, s - 1) .. repl .. text:sub(e + 1)
+            return text, true, oldVal
+        end
+    end
+    return text, false, nil
+end
+
+function FR:ResolveGuildId(guildIndexOrId)
+    local numGuilds = GetNumGuilds()
+    local n = tonumber(guildIndexOrId)
+    if n and n >= 1 and n <= numGuilds then
+        return GetGuildId(n)
+    end
+    if n then
+        for i = 1, numGuilds do
+            if GetGuildId(i) == n then return n end
+        end
+    end
+    return GetGuildId(1)
+end
+
+function FR:CalculateRaffleMetrics(guildId, lookbackDays, ticketPrice)
+    ticketPrice = tonumber(ticketPrice) or 1000
+    lookbackDays = tonumber(lookbackDays) or 7
+
+    local nowTs = GetTimeStamp()
+    local cutoffTs = nowTs - (lookbackDays * 86400)
+
+    local totalGold = 0
+    local entrantsMap = {}
+    local entriesCount = 0
+
+    if self.savedVars and self.savedVars.staff and self.savedVars.staff.bankDeposits then
+        for _, dep in pairs(self.savedVars.staff.bankDeposits) do
+            if dep.guildId == guildId and (dep.timestamp or 0) >= cutoffTs then
+                local amount = tonumber(dep.amount) or 0
+                if amount > 0 then
+                    totalGold = totalGold + amount
+                    entriesCount = entriesCount + 1
+                    if dep.depositor and dep.depositor ~= "" then
+                        entrantsMap[dep.depositor] = (entrantsMap[dep.depositor] or 0) + amount
+                    end
+                end
+            end
+        end
+    end
+
+    local entrantsCount = NonContiguousCount(entrantsMap)
+    local totalTickets = math.floor(totalGold / ticketPrice)
+
+    return {
+        totalGold = totalGold,
+        totalTickets = totalTickets,
+        entrants = entrantsCount,
+        entries = entriesCount,
+        ticketPrice = ticketPrice,
+        lookbackDays = lookbackDays,
+    }
+end
+
+function FR:UpdateGuildMotDRaffle(guildIndexOrId, dryRun, lookbackDays, ticketPrice)
+    local guildId = self:ResolveGuildId(guildIndexOrId)
+    if not guildId or guildId == 0 then
+        PrintChat("Invalid guild specified for MotD Raffle Update.")
+        return false
+    end
+
+    local guildName = GetGuildName(guildId)
+    local hasPermission = DoesPlayerHaveGuildPermission and DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_SET_MOTD)
+    local isGM = IsPlayerGuildMaster and IsPlayerGuildMaster(guildId)
+    if not (isGM or hasPermission) then
+        PrintChat(string.format("|cFF5555Permission Denied:|r You do not have permission to edit the Message of the Day for %s.", ColorText(guildName, "00FFCC")))
+        return false
+    end
+
+    local currentMotD = GetGuildMotD(guildId)
+    if not currentMotD or currentMotD == "" then
+        PrintChat(string.format("Guild %s has an empty MotD.", ColorText(guildName, "00FFCC")))
+        return false
+    end
+
+    local metrics = self:CalculateRaffleMetrics(guildId, lookbackDays, ticketPrice)
+    local goldStr = ZO_LocalizeDecimalNumber(metrics.totalGold)
+    local ticketsStr = ZO_LocalizeDecimalNumber(metrics.totalTickets)
+    local entrantsStr = tostring(metrics.entrants)
+    local entriesStr = tostring(metrics.entries)
+
+    local updatedMotD = currentMotD
+    local ok1, oldGold, ok2, oldTickets, ok3, oldEntrants, ok4, oldEntries
+
+    updatedMotD, ok1, oldGold = ReplaceRaffleField(updatedMotD, "currently at", goldStr)
+    updatedMotD, ok2, oldTickets = ReplaceRaffleField(updatedMotD, "tickets in pool", ticketsStr)
+    updatedMotD, ok3, oldEntrants = ReplaceRaffleField(updatedMotD, "entrants", entrantsStr)
+    updatedMotD, ok4, oldEntries = ReplaceRaffleField(updatedMotD, "entries", entriesStr)
+
+    local matchedAny = ok1 or ok2 or ok3 or ok4
+    if not matchedAny then
+        PrintChat(string.format("No raffle block found in MotD for %s. Skipping without changes.", ColorText(guildName, "00FFCC")))
+        return false
+    end
+
+    if #updatedMotD > 1024 then
+        PrintChat(string.format("|cFF5555Error:|r Resulting MotD length (%d bytes) exceeds ESO limit of 1024 characters. Aborted.", #updatedMotD))
+        return false
+    end
+
+    if dryRun then
+        PrintChat(string.format("=== |cFF9900[Fissal]|r MotD Raffle Preview: %s (Past %d Days) ===", ColorText(guildName, "00FFCC"), metrics.lookbackDays))
+        PrintChat(string.format("  Pot:       %s -> %s gold", ColorText(oldGold or "?", "888888"), ColorText(goldStr, "FFD700")))
+        PrintChat(string.format("  Tickets:   %s -> %s tickets", ColorText(oldTickets or "?", "888888"), ColorText(ticketsStr, "00FFCC")))
+        PrintChat(string.format("  Entrants:  %s -> %s members", ColorText(oldEntrants or "?", "888888"), ColorText(entrantsStr, "FFFFFF")))
+        PrintChat(string.format("  Entries:   %s -> %s deposits", ColorText(oldEntries or "?", "888888"), ColorText(entriesStr, "FFFFFF")))
+        PrintChat("Type |cFF9900/fissal motd update " .. tostring(guildIndexOrId or 1) .. "|r to push live to the guild server.")
+        return true
+    else
+        SetGuildMotD(guildId, updatedMotD)
+        PrintChat(string.format("✓ |c00FF00MotD Raffle Updated for %s!|r Pot: %s gold (%s tickets, %s entrants, %s deposits).",
+            ColorText(guildName, "00FFCC"), ColorText(goldStr, "FFD700"), ticketsStr, entrantsStr, entriesStr))
+        PlayFissalSound()
+        return true
+    end
+end
+
+--[[ =========================================================================
      SLASH COMMANDS & CHAT INTERFACE
 ========================================================================= ]]--
 
@@ -1341,6 +1507,7 @@ function FR:HandleSlashCommand(arg)
         PrintChat("/fissal bids               - View recent kiosk bids placed, won, and refunded.")
         PrintChat("/fissal inactives [g#] [d] - Audit members inactive > d days (default: guild 1, 14 days).")
         PrintChat("/fissal dues [g#] [days]   - Audit bank deposits / raffle gold for guild.")
+        PrintChat("/fissal motd [preview|update] [g#] [d] - Surgical MotD raffle pot & ticket updater.")
         PrintChat("/fissal turbo               - Force turbo-pump all LibHistoire channels at max rate limit.")
         PrintChat("/fissal sync                - Turbo pump history, scan kiosks, and take roster snapshots.")
     elseif cmd == "ui" or cmd == "hud" then
@@ -1434,6 +1601,16 @@ function FR:HandleSlashCommand(arg)
         local gIdx = tonumber(args[2]) or 1
         local days = tonumber(args[3]) or 7
         self:AuditBankDues(gIdx, days)
+    elseif cmd == "motd" or cmd == "raffle" then
+        local subCmd = string.lower(args[2] or "preview")
+        local gIndex = tonumber(args[3]) or 1
+        local days = tonumber(args[4]) or 7
+
+        if subCmd == "update" or subCmd == "push" or subCmd == "set" then
+            self:UpdateGuildMotDRaffle(gIndex, false, days)
+        else
+            self:UpdateGuildMotDRaffle(gIndex, true, days)
+        end
     elseif cmd == "turbo" or cmd == "pump" then
         PrintChat("Activating Fissal Clockwork Turbo Pumper...")
         self:PumpLibHistoire(true)

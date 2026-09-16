@@ -166,4 +166,25 @@ public sealed class AddonInstallerServiceTests
         Assert.Contains("FissalRelay", txt);
         Assert.Contains("FissalRelay", lua);
     }
+
+    [Fact]
+    public async Task CheckRemoteAddonVersionAsync_ExtractsAuthorityAndParsesVersion()
+    {
+        var jsonResponse = "{\"addonVersion\":\"1.4.0\",\"addonUrl\":\"https://redfur.ech-o.net/api/relay/v1/download-addon\"}";
+        var handler = new FakeHttpMessageHandler((req, _) =>
+        {
+            Assert.Equal("https://redfur.ech-o.net/api/relay/v1/download", req.RequestUri?.ToString());
+            return Task.FromResult(new HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new StringContent(jsonResponse, System.Text.Encoding.UTF8, "application/json")
+            });
+        });
+
+        using var client = new HttpClient(handler);
+        var ok = await AddonInstallerService.CheckRemoteAddonVersionAsync("https://redfur.ech-o.net/upload", client);
+
+        Assert.True(ok);
+        Assert.Equal("1.4.0", AddonInstallerService.ActiveLatestAddonVersion);
+        Assert.Equal("https://redfur.ech-o.net/api/relay/v1/download-addon", AddonInstallerService.RemoteAddonDownloadUrl);
+    }
 }

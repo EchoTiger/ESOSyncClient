@@ -98,7 +98,7 @@ function FR:CreateHUD()
 
     -- 1. Main TopLevelWindow (draggable, mouse-interactive, clamped)
     local hud = wm:CreateTopLevelWindow("FissalRelay_HUD")
-    hud:SetDimensions(350, 196)
+    hud:SetDimensions(350, 220)
     hud:SetClampedToScreen(true)
     hud:SetMouseEnabled(true)
     hud:SetMovable(true)
@@ -284,17 +284,21 @@ function FR:CreateHUD()
         syncVal:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
     end
 
-    -- 10. Bottom Divider Line
+    -- 10. Last Bump Meter Row (6th telemetry row)
+    local _bumpLbl, _bumpVal = CreateMeterRow("Bump", "Last Bump:", 151)
+    self.hudElements.bumpVal = _bumpVal
+
+    -- 11. Bottom Divider Line
     local divider2 = wm:CreateControl("$(parent)_Div2", hud, CT_TEXTURE)
-    divider2:SetAnchor(TOPLEFT, hud, TOPLEFT, 8, 154)
-    divider2:SetAnchor(TOPRIGHT, hud, TOPRIGHT, -8, 154)
+    divider2:SetAnchor(TOPLEFT, hud, TOPLEFT, 8, 177)
+    divider2:SetAnchor(TOPRIGHT, hud, TOPRIGHT, -8, 177)
     divider2:SetHeight(1)
     divider2:SetColor(0.3, 0.3, 0.35, 0.4)
 
-    -- 11. Footer Heartbeat & Status Indicator
+    -- 12. Footer Heartbeat & Status Indicator
     local footer = wm:CreateControl("$(parent)_Footer", hud, CT_LABEL)
-    footer:SetAnchor(TOPLEFT, hud, TOPLEFT, 12, 162)
-    footer:SetAnchor(TOPRIGHT, hud, TOPRIGHT, -12, 162)
+    footer:SetAnchor(TOPLEFT, hud, TOPLEFT, 12, 185)
+    footer:SetAnchor(TOPRIGHT, hud, TOPRIGHT, -12, 185)
     footer:SetFont("ZoFontGameSmall")
     footer:SetText("|c00FF00●|r Courier Ready • LibHistoire: Auto • /fissal")
     self.hudElements.footer = footer
@@ -372,6 +376,23 @@ function FR:UpdateHUD()
     end
     local bidCount = NonContiguousCount(self.savedVars.staff and self.savedVars.staff.bids or {})
     self.hudElements.kiosksVal:SetText(string.format("|c00FF00%d|r owned • |cFFD700%d|r bids", ownedCount, bidCount))
+
+    -- 3b. Last Bump Time
+    if self.hudElements.bumpVal then
+        local lastBump = self.savedVars.lastBumpTime or 0
+        if lastBump > 0 then
+            local ago = GetTimeStamp() - lastBump
+            local agoStr
+            if ago < 60 then agoStr = "just now"
+            elseif ago < 3600 then agoStr = string.format("%dm ago", math.floor(ago / 60))
+            elseif ago < 86400 then agoStr = string.format("%dh ago", math.floor(ago / 3600))
+            else agoStr = string.format("%dd ago", math.floor(ago / 86400))
+            end
+            self.hudElements.bumpVal:SetText(string.format("|c00FFCC%s|r", agoStr))
+        else
+            self.hudElements.bumpVal:SetText("|c888888Never|r")
+        end
+    end
 
     -- 4. Rosters & Bank Dues
     local rosters = NonContiguousCount(self.savedVars.staff and self.savedVars.staff.rosterSnapshots or {})
@@ -950,19 +971,23 @@ function FR:CreateSettingsMenu()
             end,
             width = "full",
         },
-        {
+    }
+
+    -- Staff Management Tools (only visible to officers/GM)
+    if FR:IsPlayerOfficerInAnyGuild() then
+        table.insert(optionsData, {
             type = "header",
             name = "Staff Management Tools",
-        },
-        {
+        })
+        table.insert(optionsData, {
             type = "checkbox",
             name = "Auto Roster Snapshot on Login",
             tooltip = "Automatically snapshot guild rosters 10 seconds after logging in.",
             getFunc = function() return FR.savedVars.settings.autoRosterSnapshotOnLogin end,
             setFunc = function(value) FR.savedVars.settings.autoRosterSnapshotOnLogin = value end,
             default = true,
-        },
-        {
+        })
+        table.insert(optionsData, {
             type = "button",
             name = "Audit Inactives (Guild 1, 14d)",
             tooltip = "Scan members inactive > 14 days and print summary for Discord purge.",
@@ -970,8 +995,8 @@ function FR:CreateSettingsMenu()
                 FR:AuditInactives(1, 14)
             end,
             width = "half",
-        },
-        {
+        })
+        table.insert(optionsData, {
             type = "button",
             name = "Audit Bank Dues (Guild 1, 7d)",
             tooltip = "Aggregate weekly gold deposits for raffle tickets and dues.",
@@ -979,8 +1004,8 @@ function FR:CreateSettingsMenu()
                 FR:AuditBankDues(1, 7)
             end,
             width = "half",
-        },
-        {
+        })
+        table.insert(optionsData, {
             type = "button",
             name = "Snapshot Rosters Now",
             tooltip = "Capture current member list, ranks, and notes for all guilds.",
@@ -989,16 +1014,39 @@ function FR:CreateSettingsMenu()
                 d(string.format("|cFF9900[Fissal]|r Snapped roster for %d guild(s).", count))
             end,
             width = "full",
-        },
-        {
-            type = "header",
-            name = "Guild Trader Sales Tracking",
-        },
-        {
-            type = "description",
-            text = "Fissal monitors your guild store sales using LibHistoire. Guilds that do not have a Trading House unlocked (less than 50 members) are automatically excluded to prevent request lockouts.",
-        },
-    }
+        })
+        table.insert(optionsData, {
+            type = "button",
+            name = "Preview MotD Raffle (Guild 1)",
+            tooltip = "Preview updated raffle pot, tickets, entrants, and entries in chat without saving.",
+            func = function()
+                if FR.UpdateGuildMotDRaffle then
+                    FR:UpdateGuildMotDRaffle(1, true, 7)
+                end
+            end,
+            width = "half",
+        })
+        table.insert(optionsData, {
+            type = "button",
+            name = "Push MotD Raffle (Guild 1)",
+            tooltip = "Surgically update the in-game Message of the Day with fresh raffle data from bank deposits.",
+            func = function()
+                if FR.UpdateGuildMotDRaffle then
+                    FR:UpdateGuildMotDRaffle(1, false, 7)
+                end
+            end,
+            width = "half",
+        })
+    end -- Staff tools rank gate
+
+    table.insert(optionsData, {
+        type = "header",
+        name = "Guild Trader Sales Tracking",
+    })
+    table.insert(optionsData, {
+        type = "description",
+        text = "Fissal monitors your guild store sales using LibHistoire. Guilds that do not have a Trading House unlocked (less than 50 members) are automatically excluded to prevent request lockouts.",
+    })
 
     local numGuilds = GetNumGuilds()
     for i = 1, numGuilds do

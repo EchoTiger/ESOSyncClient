@@ -40,19 +40,31 @@ namespace RedfurSync
         public const string AddonDirectoryName = "FissalRelay";
         public const string ClientDirectoryName = "Client";
         public const string TargetExeName = "RedfurSync.exe";
-        public const string LatestAddonVersion = "1.2.8";
-        public const int LatestAddonVersionCode = 10208;
+        public const string LatestAddonVersion = "1.4.0";
+        public const int LatestAddonVersionCode = 10400;
         public const string TtcPriceTableUrl = "https://us.tamrieltradecentre.com/download/PriceTable";
 
         public static string ActiveLatestAddonVersion { get; set; } = LatestAddonVersion;
         public static string? RemoteAddonDownloadUrl { get; set; } = null;
 
-        public static async Task<bool> CheckRemoteAddonVersionAsync(string? serverUrl = null)
+        public static async Task<bool> CheckRemoteAddonVersionAsync(string? serverUrl = null, HttpClient? httpClient = null)
         {
             try
             {
-                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(5) };
-                string baseUri = !string.IsNullOrWhiteSpace(serverUrl) ? serverUrl.TrimEnd('/') : "https://redfur.ech-o.net";
+                using var defaultHttp = httpClient == null ? new HttpClient { Timeout = TimeSpan.FromSeconds(5) } : null;
+                var http = httpClient ?? defaultHttp!;
+                string baseUri = "https://redfur.ech-o.net";
+                if (!string.IsNullOrWhiteSpace(serverUrl))
+                {
+                    if (Uri.TryCreate(serverUrl, UriKind.Absolute, out var parsedUri))
+                    {
+                        baseUri = parsedUri.GetLeftPart(UriPartial.Authority);
+                    }
+                    else
+                    {
+                        baseUri = serverUrl.TrimEnd('/');
+                    }
+                }
                 string url = $"{baseUri}/api/relay/v1/download";
                 var json = await http.GetStringAsync(url);
                 using var doc = System.Text.Json.JsonDocument.Parse(json);
@@ -187,7 +199,7 @@ namespace RedfurSync
 
         public static AddonStatusResult CheckAddonInstallStatus(string? explicitEsoLiveDir = null, Func<string>? customProvider = null)
         {
-            string? liveDir = !string.IsNullOrWhiteSpace(explicitEsoLiveDir) && Directory.Exists(explicitEsoLiveDir)
+            string? liveDir = !string.IsNullOrWhiteSpace(explicitEsoLiveDir)
                 ? explicitEsoLiveDir
                 : FindEsoLiveDirectory(customProvider);
 
@@ -481,8 +493,8 @@ namespace RedfurSync
 
         private const string AddonManifestTemplate = @"## Title: |cFF9900Fissal's|r Cogwork Relay
 ## Author: Echo & Fissal
-## Version: 1.2.8
-## AddOnVersion: 10208
+## Version: 1.4.0
+## AddOnVersion: 10400
 ## APIVersion: 101048 101049
 ## SavedVariables: FissalRelay_SavedVariables
 ## DependsOn: LibHistoire>=1062 LibAddonMenu-2.0>=41

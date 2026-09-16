@@ -3164,7 +3164,7 @@ namespace RedfurSync
             formPanel.Controls.Add(MakeFieldLabel("Latest Available:"), 0, 3);
             _lblAddonLatestVer = new Label
             {
-                Text = $"v{AddonInstallerService.LatestAddonVersion} (Bundled Release)",
+                Text = $"v{AddonInstallerService.ActiveLatestAddonVersion} (Latest Available)",
                 ForeColor = CGoldBrt,
                 Font = Mono(9f, _scale, FontStyle.Bold),
                 Dock = DockStyle.Fill,
