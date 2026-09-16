@@ -114,6 +114,16 @@ function FR:AddSale(event, guildId)
     local price = info.price or 0
     local quantity = info.quantity or 1
     local itemLink = info.itemLink or ""
+    if itemLink ~= "" and not itemLink:find("%[") and GetItemLinkName then
+        local rawName = GetItemLinkName(itemLink)
+        if rawName and rawName ~= "" then
+            local formattedName = rawName
+            if zo_strformat then
+                formattedName = zo_strformat("<<t:1>>", rawName)
+            end
+            itemLink = itemLink:gsub("|h|h$", "|h[" .. formattedName .. "]|h")
+        end
+    end
     local eventTime = event:GetEventTimestampS() or GetTimeStamp()
 
     -- Check if buyer was an outsider (kiosk sale)
