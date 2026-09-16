@@ -407,7 +407,7 @@ namespace RedfurSync
                 var shortcutPath = Path.Combine(desktopPath, "Fissal Relay.lnk");
 
                 // Use PowerShell to generate the shortcut safely without external COM dependencies
-                var psScript = $"$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('{shortcutPath.Replace("'", "''")}'); $s.TargetPath = '{targetExePath.Replace("'", "''")}'; $s.WorkingDirectory = '{Path.GetDirectoryName(targetExePath)!.Replace("'", "''")}'; $s.Description = 'Fissal Cogwork Relay for Castle Echo'; $s.Save()";
+                var psScript = $"$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('{shortcutPath.Replace("'", "''")}'); $s.TargetPath = '{targetExePath.Replace("'", "''")}'; $s.WorkingDirectory = '{Path.GetDirectoryName(targetExePath)!.Replace("'", "''")}'; $s.Description = 'Fissal Cogwork Relay for Redfur Guilds'; $s.Save()";
                 
                 var psi = new ProcessStartInfo
                 {

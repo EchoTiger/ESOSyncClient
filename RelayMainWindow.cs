@@ -652,7 +652,7 @@ namespace RedfurSync
 
                 if (!_isConnected)
                 {
-                    statuses.Add(("⚠ DISCONNECTED FROM CASTLE ECHO // RETRYING TONAL LINK", CBarFail, 2));
+                    statuses.Add(("⚠ DISCONNECTED FROM REDFUR RELAY // RETRYING TONAL LINK", CBarFail, 2));
                 }
                 if (hasError)
                 {
@@ -679,7 +679,7 @@ namespace RedfurSync
                     string userStatus = string.IsNullOrWhiteSpace(dispName) ? "" : $"> OPERATOR: {dispName.ToUpper()}";
 
                     statuses.Add(("> STAND BY... MONITORING ESO LIVE", Color.FromArgb(255, 50, 255, 50), 0));
-                    statuses.Add(("● TONAL TRANSCEIVER RESONANT • CASTLE ECHO", Color.FromArgb(255, 50, 255, 50), 0));
+                    statuses.Add(("● TONAL TRANSCEIVER RESONANT • REDFUR RELAY", Color.FromArgb(255, 50, 255, 50), 0));
                     if (!string.IsNullOrEmpty(userStatus)) statuses.Add((userStatus, Color.FromArgb(255, 50, 255, 50), 0));
                     if (safeJobs.Count > 0)
                     {
@@ -1483,7 +1483,7 @@ namespace RedfurSync
                 int pct = (int)(activeJob.Progress * 100);
                 string bar = BuildAsciiBar(activeJob.Progress, 8);
 
-                _tickerLabel.Text = $"{spin} [TRANSMITTING] {activeJob.FileName} • {pct}% {bar} {wave} CASTLE ECHO";
+                _tickerLabel.Text = $"{spin} [TRANSMITTING] {activeJob.FileName} • {pct}% {bar} {wave} REDFUR RELAY";
                 _tickerLabel.ForeColor = CGoldBrt;
             }
         }
@@ -1594,7 +1594,7 @@ namespace RedfurSync
                 _syncStateBadge.ForeColor = CGreen;
                 _messageBoardText = failed > 0 ? $"Notice: {failed} file{(failed == 1 ? "" : "s")} failed to upload" : "All guild data synchronized • Watching for ESO updates";
                 _messageBoardColor = failed > 0 ? CBarFail : CGreen;
-                _titleStatusLabel.Text = failed > 0 ? "⚠ ATTENTION NEEDED" : "● CONNECTED TO CASTLE ECHO";
+                _titleStatusLabel.Text = failed > 0 ? "⚠ ATTENTION NEEDED" : "● CONNECTED TO REDFUR RELAY";
                 _titleStatusLabel.ForeColor = failed > 0 ? CBarFail : CGreen;
             }
 
@@ -1613,7 +1613,7 @@ namespace RedfurSync
             else if (uploading == 0 && queued == 0 && _batchInProgress)
             {
                 _batchInProgress = false;
-                LogTelemetry("BATCH", $"└─── ✓ BATCH COMPLETE: All telemetry cassettes synchronized to Castle Echo ───", CGreen);
+                LogTelemetry("BATCH", $"└─── ✓ BATCH COMPLETE: All telemetry cassettes synchronized to Redfur Relay ───", CGreen);
             }
 
             // Telemetry tracking for individual state transitions
@@ -1623,7 +1623,7 @@ namespace RedfurSync
                 {
                     _loggedJobStates[job.FileName] = job.Status;
                     if (job.Status == UploadStatus.Done)
-                        LogTelemetry("VERIFIED", $"{job.FileName} synchronized to Castle Echo ({job.FileSizeDisplay})", CGreen);
+                        LogTelemetry("VERIFIED", $"{job.FileName} synchronized to Redfur Relay ({job.FileSizeDisplay})", CGreen);
                     else if (job.Status == UploadStatus.Failed)
                         LogTelemetry("ALERT", $"{job.FileName} failed: {job.ErrorMessage}", CBarFail);
                     else if (job.Status == UploadStatus.UpdateReady)
@@ -1761,7 +1761,7 @@ namespace RedfurSync
                 };
                 var emptyLabel = new Label
                 {
-                    Text = "✓ All guild data synchronized with Castle Echo. Monitoring for changes.",
+                    Text = "✓ All guild data synchronized with Redfur Relay. Monitoring for changes.",
                     ForeColor = CTextSub,
                     Font = Body(8.5f, _scale, FontStyle.Italic),
                     Dock = DockStyle.Fill,
@@ -2448,7 +2448,7 @@ namespace RedfurSync
                 _ => CTextSub
             };
             controls.DetailLabel.Text = string.IsNullOrWhiteSpace(job.ErrorMessage)
-                ? (job.Status == UploadStatus.Done ? "Verified • Synchronized to Castle Echo" : "")
+                ? (job.Status == UploadStatus.Done ? "Verified • Synchronized to Redfur Relay" : "")
                 : job.ErrorMessage;
             controls.DetailLabel.ForeColor = string.IsNullOrWhiteSpace(job.ErrorMessage) ? CTextSub : CBarFail;
 
@@ -4103,7 +4103,7 @@ namespace RedfurSync
                 return;
             }
             _isConnected = ok;
-            _titleStatusLabel.Text = ok ? "● CONNECTED TO CASTLE ECHO" : "⚠ DISCONNECTED";
+            _titleStatusLabel.Text = ok ? "● CONNECTED TO REDFUR RELAY" : "⚠ DISCONNECTED";
             _titleStatusLabel.ForeColor = ok ? CGreen : CBarFail;
             _messageBoardText = ok ? "All guild trader lines & bank deposits verified • Watching ESO" : "Connection Degraded — Check server URL in Setup";
             _messageBoardColor = ok ? CGreen : CBarFail;

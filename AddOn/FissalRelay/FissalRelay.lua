@@ -1,6 +1,6 @@
 --[[
     Fissal's Cogwork Relay (FissalRelay)
-    Crafted by Echo & Fissal for Castle Echo and the Redfur Guilds.
+    Crafted by Echo & Fissal for Fissal Relay and the Redfur Guilds.
     
     Unified high-fidelity LibHistoire event capture, In-Person Kiosk Ground Recon,
     and All-Guild Staff Management Utilities.

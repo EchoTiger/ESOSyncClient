@@ -2,7 +2,7 @@
     FissalRelay_UI.lua
     Settings panel (LibAddonMenu-2.0), Floating Telemetry HUD Status Meter,
     and TTC Guild Bumper Interface
-    Crafted by Echo & Fissal for Castle Echo and the Redfur Guilds.
+    Crafted by Echo & Fissal for Fissal Relay and the Redfur Guilds.
 ]]--
 
 FissalRelay = FissalRelay or {}
@@ -808,7 +808,7 @@ function FR:CreateSettingsMenu()
         },
         {
             type = "description",
-            text = "Fissal watches your guild store transactions, kiosk ground recon, and bank ledgers with clockwork precision, feeding data smoothly to Castle Echo.",
+            text = "Fissal watches your guild store transactions, kiosk ground recon, and bank ledgers with clockwork precision, feeding data smoothly to Redfur Relay.",
         },
         {
             type = "checkbox",
@@ -942,7 +942,7 @@ function FR:CreateSettingsMenu()
         },
         {
             type = "description",
-            text = "Visiting any Guild Trader in Tamriel automatically records the holding guild and coordinates, grounding Castle Echo with authoritative in-game truth.",
+            text = "Visiting any Guild Trader in Tamriel automatically records the holding guild and coordinates, grounding Redfur Relay with authoritative in-game truth.",
         },
         {
             type = "button",
