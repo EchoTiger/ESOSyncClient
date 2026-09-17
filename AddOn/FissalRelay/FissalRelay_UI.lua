@@ -784,6 +784,522 @@ function FR:ResetBumperPosition()
 end
 
 --[[ =========================================================================
+     MOTD RAFFLE MANAGER UI (Interactive Editor & Live Character Gauge)
+========================================================================= ]]--
+
+local RAFFLE_TEMPLATE_BLOCK = [[|cFFD700★ WEEKLY GUILD RAFFLE ★|r
+Pot: currently at |cFFD7000|r |t16:16:EsoUI/Art/currency/currency_gold.dds|t
+Pool: |c00FFCCtickets in pool|r |c00FFCC0|r |t16:16:EsoUI/Art/icons/quest_ticket.dds|t
+Participants: |cFFFFFFentrants|r |cFFFFFF0|r |t16:16:EsoUI/Art/compass/compass_groupLeader.dds|t
+Total Deposits: |cFFFFFFentries|r |cFFFFFF0|r |t16:16:EsoUI/Art/icons/icon_experience.dds|t]]
+
+function FR:UpdateMotDGauge()
+    if not self.motdEditBox or not self.motdGaugeLbl then return end
+    local text = self.motdEditBox:GetText() or ""
+    local charCount = (zo_strlen and zo_strlen(text)) or #text
+    local byteCount = #text
+
+    local colorCode = "00FF00"
+    local statusNote = string.format("%d characters remaining", 1024 - charCount)
+    if charCount > 1024 then
+        colorCode = "FF5555"
+        statusNote = string.format("|cFF5555+%d characters OVER the 1024 limit!|r", charCount - 1024)
+    elseif charCount > 950 then
+        colorCode = "FFCC00"
+        statusNote = string.format("|cFFCC00%d characters remaining (Near limit)|r", 1024 - charCount)
+    end
+
+    self.motdGaugeLbl:SetText(string.format("Length: |c%s%d / 1024 characters|r (|c888888%s bytes|r) • %s",
+        colorCode, charCount, ZO_LocalizeDecimalNumber(byteCount), statusNote))
+end
+
+function FR:CreateMotDUI()
+    if self.motdWindow then return end
+    if not self.savedVars or not self.savedVars.settings then return end
+
+    local wm = WINDOW_MANAGER
+
+    -- 1. Main TopLevelWindow (Draggable, movable, clamped)
+    local motdWin = wm:CreateTopLevelWindow("FissalRelay_MotDUI")
+    motdWin:SetDimensions(640, 560)
+    motdWin:SetClampedToScreen(true)
+    motdWin:SetMouseEnabled(true)
+    motdWin:SetMovable(true)
+    motdWin:SetHidden(true)
+
+    -- Position restoration
+    local pos = self.savedVars.settings.motdPos
+    motdWin:ClearAnchors()
+    if pos and pos.x and pos.y and (pos.x ~= 0 or pos.y ~= 0) then
+        motdWin:SetAnchor(TOPLEFT, GuiRoot, TOPLEFT, pos.x, pos.y)
+    else
+        motdWin:SetAnchor(CENTER, GuiRoot, CENTER, 0, -20)
+    end
+
+    motdWin:SetHandler("OnMoveStop", function(control)
+        self.savedVars.settings.motdPos = {
+            x = control:GetLeft(),
+            y = control:GetTop(),
+        }
+    end)
+
+    if UISpecialWindows then
+        table.insert(UISpecialWindows, "FissalRelay_MotDUI")
+    end
+
+    -- 2. Dark Tinted Backdrop
+    local backdrop = wm:CreateControl("$(parent)_Backdrop", motdWin, CT_BACKDROP)
+    backdrop:SetAnchorFill()
+    backdrop:SetCenterColor(0.04, 0.04, 0.06, 0.94)
+    backdrop:SetEdgeColor(0.75, 0.50, 0.10, 0.95)
+    backdrop:SetEdgeTexture("", 8, 1, 0)
+
+    -- 3. Munge Bezel Texture
+    local munge = wm:CreateControl("$(parent)_Munge", motdWin, CT_TEXTURE)
+    munge:SetAnchorFill()
+    munge:SetTexture("EsoUI/Art/Performance/StatusMeterMunge.dds")
+    munge:SetAlpha(0.65)
+
+    -- 4. Header Icon
+    local icon = wm:CreateControl("$(parent)_Icon", motdWin, CT_TEXTURE)
+    icon:SetAnchor(TOPLEFT, motdWin, TOPLEFT, 12, 10)
+    icon:SetDimensions(22, 22)
+    icon:SetTexture("EsoUI/Art/MainMenu/menuBar_guilds_up.dds")
+
+    -- 5. Title
+    local title = wm:CreateControl("$(parent)_Title", motdWin, CT_LABEL)
+    title:SetAnchor(LEFT, icon, RIGHT, 8, 0)
+    title:SetFont("ZoFontGameBold")
+    title:SetText("|cFF9900FISSAL|r |c00FFCCMOTD RAFFLE MANAGER|r")
+
+    -- 6. Close Button [×]
+    local closeBtn = wm:CreateControl("$(parent)_Close", motdWin, CT_BUTTON)
+    closeBtn:SetAnchor(TOPRIGHT, motdWin, TOPRIGHT, -10, 8)
+    closeBtn:SetDimensions(20, 20)
+    closeBtn:SetFont("ZoFontGameBold")
+    closeBtn:SetNormalFontColor(0.7, 0.7, 0.7, 1)
+    closeBtn:SetMouseOverFontColor(1, 0.3, 0.3, 1)
+    closeBtn:SetText("×")
+    closeBtn:SetHandler("OnClicked", function()
+        self:ToggleMotDUI(false)
+    end)
+
+    -- 7. Header Divider
+    local divider = wm:CreateControl("$(parent)_Div1", motdWin, CT_TEXTURE)
+    divider:SetAnchor(TOPLEFT, motdWin, TOPLEFT, 10, 34)
+    divider:SetAnchor(TOPRIGHT, motdWin, TOPRIGHT, -10, 34)
+    divider:SetHeight(1)
+    divider:SetColor(0.8, 0.5, 0.1, 0.4)
+
+    -- 8. Guild Selector Tabs
+    self.motdGuildButtons = {}
+    self.motdSelectedGuildIndex = 1
+    self.motdLookbackDays = 7
+
+    for i = 1, 5 do
+        local btn = wm:CreateControl("$(parent)_GuildTab_" .. i, motdWin, CT_BUTTON)
+        btn:SetAnchor(TOPLEFT, motdWin, TOPLEFT, 12 + (i - 1) * 123, 38)
+        btn:SetDimensions(120, 24)
+        btn:SetFont("ZoFontGameSmall")
+        btn:SetNormalFontColor(0.7, 0.7, 0.7, 1)
+        btn:SetMouseOverFontColor(1, 0.9, 0.4, 1)
+        btn:SetText(string.format("Guild %d", i))
+        btn:SetHandler("OnClicked", function()
+            self.motdSelectedGuildIndex = i
+            self:UpdateMotDUI(true)
+        end)
+        self.motdGuildButtons[i] = btn
+    end
+
+    -- 9. Metrics & Lookback Inset Card
+    local metricsCard = wm:CreateControl("$(parent)_MetricsCard", motdWin, CT_BACKDROP)
+    metricsCard:SetAnchor(TOPLEFT, motdWin, TOPLEFT, 12, 66)
+    metricsCard:SetAnchor(TOPRIGHT, motdWin, TOPRIGHT, -12, 66)
+    metricsCard:SetHeight(58)
+    metricsCard:SetCenterColor(0.06, 0.06, 0.08, 0.85)
+    metricsCard:SetEdgeColor(0.30, 0.25, 0.18, 0.70)
+    metricsCard:SetEdgeTexture("", 8, 1, 0)
+
+    local lookbackLbl = wm:CreateControl("$(parent)_LookbackLbl", metricsCard, CT_LABEL)
+    lookbackLbl:SetAnchor(TOPLEFT, metricsCard, TOPLEFT, 8, 8)
+    lookbackLbl:SetFont("ZoFontGameSmall")
+    lookbackLbl:SetColor(0.8, 0.8, 0.8, 1)
+    lookbackLbl:SetText("Lookback:")
+
+    self.motdLookbackBtns = {}
+    local dayOptions = { 7, 14, 30 }
+    for idx, d in ipairs(dayOptions) do
+        local dBtn = wm:CreateControl("$(parent)_DayBtn_" .. d, metricsCard, CT_BUTTON)
+        dBtn:SetAnchor(TOPLEFT, metricsCard, TOPLEFT, 8 + (idx - 1) * 36, 26)
+        dBtn:SetDimensions(32, 22)
+        dBtn:SetFont("ZoFontGameSmall")
+        dBtn:SetText(string.format("%dd", d))
+        dBtn:SetHandler("OnClicked", function()
+            self.motdLookbackDays = d
+            self:UpdateMotDUI(false)
+        end)
+        self.motdLookbackBtns[d] = dBtn
+    end
+
+    local recalcBtn = wm:CreateControl("$(parent)_RecalcBtn", metricsCard, CT_BUTTON)
+    recalcBtn:SetAnchor(TOPLEFT, metricsCard, TOPLEFT, 120, 26)
+    recalcBtn:SetDimensions(26, 22)
+    recalcBtn:SetFont("ZoFontGameSmall")
+    recalcBtn:SetNormalFontColor(0, 1, 0.8, 1)
+    recalcBtn:SetText("↻")
+    recalcBtn:SetHandler("OnClicked", function()
+        self:UpdateMotDUI(false)
+    end)
+
+    local potLbl = wm:CreateControl("$(parent)_PotLbl", metricsCard, CT_LABEL)
+    potLbl:SetAnchor(TOPLEFT, metricsCard, TOPLEFT, 155, 8)
+    potLbl:SetFont("ZoFontGame")
+    potLbl:SetText("Pot: |cFFD7000|r")
+    self.motdPotLbl = potLbl
+
+    local tixLbl = wm:CreateControl("$(parent)_TixLbl", metricsCard, CT_LABEL)
+    tixLbl:SetAnchor(TOPLEFT, metricsCard, TOPLEFT, 380, 8)
+    tixLbl:SetFont("ZoFontGame")
+    tixLbl:SetText("Tickets: |c00FFCC0|r")
+    self.motdTixLbl = tixLbl
+
+    local entLbl = wm:CreateControl("$(parent)_EntLbl", metricsCard, CT_LABEL)
+    entLbl:SetAnchor(TOPLEFT, metricsCard, TOPLEFT, 155, 32)
+    entLbl:SetFont("ZoFontGameSmall")
+    entLbl:SetText("Entrants: 0 members")
+    self.motdEntLbl = entLbl
+
+    local depLbl = wm:CreateControl("$(parent)_DepLbl", metricsCard, CT_LABEL)
+    depLbl:SetAnchor(TOPLEFT, metricsCard, TOPLEFT, 380, 32)
+    depLbl:SetFont("ZoFontGameSmall")
+    depLbl:SetText("Total Deposits: 0")
+    self.motdDepLbl = depLbl
+
+    -- 10. Status / Authority Line
+    local authLbl = wm:CreateControl("$(parent)_AuthLbl", motdWin, CT_LABEL)
+    authLbl:SetAnchor(TOPLEFT, motdWin, TOPLEFT, 14, 128)
+    authLbl:SetFont("ZoFontGameSmall")
+    authLbl:SetText("Guild: --")
+    self.motdAuthLbl = authLbl
+
+    -- 11. MotD Editor Title
+    local editorTitle = wm:CreateControl("$(parent)_EditorTitle", motdWin, CT_LABEL)
+    editorTitle:SetAnchor(TOPLEFT, motdWin, TOPLEFT, 14, 148)
+    editorTitle:SetFont("ZoFontGameBold")
+    editorTitle:SetText("Message of the Day (Live Server View / Draft):")
+
+    -- 12. EditBox Container Backdrop
+    local editBg = wm:CreateControlFromVirtual("$(parent)_EditBackdrop", motdWin, "ZO_EditBackdrop")
+    editBg:SetAnchor(TOPLEFT, motdWin, TOPLEFT, 12, 168)
+    editBg:SetAnchor(TOPRIGHT, motdWin, TOPRIGHT, -12, 168)
+    editBg:SetHeight(240)
+
+    -- 13. Multi-line EditBox
+    local editbox = wm:CreateControlFromVirtual("$(parent)_Edit", editBg, "ZO_DefaultEditMultiLineForBackdrop")
+    editbox:SetAnchor(TOPLEFT, editBg, TOPLEFT, 8, 6)
+    editbox:SetAnchor(BOTTOMRIGHT, editBg, BOTTOMRIGHT, -8, -6)
+    editbox:SetFont("ZoFontGame")
+    editbox:SetMaxInputChars(4000)
+
+    editbox:SetHandler("OnMouseWheel", function(ctrl, delta)
+        if ctrl:HasFocus() then
+            local cursorPos = ctrl:GetCursorPosition()
+            local text = ctrl:GetText()
+            local textLen = #text
+            local newPos
+            if delta > 0 then
+                local reverseText = text:reverse()
+                local revCursorPos = textLen - cursorPos
+                local revPos = reverseText:find("\n", revCursorPos + 1)
+                newPos = revPos and (textLen - revPos)
+            else
+                newPos = text:find("\n", cursorPos + 1)
+            end
+            if newPos then ctrl:SetCursorPosition(newPos) end
+        end
+    end)
+
+    editbox:SetHandler("OnTextChanged", function(ctrl)
+        self:UpdateMotDGauge()
+    end)
+
+    self.motdEditBox = editbox
+
+    -- 14. Character & Byte Gauge Bar
+    local gaugeLbl = wm:CreateControl("$(parent)_GaugeLbl", motdWin, CT_LABEL)
+    gaugeLbl:SetAnchor(TOPLEFT, motdWin, TOPLEFT, 14, 412)
+    gaugeLbl:SetFont("ZoFontGameBold")
+    gaugeLbl:SetText("Length: 0 / 1024 characters (0 bytes)")
+    self.motdGaugeLbl = gaugeLbl
+
+    -- 15. Action Buttons - Row 1 (Raffle Tools)
+    local applyBtn = wm:CreateControl("$(parent)_ApplyBtn", motdWin, CT_BUTTON)
+    applyBtn:SetAnchor(TOPLEFT, motdWin, TOPLEFT, 12, 436)
+    applyBtn:SetDimensions(200, 26)
+    applyBtn:SetFont("ZoFontGameBold")
+    applyBtn:SetNormalFontColor(1, 0.85, 0.2, 1)
+    applyBtn:SetText("⚡ Apply Numbers")
+    applyBtn:SetHandler("OnClicked", function()
+        self:ApplyRaffleNumbersToEditor()
+    end)
+    self.motdApplyBtn = applyBtn
+
+    local templateBtn = wm:CreateControl("$(parent)_TemplateBtn", motdWin, CT_BUTTON)
+    templateBtn:SetAnchor(TOPLEFT, motdWin, TOPLEFT, 218, 436)
+    templateBtn:SetDimensions(200, 26)
+    templateBtn:SetFont("ZoFontGameBold")
+    templateBtn:SetNormalFontColor(0, 1, 0.8, 1)
+    templateBtn:SetText("＋ Insert Template")
+    templateBtn:SetHandler("OnClicked", function()
+        self:InsertRaffleTemplateToEditor()
+    end)
+
+    local previewBtn = wm:CreateControl("$(parent)_PreviewBtn", motdWin, CT_BUTTON)
+    previewBtn:SetAnchor(TOPLEFT, motdWin, TOPLEFT, 424, 436)
+    previewBtn:SetAnchor(TOPRIGHT, motdWin, TOPRIGHT, -12, 436)
+    previewBtn:SetHeight(26)
+    previewBtn:SetFont("ZoFontGameBold")
+    previewBtn:SetNormalFontColor(0.8, 0.8, 1, 1)
+    previewBtn:SetText("💬 Chat Preview")
+    previewBtn:SetHandler("OnClicked", function()
+        self:UpdateGuildMotDRaffle(self.motdSelectedGuildIndex, true, self.motdLookbackDays or 7)
+    end)
+
+    -- 16. Action Buttons - Row 2 (Server Sync)
+    local revertBtn = wm:CreateControl("$(parent)_RevertBtn", motdWin, CT_BUTTON)
+    revertBtn:SetAnchor(TOPLEFT, motdWin, TOPLEFT, 12, 468)
+    revertBtn:SetDimensions(200, 28)
+    revertBtn:SetFont("ZoFontGameBold")
+    revertBtn:SetNormalFontColor(0.7, 0.7, 0.7, 1)
+    revertBtn:SetText("↺ Revert from Server")
+    revertBtn:SetHandler("OnClicked", function()
+        self:UpdateMotDUI(true)
+        if self.motdStatusText then
+            self.motdStatusText:SetText("|c00FFCCReverted editor to live server MotD.|r")
+        end
+    end)
+
+    local pushBtn = wm:CreateControl("$(parent)_PushBtn", motdWin, CT_BUTTON)
+    pushBtn:SetAnchor(TOPLEFT, motdWin, TOPLEFT, 218, 468)
+    pushBtn:SetAnchor(TOPRIGHT, motdWin, TOPRIGHT, -12, 468)
+    pushBtn:SetHeight(28)
+    pushBtn:SetFont("ZoFontGameBold")
+    pushBtn:SetNormalFontColor(0, 1, 0, 1)
+    pushBtn:SetText("✓ Push to Guild Live")
+    pushBtn:SetHandler("OnClicked", function()
+        self:PushEditorMotDToGuild()
+    end)
+    self.motdPushBtn = pushBtn
+
+    -- 17. Status / Tip Label
+    local statusText = wm:CreateControl("$(parent)_StatusText", motdWin, CT_LABEL)
+    statusText:SetAnchor(TOPLEFT, motdWin, TOPLEFT, 14, 502)
+    statusText:SetAnchor(TOPRIGHT, motdWin, TOPRIGHT, -14, 502)
+    statusText:SetFont("ZoFontGameSmall")
+    statusText:SetText("Tip: Click [⚡ Apply Numbers] to update values in-place, then [✓ Push to Guild Live]. Press Esc to close.")
+    self.motdStatusText = statusText
+
+    self.motdWindow = motdWin
+    self:UpdateMotDUI(true)
+end
+
+function FR:UpdateMotDUI(reloadFromGuild)
+    if not self.motdWindow then return end
+
+    local numGuilds = GetNumGuilds()
+    local selectedIdx = math.max(1, math.min(self.motdSelectedGuildIndex or 1, numGuilds))
+    self.motdSelectedGuildIndex = selectedIdx
+
+    -- Update Guild Buttons
+    for i = 1, 5 do
+        local btn = self.motdGuildButtons[i]
+        if btn then
+            if i <= numGuilds then
+                local gId = GetGuildId(i)
+                local gName = GetGuildName(gId)
+                btn:SetHidden(false)
+                if i == selectedIdx then
+                    btn:SetText(string.format("|cFF9900[%d] %s|r", i, gName:sub(1, 14)))
+                else
+                    btn:SetText(string.format("[%d] %s", i, gName:sub(1, 14)))
+                end
+            else
+                btn:SetHidden(true)
+            end
+        end
+    end
+
+    -- Update Lookback Buttons
+    local curDays = self.motdLookbackDays or 7
+    for d, dBtn in pairs(self.motdLookbackBtns or {}) do
+        if d == curDays then
+            dBtn:SetNormalFontColor(1, 0.85, 0.2, 1)
+        else
+            dBtn:SetNormalFontColor(0.6, 0.6, 0.6, 1)
+        end
+    end
+
+    local guildId = GetGuildId(selectedIdx)
+    local guildName = GetGuildName(guildId)
+    local hasPermission = DoesPlayerHaveGuildPermission and DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_SET_MOTD)
+    local isGM = IsPlayerGuildMaster and IsPlayerGuildMaster(guildId)
+    local canEdit = isGM or hasPermission
+
+    if self.motdAuthLbl then
+        local authStr = canEdit and "|c00FF00Guild Master / Officer (Can Set MotD)|r" or "|cFF5555Read-Only (No Set MotD Permission)|r"
+        self.motdAuthLbl:SetText(string.format("Guild: |c00FFCC%s|r (ID: %s) • Authority: %s", guildName, tostring(guildId), authStr))
+    end
+
+    -- Calculate Metrics
+    local metrics = self:CalculateRaffleMetrics(guildId, curDays, 1000)
+    if self.motdPotLbl then
+        self.motdPotLbl:SetText(string.format("Pot: |cFFD700%s|r gold", ZO_LocalizeDecimalNumber(metrics.totalGold)))
+    end
+    if self.motdTixLbl then
+        self.motdTixLbl:SetText(string.format("Tickets: |c00FFCC%s|r in pool", ZO_LocalizeDecimalNumber(metrics.totalTickets)))
+    end
+    if self.motdEntLbl then
+        self.motdEntLbl:SetText(string.format("Entrants: |cFFFFFF%d|r members", metrics.entrants))
+    end
+    if self.motdDepLbl then
+        self.motdDepLbl:SetText(string.format("Total Deposits: |cFFFFFF%d|r entries", metrics.entries))
+    end
+
+    -- Reload MotD from game server if requested
+    if reloadFromGuild and self.motdEditBox then
+        local serverMotD = GetGuildMotD(guildId) or ""
+        self.motdEditBox:SetText(serverMotD)
+    end
+
+    self:UpdateMotDGauge()
+end
+
+function FR:ApplyRaffleNumbersToEditor()
+    if not self.motdEditBox then return end
+    local text = self.motdEditBox:GetText() or ""
+    if text == "" then
+        if self.motdStatusText then
+            self.motdStatusText:SetText("|cFF5555Editor is empty. Click [＋ Insert Template] first.|r")
+        end
+        return
+    end
+
+    local guildId = self:ResolveGuildId(self.motdSelectedGuildIndex or 1)
+    local metrics = self:CalculateRaffleMetrics(guildId, self.motdLookbackDays or 7, 1000)
+    local goldStr = ZO_LocalizeDecimalNumber(metrics.totalGold)
+    local ticketsStr = ZO_LocalizeDecimalNumber(metrics.totalTickets)
+    local entrantsStr = tostring(metrics.entrants)
+    local entriesStr = tostring(metrics.entries)
+
+    local updated = text
+    local ok1, oldGold, ok2, oldTickets, ok3, oldEntrants, ok4, oldEntries
+
+    updated, ok1, oldGold = self:ReplaceRaffleField(updated, "currently at", goldStr)
+    updated, ok2, oldTickets = self:ReplaceRaffleField(updated, "tickets in pool", ticketsStr)
+    updated, ok3, oldEntrants = self:ReplaceRaffleField(updated, "entrants", entrantsStr)
+    updated, ok4, oldEntries = self:ReplaceRaffleField(updated, "entries", entriesStr)
+
+    local matchedAny = ok1 or ok2 or ok3 or ok4
+    if not matchedAny then
+        if self.motdStatusText then
+            self.motdStatusText:SetText("|cFFCC00No raffle fields found in text. Click [＋ Insert Template] below to add the block.|r")
+        end
+        return
+    end
+
+    self.motdEditBox:SetText(updated)
+    self:UpdateMotDGauge()
+    if self.motdStatusText then
+        self.motdStatusText:SetText(string.format("✓ |c00FF00Applied numbers!|r Pot: %s gold (%s tickets, %s entrants).", goldStr, ticketsStr, entrantsStr))
+    end
+    PlayFissalSound()
+end
+
+function FR:InsertRaffleTemplateToEditor()
+    if not self.motdEditBox then return end
+    local text = self.motdEditBox:GetText() or ""
+    local block = RAFFLE_TEMPLATE_BLOCK
+    if text == "" then
+        self.motdEditBox:SetText(block)
+    else
+        self.motdEditBox:SetText(text .. "\n\n" .. block)
+    end
+    self:UpdateMotDGauge()
+    if self.motdStatusText then
+        self.motdStatusText:SetText("|c00FF00Inserted raffle template block into MotD.|r")
+    end
+end
+
+function FR:PushEditorMotDToGuild()
+    if not self.motdEditBox then return end
+    local guildId = self:ResolveGuildId(self.motdSelectedGuildIndex or 1)
+    local guildName = GetGuildName(guildId)
+    local hasPermission = DoesPlayerHaveGuildPermission and DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_SET_MOTD)
+    local isGM = IsPlayerGuildMaster and IsPlayerGuildMaster(guildId)
+    if not (isGM or hasPermission) then
+        if self.motdStatusText then
+            self.motdStatusText:SetText(string.format("|cFF5555Permission Denied:|r You cannot edit MotD for %s.", guildName))
+        end
+        self.PrintChat(string.format("|cFF5555Permission Denied:|r You do not have permission to edit the Message of the Day for %s.", ColorText(guildName, "00FFCC")))
+        return false
+    end
+
+    local text = self.motdEditBox:GetText() or ""
+    local charCount = (zo_strlen and zo_strlen(text)) or #text
+    local byteCount = #text
+
+    if charCount > 1024 then
+        if self.motdStatusText then
+            self.motdStatusText:SetText(string.format("|cFF5555Cannot Push:|r Message is %d chars (%d chars over 1024 limit). Please trim before pushing.", charCount, charCount - 1024))
+        end
+        self.PrintChat(string.format("|cFF5555Push Aborted:|r MotD is %d characters (%d over the 1024 limit). Please trim text first.", charCount, charCount - 1024))
+        return false
+    end
+
+    SetGuildMotD(guildId, text)
+    if self.motdStatusText then
+        self.motdStatusText:SetText(string.format("✓ |c00FF00Successfully pushed MotD to %s!|r (%d/1024 characters)", guildName, charCount))
+    end
+    self.PrintChat(string.format("✓ |c00FF00MotD successfully pushed live to %s!|r [|c00FFCC%d/1024 chars|r]", ColorText(guildName, "00FFCC"), charCount))
+    PlayFissalSound()
+    return true
+end
+
+function FR:ToggleMotDUI(show, initialGuildIndex)
+    if not self.motdWindow then
+        self:CreateMotDUI()
+    end
+
+    if initialGuildIndex and tonumber(initialGuildIndex) then
+        self.motdSelectedGuildIndex = tonumber(initialGuildIndex)
+    end
+
+    if show == nil then
+        show = self.motdWindow and self.motdWindow:IsHidden() or false
+    end
+
+    if self.motdWindow then
+        self.motdWindow:SetHidden(not show)
+        if show then
+            self:UpdateMotDUI(true)
+        end
+    end
+end
+
+function FR:ResetMotDPosition()
+    if not self.motdWindow then
+        self:CreateMotDUI()
+    end
+
+    if self.motdWindow then
+        self.motdWindow:ClearAnchors()
+        self.motdWindow:SetAnchor(CENTER, GuiRoot, CENTER, 0, -20)
+        self.savedVars.settings.motdPos = { x = 0, y = 0 }
+        self.PrintChat("MotD Manager position reset to screen center.")
+    end
+end
+
+--[[ =========================================================================
      LIBADDONMENU-2.0 SETTINGS PANEL
 ========================================================================= ]]--
 
@@ -1017,6 +1533,17 @@ function FR:CreateSettingsMenu()
         })
         table.insert(optionsData, {
             type = "button",
+            name = "Open MotD Raffle Manager",
+            tooltip = "Open the visual MotD editor with live character limit counter, raffle metrics, and template insertion.",
+            func = function()
+                if FR.ToggleMotDUI then
+                    FR:ToggleMotDUI(true)
+                end
+            end,
+            width = "full",
+        })
+        table.insert(optionsData, {
+            type = "button",
             name = "Preview MotD Raffle (Guild 1)",
             tooltip = "Preview updated raffle pot, tickets, entrants, and entries in chat without saving.",
             func = function()
@@ -1148,6 +1675,7 @@ local function OnPlayerActivated()
     FR:CreateSettingsMenu()
     FR:CreateHUD()
     FR:CreateBumperUI()
+    FR:CreateMotDUI()
 end
 
 EVENT_MANAGER:RegisterForEvent("FissalRelay_UI", EVENT_PLAYER_ACTIVATED, OnPlayerActivated)
