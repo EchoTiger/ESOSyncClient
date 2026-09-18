@@ -40,8 +40,21 @@ namespace RedfurSync
         public const string AddonDirectoryName = "FissalRelay";
         public const string ClientDirectoryName = "Client";
         public const string TargetExeName = "RedfurSync.exe";
-        public const string LatestAddonVersion = "1.4.0";
-        public const int LatestAddonVersionCode = 10400;
+        public const string LatestAddonVersion = "1.5.0";
+        public const int LatestAddonVersionCode = 10500;
+        public static readonly string[] AddonFiles = new[]
+        {
+            "FissalRelay.txt",
+            "FissalRelay.lua",
+            "FissalRelay_UI.lua",
+            "FissalRelay_RaffleData.lua",
+            "FissalRelay_RaffleMail.lua",
+            "FissalRelay_Console.lua",
+            "FissalRelay_MotD.lua",
+            "FissalRelay_Audit.lua",
+            "FissalRelay_Bids.lua"
+        };
+
         public const string TtcPriceTableUrl = "https://us.tamrieltradecentre.com/download/PriceTable";
 
         public static string ActiveLatestAddonVersion { get; set; } = LatestAddonVersion;
@@ -352,6 +365,21 @@ namespace RedfurSync
                 File.WriteAllText(Path.Combine(addonDir, "FissalRelay.lua"), lua);
                 File.WriteAllText(Path.Combine(addonDir, "FissalRelay_UI.lua"), ui);
 
+                foreach (var addonFile in AddonFiles)
+                {
+                    if (addonFile.Equals("FissalRelay.txt", StringComparison.OrdinalIgnoreCase) ||
+                        addonFile.Equals("FissalRelay.lua", StringComparison.OrdinalIgnoreCase) ||
+                        addonFile.Equals("FissalRelay_UI.lua", StringComparison.OrdinalIgnoreCase))
+                    {
+                        continue;
+                    }
+                    var extraContent = GetAddonFileContent(addonFile);
+                    if (!string.IsNullOrWhiteSpace(extraContent))
+                    {
+                        File.WriteAllText(Path.Combine(addonDir, addonFile), extraContent);
+                    }
+                }
+
                 message = $"Fissal Relay addon v{LatestAddonVersion} installed successfully!";
                 return true;
             }
@@ -493,8 +521,8 @@ namespace RedfurSync
 
         private const string AddonManifestTemplate = @"## Title: |cFF9900Fissal's|r Cogwork Relay
 ## Author: Echo & Fissal
-## Version: 1.4.0
-## AddOnVersion: 10400
+## Version: 1.5.0
+## AddOnVersion: 10500
 ## APIVersion: 101048 101049
 ## SavedVariables: FissalRelay_SavedVariables
 ## DependsOn: LibHistoire>=1062 LibAddonMenu-2.0>=41
@@ -502,6 +530,12 @@ namespace RedfurSync
 
 FissalRelay.lua
 FissalRelay_UI.lua
+FissalRelay_RaffleData.lua
+FissalRelay_RaffleMail.lua
+FissalRelay_Console.lua
+FissalRelay_MotD.lua
+FissalRelay_Audit.lua
+FissalRelay_Bids.lua
 ";
 
         // NOTE: This template is a last-resort fallback used only if the embedded

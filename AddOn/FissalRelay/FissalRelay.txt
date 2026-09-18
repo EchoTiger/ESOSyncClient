@@ -1,7 +1,7 @@
 ## Title: |cFF9900Fissal's|r Cogwork Relay
 ## Author: Echo & Fissal
-## Version: 1.4.0
-## AddOnVersion: 10400
+## Version: 1.5.0
+## AddOnVersion: 10500
 ## APIVersion: 101048 101049
 ## SavedVariables: FissalRelay_SavedVariables
 ## DependsOn: LibHistoire>=1062 LibAddonMenu-2.0>=41
@@ -9,3 +9,9 @@
 
 FissalRelay.lua
 FissalRelay_UI.lua
+FissalRelay_RaffleData.lua
+FissalRelay_RaffleMail.lua
+FissalRelay_Console.lua
+FissalRelay_MotD.lua
+FissalRelay_Audit.lua
+FissalRelay_Bids.lua

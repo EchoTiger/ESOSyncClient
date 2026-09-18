@@ -1564,6 +1564,37 @@ function FR:CreateSettingsMenu()
             end,
             width = "half",
         })
+        table.insert(optionsData, {
+            type = "header",
+            name = "Raffle Mail Payout Assistant",
+        })
+        table.insert(optionsData, {
+            type = "checkbox",
+            name = "Auto-Show on Mail Compose",
+            tooltip = "Automatically open the Raffle Payout Assistant whenever you compose a mail in the mailbox.",
+            getFunc = function()
+                if FR.savedVars and FR.savedVars.settings and FR.savedVars.settings.raffleMail then
+                    return FR.savedVars.settings.raffleMail.autoShowOnMail ~= false
+                end
+                return true
+            end,
+            setFunc = function(value)
+                if not FR.savedVars.settings.raffleMail then FR.savedVars.settings.raffleMail = {} end
+                FR.savedVars.settings.raffleMail.autoShowOnMail = value
+            end,
+            default = true,
+        })
+        table.insert(optionsData, {
+            type = "button",
+            name = "Open Raffle Mail Assistant",
+            tooltip = "Open the Raffle Mail Assistant docking window to view winners and auto-fill payout mails.",
+            func = function()
+                if FR.ToggleRaffleMailUI then
+                    FR:ToggleRaffleMailUI(true)
+                end
+            end,
+            width = "full",
+        })
     end -- Staff tools rank gate
 
     table.insert(optionsData, {
@@ -1675,7 +1706,11 @@ local function OnPlayerActivated()
     FR:CreateSettingsMenu()
     FR:CreateHUD()
     FR:CreateBumperUI()
-    FR:CreateMotDUI()
+    if FR.CreateConsoleUI then
+        FR:CreateConsoleUI()
+    else
+        FR:CreateMotDUI()
+    end
 end
 
 EVENT_MANAGER:RegisterForEvent("FissalRelay_UI", EVENT_PLAYER_ACTIVATED, OnPlayerActivated)

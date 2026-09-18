@@ -18,5 +18,11 @@
     <EmbeddedResource Include="..\AddOn\FissalRelay\FissalRelay.txt" Link="Resources\FissalRelay.txt" />
     <EmbeddedResource Include="..\AddOn\FissalRelay\FissalRelay.lua" Link="Resources\FissalRelay.lua" />
     <EmbeddedResource Include="..\AddOn\FissalRelay\FissalRelay_UI.lua" Link="Resources\FissalRelay_UI.lua" />
+    <EmbeddedResource Include="..\AddOn\FissalRelay\FissalRelay_RaffleData.lua" Link="Resources\FissalRelay_RaffleData.lua" />
+    <EmbeddedResource Include="..\AddOn\FissalRelay\FissalRelay_RaffleMail.lua" Link="Resources\FissalRelay_RaffleMail.lua" />
+    <EmbeddedResource Include="..\AddOn\FissalRelay\FissalRelay_Console.lua" Link="Resources\FissalRelay_Console.lua" />
+    <EmbeddedResource Include="..\AddOn\FissalRelay\FissalRelay_MotD.lua" Link="Resources\FissalRelay_MotD.lua" />
+    <EmbeddedResource Include="..\AddOn\FissalRelay\FissalRelay_Audit.lua" Link="Resources\FissalRelay_Audit.lua" />
+    <EmbeddedResource Include="..\AddOn\FissalRelay\FissalRelay_Bids.lua" Link="Resources\FissalRelay_Bids.lua" />
   </ItemGroup>
 </Project>

@@ -10,7 +10,7 @@ FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
 FR.name = "FissalRelay"
-FR.version = "1.4.0"
+FR.version = "1.5.0"
 FR.author = "Echo & Fissal"
 
 -- Defaults for SavedVariables
@@ -28,6 +28,7 @@ local DEFAULT_SAVED_VARS = {
         bidRefunds = {},
         categorySync = {},
     },
+    rafflePayouts = {},
     settings = {
         chatAnnouncements = true,
         soundEffects = false,
@@ -41,6 +42,11 @@ local DEFAULT_SAVED_VARS = {
         motdPos = { x = 0, y = 0 },
         showBumper = true,
         bankGuilds = {},
+        raffleMail = {
+            autoShowOnMail = true,
+            soundEffects = true,
+        },
+        raffleMailPos = { x = 0, y = 0 },
     },
     lastBumpTime = 0,
 }
@@ -1576,21 +1582,24 @@ function FR:HandleSlashCommand(arg)
 
     local cmd = string.lower(args[1] or "")
 
-    if cmd == "" or cmd == "help" then
-        PrintChat("Clockwork Alfiq Artificer at your service! Commands:")
+    if cmd == "" or cmd == "console" or cmd == "c" then
+        if self.ToggleConsole then
+            self:ToggleConsole()
+        else
+            PrintChat("Clockwork Console initializing...")
+        end
+    elseif cmd == "help" then
+        PrintChat("=== Fissal Relay Prime: Command Console & Artificer ===")
+        PrintChat("/fissal (or /fr)           - Open the Master Command Console.")
+        PrintChat("/fissal motd               - Open MotD Broadcast Studio with live tokens.")
+        PrintChat("/fissal audit (or /inactives) - Open Inactivity & Dues Auditor table.")
+        PrintChat("/fissal bids (or /scout)   - Open Kiosk Recon & Bids Vault.")
+        PrintChat("/fissal raffle             - Open Raffle Mail Assistant (docked to mail).")
         PrintChat("/fissal ui (or /fissal hud) - Toggle floating Fissal status meter HUD.")
-        PrintChat("/fissal bump (or /fissal ttc) - Open TTC guild bumper / bump selected guilds.")
-        PrintChat("/fissal status             - Check active relay listeners and stored records.")
-        PrintChat("/fissal prune              - Purge sales older than history depth days.")
-        PrintChat("/fissal scout              - View in-person scouted trader kiosks.")
-        PrintChat("/fissal bids               - View recent kiosk bids placed, won, and refunded.")
-        PrintChat("/fissal inactives [g#] [d] - Audit members inactive > d days (default: guild 1, 14 days).")
-        PrintChat("/fissal dues [g#] [days]   - Audit bank deposits / raffle gold for guild.")
-        PrintChat("/fissal motd              - Open visual MotD Raffle Manager window with live char counter.")
-        PrintChat("/fissal motd preview [g#] [d] - Preview raffle pot & tickets in chat (no limit block).")
-        PrintChat("/fissal motd update [g#] [d]  - Push raffle metrics directly to live guild MotD.")
-        PrintChat("/fissal turbo               - Force turbo-pump all LibHistoire channels at max rate limit.")
-        PrintChat("/fissal sync                - Turbo pump history, scan kiosks, and take roster snapshots.")
+        PrintChat("/fissal bump (or /fissal ttc) - Open TTC guild bumper.")
+        PrintChat("/fissal sync                - Turbo pump history, scan kiosks, and snap rosters.")
+        PrintChat("/fissal status              - Check active relay listeners and stored records.")
+        PrintChat("/fissal prune               - Purge sales older than history depth days.")
     elseif cmd == "ui" or cmd == "hud" then
         if self.ToggleHUD then
             self:ToggleHUD()
@@ -1598,7 +1607,10 @@ function FR:HandleSlashCommand(arg)
             PrintChat("HUD interface module not ready.")
         end
     elseif cmd == "bump" or cmd == "ttc" then
-        if self.ToggleBumperUI then
+        if self.ToggleConsole then
+            self:ToggleConsole(true)
+            self:SelectConsoleTab(5)
+        elseif self.ToggleBumperUI then
             self:ToggleBumperUI()
         else
             self:StartBump()
@@ -1632,52 +1644,67 @@ function FR:HandleSlashCommand(arg)
     elseif cmd == "prune" then
         self:PruneExpiredData(true)
     elseif cmd == "scout" or cmd == "kiosks" then
-        local kioskCount = NonContiguousCount(self.savedVars.kiosks or {})
-        PrintChat(string.format("=== Ground Recon: %s Verified Kiosks ===", ColorText(tostring(kioskCount), "00FF00")))
-        local list = {}
-        for trader, data in pairs(self.savedVars.kiosks or {}) do
-            table.insert(list, data)
+        if self.ToggleConsole and #args <= 1 then
+            self:ToggleConsole(true)
+            self:SelectConsoleTab(4)
+        else
+            local kioskCount = NonContiguousCount(self.savedVars.kiosks or {})
+            PrintChat(string.format("=== Ground Recon: %s Verified Kiosks ===", ColorText(tostring(kioskCount), "00FF00")))
+            local list = {}
+            for trader, data in pairs(self.savedVars.kiosks or {}) do
+                table.insert(list, data)
+            end
+            table.sort(list, function(a, b) return a.timestamp > b.timestamp end)
+            local showMax = math.min(#list, 6)
+            for i = 1, showMax do
+                local k = list[i]
+                df("  • %s (%s, %s) -> %s", ColorText(k.trader, "FFFFFF"), k.city or "?", k.zone or "?", ColorText(k.guildName, "00FFCC"))
+            end
+            if #list > showMax then
+                df("  ...and %d more scouted kiosks.", #list - showMax)
+            end
+            if self.UpdateHUD then self:UpdateHUD() end
+            PlayFissalSound()
         end
-        table.sort(list, function(a, b) return a.timestamp > b.timestamp end)
-        local showMax = math.min(#list, 6)
-        for i = 1, showMax do
-            local k = list[i]
-            df("  • %s (%s, %s) -> %s", ColorText(k.trader, "FFFFFF"), k.city or "?", k.zone or "?", ColorText(k.guildName, "00FFCC"))
-        end
-        if #list > showMax then
-            df("  ...and %d more scouted kiosks.", #list - showMax)
-        end
-        if self.UpdateHUD then self:UpdateHUD() end
-        PlayFissalSound()
     elseif cmd == "bids" or cmd == "bidding" then
-        local bidCount = NonContiguousCount(self.savedVars.staff and self.savedVars.staff.bids or {})
-        PrintChat(string.format("=== Guild Kiosk Bids Ledger: %s Recorded ===", ColorText(tostring(bidCount), "FFD700")))
-        local list = {}
-        for _, b in pairs(self.savedVars.staff and self.savedVars.staff.bids or {}) do
-            table.insert(list, b)
+        if self.ToggleConsole and #args <= 1 then
+            self:ToggleConsole(true)
+            self:SelectConsoleTab(4)
+        else
+            local bidCount = NonContiguousCount(self.savedVars.staff and self.savedVars.staff.bids or {})
+            PrintChat(string.format("=== Guild Kiosk Bids Ledger: %s Recorded ===", ColorText(tostring(bidCount), "FFD700")))
+            local list = {}
+            for _, b in pairs(self.savedVars.staff and self.savedVars.staff.bids or {}) do
+                table.insert(list, b)
+            end
+            table.sort(list, function(a, b) return a.timestamp > b.timestamp end)
+            local showMax = math.min(#list, 8)
+            for i = 1, showMax do
+                local b = list[i]
+                local statusColor = (b.status == "Won" or b.status == "Direct Purchase (Won)") and "00FF00" or (b.status == "Refunded (Lost)" and "FF5555" or "FFD700")
+                df("  • [%s] %s: %s gold by %s -> %s (%s)",
+                    ColorText(b.guildName or "Guild", "00FFCC"),
+                    ColorText(b.kioskName or "Kiosk", "FFFFFF"),
+                    ColorText(ZO_LocalizeDecimalNumber(b.amount or 0), "FFD700"),
+                    b.bidder or "Staff",
+                    ColorText(b.status or "Pending", statusColor),
+                    ZO_FormatDurationAgo(GetTimeStamp() - (b.timestamp or GetTimeStamp())))
+            end
+            if #list > showMax then
+                df("  ...and %d more historical bids.", #list - showMax)
+            end
+            if self.UpdateHUD then self:UpdateHUD() end
+            PlayFissalSound()
         end
-        table.sort(list, function(a, b) return a.timestamp > b.timestamp end)
-        local showMax = math.min(#list, 8)
-        for i = 1, showMax do
-            local b = list[i]
-            local statusColor = (b.status == "Won" or b.status == "Direct Purchase (Won)") and "00FF00" or (b.status == "Refunded (Lost)" and "FF5555" or "FFD700")
-            df("  • [%s] %s: %s gold by %s -> %s (%s)",
-                ColorText(b.guildName or "Guild", "00FFCC"),
-                ColorText(b.kioskName or "Kiosk", "FFFFFF"),
-                ColorText(ZO_LocalizeDecimalNumber(b.amount or 0), "FFD700"),
-                b.bidder or "Staff",
-                ColorText(b.status or "Pending", statusColor),
-                ZO_FormatDurationAgo(GetTimeStamp() - (b.timestamp or GetTimeStamp())))
+    elseif cmd == "inactives" or cmd == "audit" then
+        if self.ToggleConsole and #args <= 1 then
+            self:ToggleConsole(true)
+            self:SelectConsoleTab(3)
+        else
+            local gIdx = tonumber(args[2]) or 1
+            local days = tonumber(args[3]) or 14
+            self:AuditInactives(gIdx, days)
         end
-        if #list > showMax then
-            df("  ...and %d more historical bids.", #list - showMax)
-        end
-        if self.UpdateHUD then self:UpdateHUD() end
-        PlayFissalSound()
-    elseif cmd == "inactives" then
-        local gIdx = tonumber(args[2]) or 1
-        local days = tonumber(args[3]) or 14
-        self:AuditInactives(gIdx, days)
     elseif cmd == "dues" or cmd == "bank" then
         local gIdx = tonumber(args[2]) or 1
         local days = tonumber(args[3]) or 7
@@ -1685,7 +1712,10 @@ function FR:HandleSlashCommand(arg)
     elseif cmd == "motd" or cmd == "raffle" then
         local subCmd = string.lower(args[2] or "")
         if subCmd == "" or subCmd == "ui" or subCmd == "menu" or subCmd == "window" or subCmd == "open" then
-            if self.ToggleMotDUI then
+            if self.ToggleConsole then
+                self:ToggleConsole(true)
+                self:SelectConsoleTab(2)
+            elseif self.ToggleMotDUI then
                 self:ToggleMotDUI(true)
             else
                 PrintChat("MotD Interface module initializing...")
@@ -1719,6 +1749,13 @@ function FR:HandleSlashCommand(arg)
         local snapped = self:TakeRosterSnapshot()
         PrintChat(string.format("Roster snapshot captured for %d guild(s)! Saved for courier sync.", snapped))
         if self.UpdateHUD then self:UpdateHUD() end
+        PlayFissalSound()
+    elseif cmd == "raffle" or cmd == "payout" or cmd == "payouts" then
+        if self.ToggleRaffleMailUI then
+            self:ToggleRaffleMailUI()
+        else
+            PrintChat("Raffle Mail Assistant module initializing...")
+        end
         PlayFissalSound()
     else
         PrintChat(string.format("Unknown command '%s'. Type /fissal for assistance.", cmd))
@@ -1798,6 +1835,7 @@ local function OnAddOnLoaded(eventCode, addOnName)
     -- Register slash commands
     SLASH_COMMANDS["/fissal"] = function(arg) FR:HandleSlashCommand(arg) end
     SLASH_COMMANDS["/fissalrelay"] = function(arg) FR:HandleSlashCommand(arg) end
+    SLASH_COMMANDS["/fr"] = function(arg) FR:HandleSlashCommand(arg) end
 
     -- Setup LibHistoire integration when ready
     if LibHistoire and LibHistoire.OnReady then
