@@ -86,6 +86,11 @@ end
 
 -- Query available raffle weeks for navigation (Live, Discord Synced, and Archives)
 function FR:GetRaffleWeeks(guildKey)
+    if self._inGetRaffleWeeks then
+        return { DEFAULT_RAFFLE_CACHE and DEFAULT_RAFFLE_CACHE[guildKey] or {} }
+    end
+    self._inGetRaffleWeeks = true
+
     self:EnsureRaffleState()
     local weeks = {}
     local seenKeys = {}
@@ -259,6 +264,7 @@ function FR:GetRaffleWeeks(guildKey)
         end
     end
 
+    self._inGetRaffleWeeks = false
     return weeks
 end
 

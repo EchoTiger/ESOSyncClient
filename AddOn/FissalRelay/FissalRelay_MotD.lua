@@ -170,8 +170,11 @@ function FR:GetRaffleDateInfo(guildId)
     local isDealers = string.find(guildName, "Dealer") ~= nil
     local isCaravan = string.find(guildName, "Caravan") ~= nil
     local gKey = isPost and "post" or (isDealers and "dealers" or (isCaravan and "caravan" or nil))
-    local raffleData = gKey and self.GetRaffleData and self:GetRaffleData(gKey)
-    local sealedLabel = raffleData and raffleData.weekLabel or (FR.OfficialRaffleLedger and FR.OfficialRaffleLedger.weekLabel)
+    local sealedData = (FR.OfficialRaffleLedger and gKey and FR.OfficialRaffleLedger[gKey])
+        or (self.savedVars and self.savedVars.raffleData and gKey and self.savedVars.raffleData[gKey])
+        or (DEFAULT_RAFFLE_CACHE and gKey and DEFAULT_RAFFLE_CACHE[gKey])
+    local sealedLabel = sealedData and (sealedData.weekLabel or sealedData.weekStart)
+        or (FR.OfficialRaffleLedger and FR.OfficialRaffleLedger.weekLabel)
 
     return {
         currentRange = curRange,
