@@ -296,29 +296,27 @@ function FR:PushRaffleToMotD(guildKey)
     end
 
     local currentMotD = GetGuildMotD(guildId) or ""
-    if currentMotD == "" then
-        self.PrintChat(string.format("|cFF5555Error:|r MotD for %s is empty! Type |cFF9900/fissal motd|r to open the MotD Broadcast Studio and create your template.", guildName))
+
+    -- Fable 5.1 Architecture: Retrieve persistent template for this guild rather than parsing live numbers
+    local template = self.GetGuildMotDTemplate and self:GetGuildMotDTemplate(guildId)
+    if not template or template == "" then
+        -- Adopt live MotD if it still contains tokens
+        if string.find(currentMotD, "{raffle_") ~= nil or string.find(currentMotD, "{drawing_date}") ~= nil then
+            template = currentMotD
+            if self.SetGuildMotDTemplate then self:SetGuildMotDTemplate(guildId, template) end
+        end
+    end
+
+    if not template or template == "" then
+        self.PrintChat(string.format("|cFF5555Error:|r No MotD template configured for %s! Type |cFF9900/fissal motd|r to open the MotD Broadcast Studio.", guildName))
         if self.raffleMailStatusLabel then
-            self.raffleMailStatusLabel:SetText("|cFF5555MotD is empty - open /fissal motd|r")
+            self.raffleMailStatusLabel:SetText("|cFF5555Missing template - open /fissal motd|r")
         end
         return false
     end
 
-    -- Check if MotD contains raffle tokens or legacy fields
-    local hasTokens = string.find(currentMotD, "{raffle_") ~= nil or string.find(currentMotD, "{drawing_date}") ~= nil or string.find(currentMotD, "{date_week}") ~= nil
-    local hasLegacyFields = string.find(string.lower(currentMotD), "currently at") ~= nil or string.find(string.lower(currentMotD), "tickets in pool") ~= nil
-    
-    if not (hasTokens or hasLegacyFields) then
-        self.PrintChat(string.format("|cFF5555[MotD Interpolation Error]|r %s's MotD does not contain any raffle template tokens (e.g. |c00FFCC{raffle_pot}|r, |c00FFCC{raffle_tickets}|r) or raffle fields ('currently at', 'tickets in pool').", guildName))
-        self.PrintChat("|cFFD700Staff Action:|r Type |cFF9900/fissal motd|r to open the MotD Broadcast Studio, pick the 'Weekly Raffle Push' or 'Winners Announcement' preset, or customize your template.")
-        if self.raffleMailStatusLabel then
-            self.raffleMailStatusLabel:SetText("|cFF5555Missing MotD tokens - type /fissal motd|r")
-        end
-        return false
-    end
-
-    -- Interpolate with active raffle data
-    local resolved = self:ResolveMotDTokens(currentMotD, guildId)
+    -- Interpolate persistent template with active raffle metrics
+    local resolved = self:ResolveMotDTokens(template, guildId)
 
     -- Auto-balance unclosed color tags
     local _, colorStarts = string.gsub(resolved, "|c", "")
@@ -327,16 +325,23 @@ function FR:PushRaffleToMotD(guildKey)
         resolved = resolved .. string.rep("|r", colorStarts - colorEnds)
     end
 
+    local MAX_CHARS = MAX_GUILD_MOTD_LENGTH or 1024
     local charCount = (zo_strlen and zo_strlen(resolved)) or #resolved
     local byteCount = #resolved
-    local MAX_CHARS = MAX_GUILD_MOTD_LENGTH or 2048
 
     if charCount > MAX_CHARS or byteCount > MAX_CHARS then
-        self.PrintChat(string.format("|cFF5555Error:|r Resulting MotD (%d chars, %d bytes) exceeds the limit of %d. Please open |cFF9900/fissal motd|r to trim the message before pushing.", charCount, byteCount, MAX_CHARS))
+        resolved = self:TruncateUtf8(resolved, MAX_CHARS)
+        charCount = (zo_strlen and zo_strlen(resolved)) or #resolved
+        byteCount = #resolved
+    end
+
+    -- Idempotency Guard (Fable 5.1 S2): Compare AFTER truncation against live MotD to prevent repeated churn
+    if resolved == currentMotD then
+        self.PrintChat(string.format("|c59E08A[MotD]|r %s Message of the Day is already up to date with active raffle data.", guildName))
         if self.raffleMailStatusLabel then
-            self.raffleMailStatusLabel:SetText(string.format("|cFF5555MotD exceeds limit (%d/%d)|r", charCount, MAX_CHARS))
+            self.raffleMailStatusLabel:SetText(string.format("|c59E08AMotD already up to date for %s!|r", guildName))
         end
-        return false
+        return true
     end
 
     SetGuildMotD(guildId, resolved)

@@ -87,6 +87,16 @@ function FR:RunRosterAudit()
     -- Retrieve member sales lookup for this guild (case-insensitive)
     local salesByMember = self.GetMemberSales and self:GetMemberSales(guildId, scanWindowDays) or {}
 
+    local myDisplayName = string.lower(string.gsub(GetDisplayName() or "", "^@", ""))
+    local myMemberIdx = GetGuildMemberIndexFromDisplayName and GetGuildMemberIndexFromDisplayName(guildId, GetDisplayName())
+    local myRankIndex = 99
+    if myMemberIdx and myMemberIdx > 0 then
+        local _, _, mRank = GetGuildMemberInfo(guildId, myMemberIdx)
+        if mRank then myRankIndex = mRank end
+    else
+        self.PrintChat(string.format("|cFF9900[Safety Notice]|r Could not resolve rank for %s in %s; kick candidate listing disabled for safety.", myDisplayName, guildName))
+    end
+
     local rawInactives = {}
     local excusedCount = 0
     local officerCount = 0
@@ -125,7 +135,13 @@ function FR:RunRosterAudit()
             if isLeaderOrOfficer then officerCount = officerCount + 1 end
             if isLOA then excusedCount = excusedCount + 1 end
 
+            local memberIsGM = (IsGuildRankGuildMaster and IsGuildRankGuildMaster(guildId, rankIndex)) or (rankIndex == 1)
+
             local passFilter = true
+            -- Unconditional Guard (Fable 5.1 B1): Never list GM, executing staff account, or members at/above executor rank for kick
+            if lowerName == myDisplayName or memberIsGM or (rankIndex <= myRankIndex) then
+                passFilter = false
+            end
             if self.auditExcludeOfficers and isLeaderOrOfficer then
                 passFilter = false
             end
@@ -830,8 +846,13 @@ function FR:RenderAuditorRows()
     end
 
     if self.auditStatLbl then
-        self.auditStatLbl:SetText(string.format("Roster: %d | Inactive: |cFF5555%d|r | Shielded Active: |c59E08A%d|r | Excused: %d",
-            self.auditTotalMembers or 0, total, self.auditShieldedCount or 0, self.auditExcusedCount or 0))
+        if not self.auditShieldActiveSellers then
+            self.auditStatLbl:SetText(string.format("|cFF5555⚠ WARNING: Seller Shield OFF (Appear-Offline sellers listed)!|r Inactive: |cFF5555%d|r | Excused: %d",
+                total, self.auditExcusedCount or 0))
+        else
+            self.auditStatLbl:SetText(string.format("Roster: %d | Inactive: |cFF5555%d|r | Shielded Active: |c59E08A%d|r | Excused: %d",
+                self.auditTotalMembers or 0, total, self.auditShieldedCount or 0, self.auditExcusedCount or 0))
+        end
     end
 end
 

@@ -17,25 +17,50 @@
 FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
-local MAX_MOTD_CHARS = MAX_GUILD_MOTD_LENGTH or 2048
+local MAX_MOTD_CHARS = MAX_GUILD_MOTD_LENGTH or 1024
 
--- Clean UTF-8 byte boundary truncation preventing mojibake (Ruling - Sonnet 4.6 & Fable 5.1)
+-- Clean UTF-8 byte boundary & tag-aware truncation preventing mojibake & leaked color tags (Fable 5.1 S3 & S4)
 function FR:TruncateUtf8(str, maxBytes)
-    if not str or #str <= maxBytes then return str end
-    local cut = maxBytes
+    if not str then return "" end
+    maxBytes = maxBytes or (MAX_GUILD_MOTD_LENGTH or 1024)
+    if #str <= maxBytes then return str end
+
+    -- Reserve 2 bytes in budget in case we need to append |r for an open color tag
+    local budget = math.max(1, maxBytes - 2)
+    local cut = budget
+
+    -- Fable 5.1 S4: Inspect byte after cut to prevent mid-character splits without dropping valid multi-byte chars
     while cut > 0 do
-        local b = string.byte(str, cut)
-        -- In UTF-8, continuation bytes have high bits 10xxxxxx (0x80 to 0xBF)
-        if b and b >= 0x80 and b < 0xC0 then
+        local nextB = string.byte(str, cut + 1)
+        if nextB and nextB >= 0x80 and nextB < 0xC0 then
             cut = cut - 1
         else
-            if b and b >= 0xC0 then
-                cut = cut - 1
-            end
             break
         end
     end
-    return string.sub(str, 1, cut)
+    local result = string.sub(str, 1, cut)
+
+    -- Check if cut occurred inside or right after an unclosed |c tag (e.g. |c, |c1, |c123456)
+    local lastPipeC = string.find(result, "|c[^|]*$")
+    if lastPipeC and (#result - lastPipeC) < 8 then
+        -- Cut occurred inside a |c tag! Back off before the |c
+        result = string.sub(result, 1, lastPipeC - 1)
+    end
+
+    -- Fable 5.1 S3 & P2: Remove lone trailing pipe (if odd count of trailing pipes) so appending |r does not produce escaped ||r
+    local trailing = #string.match(result, "|*$")
+    if trailing % 2 == 1 then
+        result = string.sub(result, 1, -2)
+    end
+
+    -- Auto-balance unclosed |c color tags (stripping || escapes first so ||c is not counted)
+    local unescaped = string.gsub(result, "||", "")
+    local _, colorStarts = string.gsub(unescaped, "|c", "")
+    local _, colorEnds = string.gsub(unescaped, "|r", "")
+    if colorStarts > colorEnds then
+        result = result .. "|r"
+    end
+    return result
 end
 
 -- Default operational presets
@@ -53,6 +78,38 @@ local DEFAULT_PRESETS = {
         text = "|c00FFCC★ {guild_name} TRADER UPDATE ★|r\nCurrent Kiosk: |c59E08A{kiosk_location}|r\nAll store sales and bank deposits directly fund our weekly trader bid!\nKeep listings stocked with 30 items. Thank you for your support!",
     }
 }
+
+--[[ =========================================================================
+     MOTD TEMPLATE PERSISTENCE (Solving the MotD Template Paradox - Fable 5.1)
+========================================================================= ]]--
+
+function FR:EnsureMotDState()
+    if not self.savedVars then return end
+    if not self.savedVars.motdTemplates then
+        self.savedVars.motdTemplates = {}
+    end
+end
+
+function FR:GetGuildMotDTemplate(guildId)
+    self:EnsureMotDState()
+    guildId = self:ResolveGuildId(guildId or self.selectedGuildIndex or 1)
+    if self.savedVars and self.savedVars.motdTemplates and self.savedVars.motdTemplates[guildId] then
+        local tmpl = self.savedVars.motdTemplates[guildId]
+        if tmpl and tmpl ~= "" then
+            return tmpl
+        end
+    end
+    -- Fallback to default weekly raffle push template
+    return DEFAULT_PRESETS and DEFAULT_PRESETS.raffle_push and DEFAULT_PRESETS.raffle_push.text or ""
+end
+
+function FR:SetGuildMotDTemplate(guildId, templateText)
+    self:EnsureMotDState()
+    guildId = self:ResolveGuildId(guildId or self.selectedGuildIndex or 1)
+    if self.savedVars and self.savedVars.motdTemplates then
+        self.savedVars.motdTemplates[guildId] = templateText
+    end
+end
 
 --[[ =========================================================================
      RAFFLE DATE & CYCLE CALCULATOR
@@ -687,6 +744,10 @@ function FR:BroadcastMotDToGuild()
     end
 
     local raw = self.motdStudioEditBox:GetText() or ""
+    -- If raw text contains template tokens, persist as the guild's active template (Fable 5.1)
+    if string.find(raw, "{raffle_") or string.find(raw, "{guild_") or string.find(raw, "{drawing_date}") or string.find(raw, "{date_week}") then
+        self:SetGuildMotDTemplate(guildId, raw)
+    end
     local resolved = self:ResolveMotDTokens(raw, guildId)
 
     -- Auto-balance unclosed |c color tags before broadcast

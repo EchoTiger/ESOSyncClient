@@ -54,6 +54,43 @@ function FR:EnsureAutoRankState()
 end
 
 --[[ =========================================================================
+     DYNAMIC RANK RESOLUTION & SCHEMA FINGERPRINTING (Fable 5.1 Architecture)
+========================================================================= ]]--
+
+function FR:IsOfficerCapableRank(guildId, rankIndex)
+    if not guildId or not rankIndex then return false end
+    if IsGuildRankGuildMaster and IsGuildRankGuildMaster(guildId, rankIndex) then return true end
+    if DoesGuildRankHavePermission then
+        for _, perm in pairs({ GUILD_PERMISSION_PROMOTE, GUILD_PERMISSION_DEMOTE,
+                               GUILD_PERMISSION_REMOVE, GUILD_PERMISSION_INVITE,
+                               GUILD_PERMISSION_NOTE_EDIT, GUILD_PERMISSION_SET_MOTD }) do
+            if perm and DoesGuildRankHavePermission(guildId, rankIndex, perm) then return true end
+        end
+    end
+    return rankIndex <= 2  -- conservative floor
+end
+
+function FR:ResolveRankIndex(guildId, wantedName)
+    if not guildId or guildId == 0 or not wantedName then return nil end
+    local numRanks = GetNumGuildRanks(guildId)
+    local target = string.lower(wantedName)
+    local names = {}
+    for r = 1, numRanks do names[r] = string.lower(GetFinalGuildRankName(guildId, r) or "") end
+
+    -- Pass 1: exact match
+    for r = 1, numRanks do
+        if names[r] == target then return r end
+    end
+    -- Pass 2: substring, bottom-up, non-officer only (Fable 5.1 B2)
+    for r = numRanks, 1, -1 do
+        if string.find(names[r], target, 1, true) and not self:IsOfficerCapableRank(guildId, r) then
+            return r
+        end
+    end
+    return nil
+end
+
+--[[ =========================================================================
      EVALUATION ENGINE
 ========================================================================= ]]--
 
@@ -69,6 +106,13 @@ function FR:EvaluateAutoRanks(guildId)
     local lookbackDays = self.autoRankLookbackDays or rule.windowDays or 10
     local arSettings = self.savedVars.autoRanks
 
+    -- Permission Pre-flight: verify Note Read authority (Fable 5.1 S6)
+    local canReadNotes = DoesPlayerHaveGuildPermission and DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_NOTE_READ)
+    if canReadNotes == false and arSettings.protectDNR then
+        self.PrintChat(string.format("|cFF5555[Security Guard]|r You lack Note Read permission in %s! Automatically restricting to promotions-only to protect DNR members.", guildName))
+        arSettings.restrictDemotions = true
+    end
+
     -- Query sales & bank deposits
     local salesByMember = self.GetMemberSales and self:GetMemberSales(guildId, lookbackDays) or {}
     local bankDeposits = {}
@@ -83,17 +127,27 @@ function FR:EvaluateAutoRanks(guildId)
         end
     end
 
-    -- Identify guild rank indices (Window Shopper, Trader, Officer, etc.)
-    local windowShopperRankIdx = numRanks -- default lowest or 2nd lowest
-    local defaultTraderRankIdx = math.max(numRanks - 2, 3)
+    -- Identify guild rank indices dynamically by name (Fable 5.1 Architecture)
+    local windowShopperRankIdx = self:ResolveRankIndex(guildId, "window shopper") or self:ResolveRankIndex(guildId, "shopper") or numRanks
+    local defaultTraderRankIdx = self:ResolveRankIndex(guildId, "trader") or math.max(numRanks - 2, 3)
 
-    for r = 1, numRanks do
-        local rName = GetFinalGuildRankName(guildId, r):lower()
-        if string.find(rName, "window shopper") or string.find(rName, "shopper") then
-            windowShopperRankIdx = r
-        elseif string.find(rName, "trader") and not string.find(rName, "master") and not string.find(rName, "grand") then
-            defaultTraderRankIdx = r
-        end
+    -- Critical B2 & P3 Assertions (Fable 5.1): Target ranks must be in range and NEVER officer-capable
+    if defaultTraderRankIdx > numRanks or windowShopperRankIdx > numRanks then
+        self.PrintChat(string.format("|cFF5555[Configuration Error]|r Target rank index exceeds guild rank count (%d)! Auto-Rank aborted.", numRanks))
+        return {}
+    end
+    if self:IsOfficerCapableRank(guildId, defaultTraderRankIdx) or self:IsOfficerCapableRank(guildId, windowShopperRankIdx) then
+        self.PrintChat(string.format("|cFF5555[Security Block]|r Target rank (%s / %s) possesses officer permissions! Auto-Rank aborted.",
+            GetFinalGuildRankName(guildId, defaultTraderRankIdx), GetFinalGuildRankName(guildId, windowShopperRankIdx)))
+        return {}
+    end
+
+    local myAccount = string.lower(string.gsub(GetDisplayName() or "", "^@", ""))
+    local myMemberIdx = GetGuildMemberIndexFromDisplayName and GetGuildMemberIndexFromDisplayName(guildId, GetDisplayName())
+    local myRankIndex = 99
+    if myMemberIdx and myMemberIdx > 0 then
+        local _, _, mRank = GetGuildMemberInfo(guildId, myMemberIdx)
+        if mRank then myRankIndex = mRank end
     end
 
     local results = {}
@@ -104,7 +158,7 @@ function FR:EvaluateAutoRanks(guildId)
         local rawName = string.gsub(displayName, "^@", ""):lower()
         local currentRankName = GetFinalGuildRankName(guildId, rankIndex)
         local cleanNote = note or ""
-        local noteUpper = string.upper(cleanNote)
+        local noteLower = string.lower(cleanNote)
 
         local sData = salesByMember[rawName] or { count = 0, gold = 0 }
         local salesGold = sData.gold or 0
@@ -117,13 +171,30 @@ function FR:EvaluateAutoRanks(guildId)
         local targetRankIndex = rankIndex
         local statusReason = "Dues Met"
 
-        -- Safety Guard 1: Officer Immunity (Ranks 1 and 2)
-        if arSettings.officerImmunity and rankIndex <= 2 then
+        -- Officer & Authority Checks (Fable 5.1 Permission-Based Immunity)
+        local isSelf = (rawName == myAccount)
+        local isOfficerRank = self:IsOfficerCapableRank(guildId, rankIndex)
+        local isAtOrAboveMyRank = (rankIndex <= myRankIndex)
+
+        -- Frontier-pattern DNR shield matching whole word 'dnr' on markup-stripped note (Fable 5.1 S5)
+        local plainNote = string.gsub(string.gsub(noteLower, "|c%x%x%x%x%x%x", ""), "|r", "")
+        local isDNR = string.find(plainNote, "%f[%w]dnr%f[%W]") ~= nil
+
+        -- Safety Guard 0: Self Protection & Rank Authority Shield
+        if isSelf then
+            statusReason = "Self Protection"
+            action = "KEEP"
+        elseif isAtOrAboveMyRank then
+            statusReason = "At/Above My Rank"
+            action = "KEEP"
+
+        -- Safety Guard 1: Permission-Based Officer Immunity
+        elseif arSettings.officerImmunity and isOfficerRank then
             statusReason = "Officer Immunity"
             action = "KEEP"
 
-        -- Safety Guard 2: DNR Note Shield
-        elseif arSettings.protectDNR and string.find(noteUpper, "DNR") ~= nil then
+        -- Safety Guard 2: Frontier DNR Note Shield
+        elseif arSettings.protectDNR and isDNR then
             statusReason = "DNR Shield"
             action = "KEEP"
 
@@ -264,14 +335,31 @@ function FR:EvaluateAutoRanks(guildId)
 end
 
 --[[ =========================================================================
-     BATCH EXECUTION ENGINE
+     ACK-GATED BATCH EXECUTION ENGINE (Fable 5.1 Inquiry 1)
 ========================================================================= ]]--
 
+local MIN_SPACING_MS = 400
+local ACK_TIMEOUT_MS = 4000
+
+function FR:CleanupAutoRankBatch()
+    EVENT_MANAGER:UnregisterForUpdate("FissalRelay_AutoRankBatch")
+    EVENT_MANAGER:UnregisterForEvent("FissalRelay_AutoRankAck", EVENT_GUILD_MEMBER_RANK_CHANGED)
+    EVENT_MANAGER:UnregisterForEvent("FissalRelay_AutoRankSchemaDrift1", EVENT_GUILD_RANKS_CHANGED)
+    EVENT_MANAGER:UnregisterForEvent("FissalRelay_AutoRankSchemaDrift2", EVENT_GUILD_RANK_CHANGED)
+    self.autoRankBatchRunning = false
+    self.autoRankPending = nil
+
+    if self.autoRanksApplyBtn then self.autoRanksApplyBtn:SetHidden(false) end
+    if self.autoRanksAbortBtn then self.autoRanksAbortBtn:SetHidden(true) end
+end
+
 function FR:StartAutoRankBatch(guildId)
+    -- Re-entrancy hygiene: ensure previous state is cleanly flushed (Fable 5.1 S7)
     if self.autoRankBatchRunning then
         self.PrintChat("|cFF5555[Fissal Ranks]|r Batch is already currently running!")
         return
     end
+    self:CleanupAutoRankBatch()
 
     guildId = self:ResolveGuildId(guildId or self.selectedGuildIndex or 1)
     local guildName = GetGuildName(guildId)
@@ -282,6 +370,12 @@ function FR:StartAutoRankBatch(guildId)
 
     if not (isGM or (hasPromote and hasDemote)) then
         self.PrintChat(string.format("|cFF5555Permission Denied:|r You need both Promote and Demote permissions in %s to run auto-ranks.", guildName))
+        return
+    end
+
+    local setRankFn = GuildSetRank or GuildSetMemberRank or SetGuildMemberRank
+    if not setRankFn then
+        self.PrintChat("|cFF5555[Error]|r Set guild rank API function not found on client! Aborting batch.")
         return
     end
 
@@ -302,28 +396,96 @@ function FR:StartAutoRankBatch(guildId)
     self.autoRankBatchRunning = true
     self.autoRankTotalTasks = #tasks
     self.autoRankProcessedCount = 0
+    self.autoRankSucceeded = 0
+    self.autoRankTimedOut = 0
+    self.autoRankSkipped = 0
+    self.autoRankPending = nil
+    self.autoRankSentAt = 0
+    self.autoRankNextAllowedAt = 0
 
-    self.PrintChat(string.format("=== |cFF9900[Fissal Ranks]|r Starting Rank Updates for %s (%d members queued) ===", guildName, #tasks))
+    self.PrintChat(string.format("=== |cFF9900[Fissal Ranks]|r Starting Ack-Gated Rank Updates for %s (%d queued) ===", guildName, #tasks))
     PlaySound(SOUNDS.GUILD_ROSTER_ADDED or SOUNDS.NOTE_SAVED)
 
-    if self.autoRanksApplyBtn then
-        self.autoRanksApplyBtn:SetHidden(true)
-    end
-    if self.autoRanksAbortBtn then
-        self.autoRanksAbortBtn:SetHidden(false)
-    end
+    if self.autoRanksApplyBtn then self.autoRanksApplyBtn:SetHidden(true) end
+    if self.autoRanksAbortBtn then self.autoRanksAbortBtn:SetHidden(false) end
+
+    -- Rank schema drift guards: Abort immediately if GM edits ranks mid-batch (Fable 5.1 S7)
+    EVENT_MANAGER:RegisterForEvent("FissalRelay_AutoRankSchemaDrift1", EVENT_GUILD_RANKS_CHANGED, function()
+        FR.PrintChat("|cFF5555[Security Abort]|r Guild rank structure changed mid-batch! Aborting for safety.")
+        FR:AbortAutoRankBatch()
+    end)
+    EVENT_MANAGER:RegisterForEvent("FissalRelay_AutoRankSchemaDrift2", EVENT_GUILD_RANK_CHANGED, function()
+        FR.PrintChat("|cFF5555[Security Abort]|r Guild rank definition changed mid-batch! Aborting for safety.")
+        FR:AbortAutoRankBatch()
+    end)
+
+    -- Ack listener for EVENT_GUILD_MEMBER_RANK_CHANGED (Fable 5.1 V1: Closes over guildId and validates newRank)
+    EVENT_MANAGER:RegisterForEvent("FissalRelay_AutoRankAck", EVENT_GUILD_MEMBER_RANK_CHANGED, function(_, eventGuildId, displayName, newRank)
+        local pending = FR.autoRankPending
+        if not pending then return end
+
+        local cleanPending = string.lower(string.gsub(pending.displayName or "", "^@", ""))
+        local cleanEvent = string.lower(string.gsub(displayName or "", "^@", ""))
+
+        if eventGuildId == guildId and cleanPending == cleanEvent and newRank == pending.targetRankIndex then
+            FR.autoRankPending = nil
+            FR.autoRankSucceeded = (FR.autoRankSucceeded or 0) + 1
+            FR.autoRankProcessedCount = (FR.autoRankProcessedCount or 0) + 1
+            FR.autoRankNextAllowedAt = GetGameTimeMilliseconds() + MIN_SPACING_MS
+
+            local actColor = pending.action == "PROMOTE" and "59E08A" or "FF6666"
+            FR.PrintChat(string.format("  • [|c%s%s ✓|r] %s: %s -> |c00FFCC%s|r",
+                actColor, pending.action, pending.displayName, pending.currentRankName, pending.targetRankName))
+
+            if FR.autoRanksProgressLbl then
+                FR.autoRanksProgressLbl:SetText(string.format("Applying: %d / %d", FR.autoRankProcessedCount, FR.autoRankTotalTasks))
+            end
+        end
+    end)
 
     local taskIdx = 1
 
-    EVENT_MANAGER:RegisterForUpdate("FissalRelay_AutoRankBatch", 750, function()
-        if not FR.autoRankBatchRunning or taskIdx > #FR.autoRankTasks then
-            EVENT_MANAGER:UnregisterForUpdate("FissalRelay_AutoRankBatch")
-            FR.autoRankBatchRunning = false
+    EVENT_MANAGER:RegisterForUpdate("FissalRelay_AutoRankBatch", 150, function()
+        if not FR.autoRankBatchRunning then
+            FR:CleanupAutoRankBatch()
+            return
+        end
 
-            if FR.autoRanksApplyBtn then FR.autoRanksApplyBtn:SetHidden(false) end
-            if FR.autoRanksAbortBtn then FR.autoRanksAbortBtn:SetHidden(true) end
+        local now = GetGameTimeMilliseconds()
 
-            FR.PrintChat(string.format("✓ |c59E08A[Fissal Ranks]|r Successfully updated %d ranks in %s!", FR.autoRankProcessedCount or 0, guildName))
+        -- 1. Check pending job timeout with late-ack re-validation (Fable 5.1 S1)
+        if FR.autoRankPending then
+            if (now - FR.autoRankSentAt) > ACK_TIMEOUT_MS then
+                local p = FR.autoRankPending
+                local mIdx = GetGuildMemberIndexFromDisplayName and GetGuildMemberIndexFromDisplayName(guildId, p.displayName)
+                local _, _, liveRank = (mIdx and mIdx > 0) and GetGuildMemberInfo(guildId, mIdx)
+                if liveRank == p.targetRankIndex then
+                    FR.autoRankSucceeded = (FR.autoRankSucceeded or 0) + 1
+                    FR.PrintChat(string.format("  • [|c59E08ALate Ack ✓|r] %s verified at target rank %s.", p.displayName, p.targetRankName))
+                else
+                    FR.autoRankTimedOut = (FR.autoRankTimedOut or 0) + 1
+                    FR.PrintChat(string.format("  • |cFFCC00[Timeout]|r %s rank change unacked after %dms. Pacing next member...", p.displayName, ACK_TIMEOUT_MS))
+                end
+                FR.autoRankPending = nil
+                FR.autoRankProcessedCount = (FR.autoRankProcessedCount or 0) + 1
+                FR.autoRankNextAllowedAt = now + MIN_SPACING_MS
+
+                if FR.autoRanksProgressLbl then
+                    FR.autoRanksProgressLbl:SetText(string.format("Applying: %d / %d", FR.autoRankProcessedCount, FR.autoRankTotalTasks))
+                end
+            else
+                return -- Wait for server ack
+            end
+        end
+
+        -- 2. Respect spacing pacing
+        if now < FR.autoRankNextAllowedAt then return end
+
+        -- 3. Check queue completion
+        if taskIdx > #FR.autoRankTasks then
+            FR:CleanupAutoRankBatch()
+            FR.PrintChat(string.format("✓ |c59E08A[Fissal Ranks]|r Batch Complete for %s: %d Succeeded, %d Timed Out, %d Skipped (Total: %d)",
+                guildName, FR.autoRankSucceeded or 0, FR.autoRankTimedOut or 0, FR.autoRankSkipped or 0, FR.autoRankTotalTasks or 0))
             PlaySound(SOUNDS.LEVEL_UP or SOUNDS.GUILD_ROSTER_ADDED)
 
             -- Re-evaluate roster to show updated state
@@ -336,32 +498,54 @@ function FR:StartAutoRankBatch(guildId)
         taskIdx = taskIdx + 1
 
         if item then
-            local setRankFn = GuildSetRank or GuildSetMemberRank or SetGuildMemberRank
-            if setRankFn then
-                setRankFn(guildId, item.displayName, item.targetRankIndex)
+            -- Live Roster Re-validation (Fable 5.1): Member still present and rank unchanged externally?
+            local memberIdx = GetGuildMemberIndexFromDisplayName and GetGuildMemberIndexFromDisplayName(guildId, item.displayName)
+            if not memberIdx or memberIdx <= 0 then
+                FR.PrintChat(string.format("  • |c888888[Skipped]|r %s is no longer in guild.", item.displayName))
+                FR.autoRankSkipped = (FR.autoRankSkipped or 0) + 1
                 FR.autoRankProcessedCount = (FR.autoRankProcessedCount or 0) + 1
-
-                local actColor = item.action == "PROMOTE" and "59E08A" or "FF6666"
-                FR.PrintChat(string.format("  • [|c%s%s|r] %s: %s -> |c00FFCC%s|r",
-                    actColor, item.action, item.displayName, item.currentRankName, item.targetRankName))
-
+                FR.autoRankNextAllowedAt = now + 100
                 if FR.autoRanksProgressLbl then
                     FR.autoRanksProgressLbl:SetText(string.format("Applying: %d / %d", FR.autoRankProcessedCount, FR.autoRankTotalTasks))
                 end
+                return
             end
+
+            local _, _, currentRank = GetGuildMemberInfo(guildId, memberIdx)
+            if currentRank ~= item.currentRankIndex then
+                FR.PrintChat(string.format("  • |c888888[Skipped]|r %s rank changed externally (expected %d, found %d).",
+                    item.displayName, item.currentRankIndex, currentRank))
+                FR.autoRankSkipped = (FR.autoRankSkipped or 0) + 1
+                FR.autoRankProcessedCount = (FR.autoRankProcessedCount or 0) + 1
+                FR.autoRankNextAllowedAt = now + 100
+                if FR.autoRanksProgressLbl then
+                    FR.autoRanksProgressLbl:SetText(string.format("Applying: %d / %d", FR.autoRankProcessedCount, FR.autoRankTotalTasks))
+                end
+                return
+            end
+
+            if currentRank == item.targetRankIndex then
+                FR.PrintChat(string.format("  • |c888888[Skipped]|r %s is already at target rank.", item.displayName))
+                FR.autoRankSkipped = (FR.autoRankSkipped or 0) + 1
+                FR.autoRankProcessedCount = (FR.autoRankProcessedCount or 0) + 1
+                FR.autoRankNextAllowedAt = now + 100
+                if FR.autoRanksProgressLbl then
+                    FR.autoRanksProgressLbl:SetText(string.format("Applying: %d / %d", FR.autoRankProcessedCount, FR.autoRankTotalTasks))
+                end
+                return
+            end
+
+            FR.autoRankPending = item
+            FR.autoRankSentAt = now
+            setRankFn(guildId, item.displayName, item.targetRankIndex)
         end
     end)
 end
 
 function FR:AbortAutoRankBatch()
     if not self.autoRankBatchRunning then return end
-    EVENT_MANAGER:UnregisterForUpdate("FissalRelay_AutoRankBatch")
-    self.autoRankBatchRunning = false
-
-    if self.autoRanksApplyBtn then self.autoRanksApplyBtn:SetHidden(false) end
-    if self.autoRanksAbortBtn then self.autoRanksAbortBtn:SetHidden(true) end
+    self:CleanupAutoRankBatch()
     if self.autoRanksProgressLbl then self.autoRanksProgressLbl:SetText("Aborted") end
-
     self.PrintChat("|cFF5555[Fissal Ranks]|r Batch execution aborted by staff.")
     PlaySound(SOUNDS.GENERAL_ALERT_ERROR or SOUNDS.NOTE_DISCARDED)
 end
