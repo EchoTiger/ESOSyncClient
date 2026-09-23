@@ -84,57 +84,268 @@ function FR:EnsureRaffleState()
     self.raffleSourceMode = self.savedVars.settings.raffleMail.sourceMode or "official"
 end
 
--- Query active raffle data for a guild
-function FR:GetRaffleData(guildKey)
+-- Query available raffle weeks for navigation (Live, Discord Synced, and Archives)
+function FR:GetRaffleWeeks(guildKey)
     self:EnsureRaffleState()
-    local mode = self.raffleSourceMode or "official"
+    local weeks = {}
+    local seenKeys = {}
 
-    -- Mode 1: Live In-Game Addon Roll (RaffleGold SavedVars)
-    if mode == "local" then
-        if RaffleGold and RaffleGold.db and RaffleGold.db.prizes then
-            local p = RaffleGold.db.prizes
-            local rgGuild = RaffleGold.db.guild or ""
-            local isPost = string.find(rgGuild, "Post") ~= nil
-            local isDealers = string.find(rgGuild, "Dealer") ~= nil
-
-            local targetMatches = (guildKey == "post" and isPost) or (guildKey == "dealers" and isDealers)
-            if targetMatches and p.amtFrt and p.amtFrt > 0 and p.nameFrt then
-                local label = isPost and "Redfur Trading Post (Local Roll)" or "Redfur Dealers (Local Roll)"
-                local week = RaffleGold.db.dateStart and string.format("%s - %s", RaffleGold.db.dateStart, RaffleGold.db.dateEnd or "") or "Local Roll"
-                return {
-                    guildKey = guildKey,
-                    guildLabel = label,
-                    weekLabel = week,
-                    weekStart = "local",
-                    pot = tonumber(p.tAmt) or 0,
-                    tickets = tonumber(p.eAmt) or 0,
-                    entrants = tonumber(RaffleGold.db.totalEntries) or 0,
-                    prizes = {
-                        first = tonumber(p.amtFrt) or 0,
-                        second = tonumber(p.amtScd) or 0,
-                        third = tonumber(p.amtTrd) or 0,
-                        guild = math.floor((tonumber(p.tAmt) or 0) * 0.4),
-                    },
-                    winners = {
-                        { place = 1, name = p.nameFrt, ticket = tonumber(p.numFrt) or 0, prize = tonumber(p.amtFrt) or 0 },
-                        { place = 2, name = p.nameScd, ticket = tonumber(p.numScd) or 0, prize = tonumber(p.amtScd) or 0 },
-                        { place = 3, name = p.nameTrd, ticket = tonumber(p.numTrd) or 0, prize = tonumber(p.amtTrd) or 0 },
-                    }
+    -- 1. Live In-Game Addon Roll (if active in RaffleGold)
+    if RaffleGold and RaffleGold.db and RaffleGold.db.prizes then
+        local p = RaffleGold.db.prizes
+        local rgGuild = RaffleGold.db.guild or ""
+        local isPost = string.find(rgGuild, "Post") ~= nil
+        local isDealers = string.find(rgGuild, "Dealer") ~= nil
+        local targetMatches = (guildKey == "post" and isPost) or (guildKey == "dealers" and isDealers)
+        if targetMatches and p.amtFrt and p.amtFrt > 0 and p.nameFrt then
+            local label = isPost and "Redfur Trading Post (Local Roll)" or "Redfur Dealers (Local Roll)"
+            local weekLbl = RaffleGold.db.dateStart and string.format("%s - %s", RaffleGold.db.dateStart, RaffleGold.db.dateEnd or "") or "Local Roll"
+            table.insert(weeks, {
+                guildKey = guildKey,
+                guildLabel = label,
+                weekLabel = weekLbl,
+                weekKey = "local",
+                weekStart = "local",
+                isSynced = false,
+                syncBadge = "|c00FFCC[LOCAL ROLL]|r",
+                syncTooltip = "Live in-game roll read directly from RaffleGold.db SavedVariables.",
+                pot = tonumber(p.tAmt) or 0,
+                tickets = tonumber(p.eAmt) or 0,
+                entrants = tonumber(RaffleGold.db.totalEntries) or 0,
+                prizes = {
+                    first = tonumber(p.amtFrt) or 0,
+                    second = tonumber(p.amtScd) or 0,
+                    third = tonumber(p.amtTrd) or 0,
+                    guild = math.floor((tonumber(p.tAmt) or 0) * 0.4),
+                },
+                winners = {
+                    { place = 1, name = p.nameFrt, ticket = tonumber(p.numFrt) or 0, prize = tonumber(p.amtFrt) or 0 },
+                    { place = 2, name = p.nameScd, ticket = tonumber(p.numScd) or 0, prize = tonumber(p.amtScd) or 0 },
+                    { place = 3, name = p.nameTrd, ticket = tonumber(p.numTrd) or 0, prize = tonumber(p.amtTrd) or 0 },
                 }
+            })
+            seenKeys["local"] = true
+        end
+    end
+
+    -- 2. Live Active Cycle (from current bank deposits & metrics)
+    local guildId = self.ResolveGuildId and self:ResolveGuildId(guildKey)
+    local dateInfo = self.GetRaffleDateInfo and self:GetRaffleDateInfo(guildId)
+    local liveMetrics = (guildId and self.CalculateRaffleMetrics) and self:CalculateRaffleMetrics(guildId, 7, 1000)
+    local curLabel = dateInfo and dateInfo.currentRange or "Active Cycle"
+    if not seenKeys[curLabel] then
+        local livePot = liveMetrics and liveMetrics.totalGold or 0
+        local liveTickets = liveMetrics and liveMetrics.totalTickets or 0
+        local liveEntrants = liveMetrics and liveMetrics.entrants or 0
+        table.insert(weeks, {
+            guildKey = guildKey,
+            guildLabel = (guildKey == "post" and "Redfur Trading Post" or "Redfur Dealers"),
+            weekLabel = curLabel .. " (Live)",
+            weekKey = "live_" .. curLabel,
+            weekStart = "live",
+            isSynced = false,
+            syncBadge = "|cFFD700[LIVE ACTIVE]|r",
+            syncTooltip = "Live in-progress raffle cycle. Drawing scheduled for Sunday 7:00 PM ET.",
+            pot = livePot,
+            tickets = liveTickets,
+            entrants = liveEntrants,
+            prizes = {
+                first = math.floor(livePot * 0.30),
+                second = math.floor(livePot * 0.20),
+                third = math.floor(livePot * 0.10),
+                guild = math.floor(livePot * 0.40),
+            },
+            winners = {} -- Active cycle not yet drawn
+        })
+        seenKeys[curLabel] = true
+    end
+
+    -- 3. Official Sealed Draw Manifest (synced from Discord bot)
+    if FR.OfficialRaffleLedger and FR.OfficialRaffleLedger[guildKey] then
+        local off = FR.OfficialRaffleLedger[guildKey]
+        local offKey = tostring(off.weekStart or off.weekLabel or "official")
+        if not seenKeys[offKey] then
+            table.insert(weeks, {
+                guildKey = guildKey,
+                guildLabel = off.guildLabel or (guildKey == "post" and "Redfur Trading Post" or "Redfur Dealers"),
+                weekLabel = off.weekLabel or "Official Draw",
+                weekKey = offKey,
+                weekStart = off.weekStart,
+                isSynced = true,
+                syncBadge = "|c59E08A[SYNCED ✓ Discord]|r",
+                syncTooltip = "Sealed and verified with #raffle-announcements on Discord.",
+                pot = off.pot or 0,
+                tickets = off.tickets or 0,
+                entrants = off.entrants or 0,
+                announceMessageId = off.announceMessageId,
+                prizes = off.prizes or {},
+                winners = off.winners or {},
+            })
+            seenKeys[offKey] = true
+        end
+    end
+
+    -- 4. SavedVariables data
+    if self.savedVars and self.savedVars.raffleData and self.savedVars.raffleData[guildKey] then
+        local sv = self.savedVars.raffleData[guildKey]
+        local svKey = tostring(sv.weekStart or sv.weekLabel or "saved")
+        if not seenKeys[svKey] then
+            table.insert(weeks, {
+                guildKey = guildKey,
+                guildLabel = sv.guildLabel or (guildKey == "post" and "Redfur Trading Post" or "Redfur Dealers"),
+                weekLabel = sv.weekLabel or "Saved Draw",
+                weekKey = svKey,
+                weekStart = sv.weekStart,
+                isSynced = true,
+                syncBadge = "|c59E08A[SYNCED ✓ Discord]|r",
+                syncTooltip = "Sealed draw synced from Discord relay.",
+                pot = sv.pot or 0,
+                tickets = sv.tickets or 0,
+                entrants = sv.entrants or 0,
+                announceMessageId = sv.announceMessageId,
+                prizes = sv.prizes or {},
+                winners = sv.winners or {},
+            })
+            seenKeys[svKey] = true
+        end
+    end
+
+    -- 5. SavedVariables historical weeks
+    if self.savedVars and self.savedVars.raffleHistory and self.savedVars.raffleHistory[guildKey] then
+        for _, hist in ipairs(self.savedVars.raffleHistory[guildKey]) do
+            local hKey = tostring(hist.weekStart or hist.weekLabel or "")
+            if hKey ~= "" and not seenKeys[hKey] then
+                table.insert(weeks, {
+                    guildKey = guildKey,
+                    guildLabel = hist.guildLabel or (guildKey == "post" and "Redfur Trading Post" or "Redfur Dealers"),
+                    weekLabel = hist.weekLabel or "Archived Draw",
+                    weekKey = hKey,
+                    weekStart = hist.weekStart,
+                    isSynced = true,
+                    syncBadge = "|c00CCFF[SYNCED ✓ Archive]|r",
+                    syncTooltip = "Historical archive stored in SavedVariables.",
+                    pot = hist.pot or 0,
+                    tickets = hist.tickets or 0,
+                    entrants = hist.entrants or 0,
+                    prizes = hist.prizes or {},
+                    winners = hist.winners or {},
+                })
+                seenKeys[hKey] = true
             end
         end
     end
 
-    -- Mode 2: Official Verified Ledger (matches Discord announcements & database)
-    if FR.OfficialRaffleLedger and FR.OfficialRaffleLedger[guildKey] then
-        return FR.OfficialRaffleLedger[guildKey]
+    -- 6. Default Verified Cache (Archive)
+    if DEFAULT_RAFFLE_CACHE and DEFAULT_RAFFLE_CACHE[guildKey] then
+        local def = DEFAULT_RAFFLE_CACHE[guildKey]
+        local defKey = tostring(def.weekStart or def.weekLabel or "default")
+        if not seenKeys[defKey] then
+            table.insert(weeks, {
+                guildKey = guildKey,
+                guildLabel = def.guildLabel or (guildKey == "post" and "Redfur Trading Post" or "Redfur Dealers"),
+                weekLabel = def.weekLabel or "Archive Draw",
+                weekKey = defKey,
+                weekStart = def.weekStart,
+                isSynced = true,
+                syncBadge = "|c00CCFF[SYNCED ✓ Archive]|r",
+                syncTooltip = "Archived draw preserved in Fissal Relay ledger.",
+                pot = def.pot or 0,
+                tickets = def.tickets or 0,
+                entrants = def.entrants or 0,
+                prizes = def.prizes or {},
+                winners = def.winners or {},
+            })
+            seenKeys[defKey] = true
+        end
     end
 
-    if self.savedVars and self.savedVars.raffleData and self.savedVars.raffleData[guildKey] then
-        return self.savedVars.raffleData[guildKey]
+    return weeks
+end
+
+-- Query active raffle data for a guild
+function FR:GetRaffleData(guildKey)
+    local weeks = self:GetRaffleWeeks(guildKey)
+    if #weeks == 0 then
+        return DEFAULT_RAFFLE_CACHE[guildKey]
     end
 
-    return DEFAULT_RAFFLE_CACHE[guildKey]
+    local idx = self.currentRaffleWeekIdx or 1
+    if idx > #weeks then idx = #weeks end
+    if idx < 1 then idx = 1 end
+    return weeks[idx] or DEFAULT_RAFFLE_CACHE[guildKey]
+end
+
+-- 1-Click Update MotD with Active Raffle Data
+function FR:PushRaffleToMotD(guildKey)
+    local guildId = self:ResolveGuildId(guildKey)
+    if not guildId or guildId == 0 then
+        self.PrintChat("|cFF5555Error:|r Could not resolve guild ID for " .. tostring(guildKey))
+        return false
+    end
+
+    local guildName = GetGuildName(guildId)
+    local hasPermission = DoesPlayerHaveGuildPermission and DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_SET_MOTD)
+    local isGM = IsPlayerGuildMaster and IsPlayerGuildMaster(guildId)
+
+    if not (isGM or hasPermission) then
+        self.PrintChat(string.format("|cFF5555Permission Denied:|r You do not have permission to edit the MotD for %s.", guildName))
+        if self.raffleMailStatusLabel then
+            self.raffleMailStatusLabel:SetText(string.format("|cFF5555Permission Denied for %s|r", guildName))
+        end
+        return false
+    end
+
+    local currentMotD = GetGuildMotD(guildId) or ""
+    if currentMotD == "" then
+        self.PrintChat(string.format("|cFF5555Error:|r MotD for %s is empty! Type |cFF9900/fissal motd|r to open the MotD Broadcast Studio and create your template.", guildName))
+        if self.raffleMailStatusLabel then
+            self.raffleMailStatusLabel:SetText("|cFF5555MotD is empty - open /fissal motd|r")
+        end
+        return false
+    end
+
+    -- Check if MotD contains raffle tokens or legacy fields
+    local hasTokens = string.find(currentMotD, "{raffle_") ~= nil or string.find(currentMotD, "{drawing_date}") ~= nil or string.find(currentMotD, "{date_week}") ~= nil
+    local hasLegacyFields = string.find(string.lower(currentMotD), "currently at") ~= nil or string.find(string.lower(currentMotD), "tickets in pool") ~= nil
+    
+    if not (hasTokens or hasLegacyFields) then
+        self.PrintChat(string.format("|cFF5555[MotD Interpolation Error]|r %s's MotD does not contain any raffle template tokens (e.g. |c00FFCC{raffle_pot}|r, |c00FFCC{raffle_tickets}|r) or raffle fields ('currently at', 'tickets in pool').", guildName))
+        self.PrintChat("|cFFD700Staff Action:|r Type |cFF9900/fissal motd|r to open the MotD Broadcast Studio, pick the 'Weekly Raffle Push' or 'Winners Announcement' preset, or customize your template.")
+        if self.raffleMailStatusLabel then
+            self.raffleMailStatusLabel:SetText("|cFF5555Missing MotD tokens - type /fissal motd|r")
+        end
+        return false
+    end
+
+    -- Interpolate with active raffle data
+    local resolved = self:ResolveMotDTokens(currentMotD, guildId)
+
+    -- Auto-balance unclosed color tags
+    local _, colorStarts = string.gsub(resolved, "|c", "")
+    local _, colorEnds = string.gsub(resolved, "|r", "")
+    if colorStarts > colorEnds then
+        resolved = resolved .. string.rep("|r", colorStarts - colorEnds)
+    end
+
+    local charCount = (zo_strlen and zo_strlen(resolved)) or #resolved
+    local byteCount = #resolved
+    local MAX_CHARS = MAX_GUILD_MOTD_LENGTH or 2048
+
+    if charCount > MAX_CHARS or byteCount > MAX_CHARS then
+        self.PrintChat(string.format("|cFF5555Error:|r Resulting MotD (%d chars, %d bytes) exceeds the limit of %d. Please open |cFF9900/fissal motd|r to trim the message before pushing.", charCount, byteCount, MAX_CHARS))
+        if self.raffleMailStatusLabel then
+            self.raffleMailStatusLabel:SetText(string.format("|cFF5555MotD exceeds limit (%d/%d)|r", charCount, MAX_CHARS))
+        end
+        return false
+    end
+
+    SetGuildMotD(guildId, resolved)
+    PlaySound(SOUNDS.GUILD_ROSTER_ADDED or SOUNDS.NOTE_SAVED)
+    self.PrintChat(string.format("✓ |c59E08AMotD updated for %s!|r (%d chars, %d bytes)", guildName, charCount, byteCount))
+    if self.raffleMailStatusLabel then
+        self.raffleMailStatusLabel:SetText(string.format("|c59E08AMotD updated for %s!|r", guildName))
+    end
+    return true
 end
 
 -- Check if a specific winner payout has already been sent
@@ -600,12 +811,14 @@ function FR:CreateRaffleMailUI()
 
     tabPost:SetHandler("OnClicked", function()
         self.currentRaffleGuild = "post"
+        self.currentRaffleWeekIdx = nil
         UpdateTabs()
         self:RefreshRaffleMailUI()
     end)
 
     tabDealers:SetHandler("OnClicked", function()
         self.currentRaffleGuild = "dealers"
+        self.currentRaffleWeekIdx = nil
         UpdateTabs()
         self:RefreshRaffleMailUI()
     end)
@@ -614,7 +827,7 @@ function FR:CreateRaffleMailUI()
     local summaryBanner = wm:CreateControl("$(parent)_Summary", win, CT_CONTROL)
     summaryBanner:SetAnchor(TOPLEFT, win, TOPLEFT, 12, 76)
     summaryBanner:SetAnchor(TOPRIGHT, win, TOPRIGHT, -12, 76)
-    summaryBanner:SetHeight(56)
+    summaryBanner:SetHeight(60)
 
     local sumBg = wm:CreateControl("$(parent)_Bg", summaryBanner, CT_BACKDROP)
     sumBg:SetAnchorFill()
@@ -622,15 +835,62 @@ function FR:CreateRaffleMailUI()
     sumBg:SetEdgeColor(0.40, 0.30, 0.12, 0.65)
     sumBg:SetEdgeTexture("", 1, 1, 0)
 
+    -- Week navigation controls: < (older) and > (newer)
+    local prevWeekBtn = wm:CreateControl("$(parent)_PrevWeek", summaryBanner, CT_BUTTON)
+    prevWeekBtn:SetAnchor(TOPLEFT, summaryBanner, TOPLEFT, 6, 6)
+    prevWeekBtn:SetDimensions(20, 20)
+    prevWeekBtn:SetFont("ZoFontGameBold")
+    prevWeekBtn:SetText("<")
+    prevWeekBtn:SetNormalFontColor(0.9, 0.7, 0.2, 1)
+    prevWeekBtn:SetMouseOverFontColor(1, 0.9, 0.4, 1)
+    prevWeekBtn:SetDisabledFontColor(0.35, 0.35, 0.35, 1)
+
     local sumWeekLbl = wm:CreateControl("$(parent)_Week", summaryBanner, CT_LABEL)
-    sumWeekLbl:SetAnchor(TOPLEFT, summaryBanner, TOPLEFT, 10, 8)
+    sumWeekLbl:SetAnchor(LEFT, prevWeekBtn, RIGHT, 5, 0)
     sumWeekLbl:SetFont("ZoFontGameBold")
     sumWeekLbl:SetText("|c00FFCCWeek:|r |cFFFFFF--|r")
+
+    local nextWeekBtn = wm:CreateControl("$(parent)_NextWeek", summaryBanner, CT_BUTTON)
+    nextWeekBtn:SetAnchor(LEFT, sumWeekLbl, RIGHT, 5, 0)
+    nextWeekBtn:SetDimensions(20, 20)
+    nextWeekBtn:SetFont("ZoFontGameBold")
+    nextWeekBtn:SetText(">")
+    nextWeekBtn:SetNormalFontColor(0.9, 0.7, 0.2, 1)
+    nextWeekBtn:SetMouseOverFontColor(1, 0.9, 0.4, 1)
+    nextWeekBtn:SetDisabledFontColor(0.35, 0.35, 0.35, 1)
+
+    local sumSyncLbl = wm:CreateControl("$(parent)_SyncBadge", summaryBanner, CT_LABEL)
+    sumSyncLbl:SetAnchor(LEFT, nextWeekBtn, RIGHT, 6, 0)
+    sumSyncLbl:SetFont("ZoFontGameSmall")
+    sumSyncLbl:SetText("|c59E08A[SYNCED ✓]|r")
+    sumSyncLbl:SetMouseEnabled(true)
+
+    prevWeekBtn:SetHandler("OnClicked", function()
+        local gKey = self.currentRaffleGuild or "post"
+        local weeks = self:GetRaffleWeeks(gKey)
+        self.currentRaffleWeekIdx = math.min((self.currentRaffleWeekIdx or 1) + 1, #weeks)
+        self:RefreshRaffleMailUI()
+    end)
+    prevWeekBtn:SetHandler("OnMouseEnter", function(c)
+        InitializeTooltip(InformationTooltip, c, TOP, 0, -4)
+        SetTooltipText(InformationTooltip, "Step backward to prior raffle week archive.")
+    end)
+    prevWeekBtn:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
+
+    nextWeekBtn:SetHandler("OnClicked", function()
+        self.currentRaffleWeekIdx = math.max((self.currentRaffleWeekIdx or 1) - 1, 1)
+        self:RefreshRaffleMailUI()
+    end)
+    nextWeekBtn:SetHandler("OnMouseEnter", function(c)
+        InitializeTooltip(InformationTooltip, c, TOP, 0, -4)
+        SetTooltipText(InformationTooltip, "Step forward toward current live raffle week.")
+    end)
+    nextWeekBtn:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
 
     -- Mode toggle button: Official Discord vs Local Addon Roll
     local sourceBtn = wm:CreateControl("$(parent)_SourceBtn", summaryBanner, CT_BUTTON)
     sourceBtn:SetAnchor(TOPRIGHT, summaryBanner, TOPRIGHT, -8, 6)
-    sourceBtn:SetDimensions(126, 22)
+    sourceBtn:SetDimensions(116, 20)
     sourceBtn:SetFont("ZoFontGameSmall")
     sourceBtn:SetText("[Official Ledger]")
 
@@ -670,19 +930,50 @@ function FR:CreateRaffleMailUI()
     end)
     sourceBtn:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
 
+    -- Row 2: Pot, Tickets, and 1-Click Update MotD Button
     local sumPotLbl = wm:CreateControl("$(parent)_Pot", summaryBanner, CT_LABEL)
-    sumPotLbl:SetAnchor(TOPLEFT, summaryBanner, TOPLEFT, 10, 32)
+    sumPotLbl:SetAnchor(TOPLEFT, summaryBanner, TOPLEFT, 8, 34)
     sumPotLbl:SetFont("ZoFontGameSmall")
     sumPotLbl:SetText("Pot: --")
 
+    local updateMotdBtn = wm:CreateControl("$(parent)_UpdateMotdBtn", summaryBanner, CT_BUTTON)
+    updateMotdBtn:SetAnchor(TOPRIGHT, summaryBanner, TOPRIGHT, -8, 32)
+    updateMotdBtn:SetDimensions(95, 22)
+    updateMotdBtn:SetFont("ZoFontGameSmall")
+    updateMotdBtn:SetText("|cFFD700Update MotD|r")
+
+    local motdBg = wm:CreateControl("$(parent)_Bg", updateMotdBtn, CT_BACKDROP)
+    motdBg:SetAnchorFill()
+    motdBg:SetCenterColor(0.18, 0.10, 0.02, 0.90)
+    motdBg:SetEdgeColor(0.95, 0.65, 0.15, 0.90)
+    motdBg:SetEdgeTexture("", 1, 1, 0)
+
+    updateMotdBtn:SetHandler("OnMouseEnter", function()
+        motdBg:SetCenterColor(0.28, 0.16, 0.04, 1.0)
+        motdBg:SetEdgeColor(1.0, 0.85, 0.3, 1.0)
+        InitializeTooltip(InformationTooltip, updateMotdBtn, TOP, 0, -4)
+        SetTooltipText(InformationTooltip, "Interpolate this guild's MotD with active raffle data (pot, tickets, entrants, dates).\nRequires MotD edit permissions and valid template tokens or raffle fields.")
+    end)
+    updateMotdBtn:SetHandler("OnMouseExit", function()
+        motdBg:SetCenterColor(0.18, 0.10, 0.02, 0.90)
+        motdBg:SetEdgeColor(0.95, 0.65, 0.15, 0.90)
+        ClearTooltip(InformationTooltip)
+    end)
+    updateMotdBtn:SetHandler("OnClicked", function()
+        self:PushRaffleToMotD(self.currentRaffleGuild or "post")
+    end)
+
     local sumTicketsLbl = wm:CreateControl("$(parent)_Tickets", summaryBanner, CT_LABEL)
-    sumTicketsLbl:SetAnchor(TOPRIGHT, summaryBanner, TOPRIGHT, -10, 32)
+    sumTicketsLbl:SetAnchor(RIGHT, updateMotdBtn, LEFT, -10, 0)
     sumTicketsLbl:SetFont("ZoFontGameSmall")
     sumTicketsLbl:SetText("Tickets: --")
 
     self.raffleMailWeekLbl = sumWeekLbl
     self.raffleMailPotLbl = sumPotLbl
     self.raffleMailTicketsLbl = sumTicketsLbl
+    self.raffleMailSyncLbl = sumSyncLbl
+    self.raffleMailPrevWeekBtn = prevWeekBtn
+    self.raffleMailNextWeekBtn = nextWeekBtn
     self.raffleMailSourceBtn = sourceBtn
     UpdateSourceBtn()
 
@@ -836,11 +1127,43 @@ function FR:RefreshRaffleMailUI()
     if not self.raffleMailWindow then return end
 
     local gKey = self.currentRaffleGuild or "post"
-    local data = self:GetRaffleData(gKey)
+    local weeks = self:GetRaffleWeeks(gKey)
+
+    -- Default to the most recent week that has winners, or 1
+    if not self.currentRaffleWeekIdx then
+        self.currentRaffleWeekIdx = 1
+        for i, w in ipairs(weeks) do
+            if w.winners and #w.winners > 0 then
+                self.currentRaffleWeekIdx = i
+                break
+            end
+        end
+    end
+
+    if self.currentRaffleWeekIdx > #weeks then self.currentRaffleWeekIdx = #weeks end
+    if self.currentRaffleWeekIdx < 1 then self.currentRaffleWeekIdx = 1 end
+
+    local data = weeks[self.currentRaffleWeekIdx] or DEFAULT_RAFFLE_CACHE[gKey]
     local weekKey = data.weekStart or data.weekLabel or "latest"
 
     if self.raffleMailWeekLbl then
         self.raffleMailWeekLbl:SetText(string.format("|c00FFCCWeek:|r |cFFFFFF%s|r", data.weekLabel or "--"))
+    end
+
+    if self.raffleMailSyncLbl then
+        self.raffleMailSyncLbl:SetText(data.syncBadge or "")
+        self.raffleMailSyncLbl:SetHandler("OnMouseEnter", function(c)
+            InitializeTooltip(InformationTooltip, c, TOP, 0, -4)
+            SetTooltipText(InformationTooltip, data.syncTooltip or "Raffle week status.")
+        end)
+        self.raffleMailSyncLbl:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
+    end
+
+    if self.raffleMailPrevWeekBtn then
+        self.raffleMailPrevWeekBtn:SetEnabled(self.currentRaffleWeekIdx < #weeks)
+    end
+    if self.raffleMailNextWeekBtn then
+        self.raffleMailNextWeekBtn:SetEnabled(self.currentRaffleWeekIdx > 1)
     end
 
     if self.raffleMailPotLbl then
@@ -854,36 +1177,67 @@ function FR:RefreshRaffleMailUI()
         self.raffleMailTicketsLbl:SetText(string.format("Tickets: |c58E08A%s|r", tixStr))
     end
 
+    local rankTitles = {
+        "|t18:18:/esoui/art/compass/groupleader.dds|t |cFFD7001st Place|r",
+        "|cCCCCCC[2] 2nd Place|r",
+        "|cCD7F32[3] 3rd Place|r",
+    }
+
     local winners = data.winners or {}
-    for i = 1, 3 do
-        local ctrl = self.winnerControls[i]
-        local w = winners[i]
-
-        if ctrl and w then
-            ctrl.card:SetHidden(false)
-            ctrl.name:SetText(string.format("|cFFFFFF%s|r", w.name))
-
-            local prizeStr = ZO_CommaDelimitNumber(w.prize or 0)
-            local ticketStr = w.ticket and tostring(w.ticket) or "--"
-            ctrl.details:SetText(string.format("Ticket #|cFFFFFF%s|r  |  Prize: |cFFD700%s|r |t13:13:EsoUI/Art/currency/currency_gold.dds|t", ticketStr, prizeStr))
-
-            local isPaid, pInfo = self:IsPayoutSent(gKey, weekKey, i)
-
-            if isPaid then
-                ctrl.status:SetText("|c58E08A[PAID]|r")
-                ctrl.fillBtn:SetText("|c888888Paid|r")
-                if ctrl.fillBg then
-                    ctrl.fillBg:SetCenterColor(0.04, 0.07, 0.05, 0.6)
-                    ctrl.fillBg:SetEdgeColor(0.2, 0.45, 0.25, 0.5)
-                end
-            else
-                ctrl.status:SetText("|cFF9900[PENDING]|r")
-                ctrl.fillBtn:SetText("|c00FFCCAuto-Fill Mail|r")
-                if ctrl.fillBg then
-                    ctrl.fillBg:SetCenterColor(0.08, 0.16, 0.20, 0.85)
-                    ctrl.fillBg:SetEdgeColor(0, 0.8, 0.7, 0.8)
-                end
+    if #winners == 0 then
+        -- Empty state: Live cycle in progress before Sunday draw
+        local ctrl1 = self.winnerControls[1]
+        if ctrl1 then
+            ctrl1.card:SetHidden(false)
+            ctrl1.rank:SetText("|cFFD700★ Active Cycle In Progress|r")
+            ctrl1.name:SetText("|cFFFFFFDrawing Pending|r")
+            ctrl1.details:SetText("Live bank deposits accumulating. Official draw scheduled for Sunday 7:00 PM ET.")
+            ctrl1.status:SetText("|c888888[IN PROGRESS]|r")
+            ctrl1.status:SetHandler("OnClicked", nil)
+            ctrl1.fillBtn:SetText("|c555555Awaiting Draw|r")
+            ctrl1.fillBtn:SetEnabled(false)
+            if ctrl1.fillBg then
+                ctrl1.fillBg:SetCenterColor(0.04, 0.04, 0.06, 0.5)
+                ctrl1.fillBg:SetEdgeColor(0.3, 0.3, 0.3, 0.4)
             end
+        end
+        for i = 2, 3 do
+            if self.winnerControls[i] then
+                self.winnerControls[i].card:SetHidden(true)
+            end
+        end
+    else
+        for i = 1, 3 do
+            local ctrl = self.winnerControls[i]
+            local w = winners[i]
+
+            if ctrl and w then
+                ctrl.card:SetHidden(false)
+                ctrl.rank:SetText(rankTitles[i] or ("#" .. i))
+                ctrl.name:SetText(string.format("|cFFFFFF%s|r", w.name))
+                ctrl.fillBtn:SetEnabled(true)
+
+                local prizeStr = ZO_CommaDelimitNumber(w.prize or 0)
+                local ticketStr = w.ticket and tostring(w.ticket) or "--"
+                ctrl.details:SetText(string.format("Ticket #|cFFFFFF%s|r  |  Prize: |cFFD700%s|r |t13:13:EsoUI/Art/currency/currency_gold.dds|t", ticketStr, prizeStr))
+
+                local isPaid, pInfo = self:IsPayoutSent(gKey, weekKey, i)
+
+                if isPaid then
+                    ctrl.status:SetText("|c58E08A[PAID]|r")
+                    ctrl.fillBtn:SetText("|c888888Paid|r")
+                    if ctrl.fillBg then
+                        ctrl.fillBg:SetCenterColor(0.04, 0.07, 0.05, 0.6)
+                        ctrl.fillBg:SetEdgeColor(0.2, 0.45, 0.25, 0.5)
+                    end
+                else
+                    ctrl.status:SetText("|cFF9900[PENDING]|r")
+                    ctrl.fillBtn:SetText("|c00FFCCAuto-Fill Mail|r")
+                    if ctrl.fillBg then
+                        ctrl.fillBg:SetCenterColor(0.08, 0.16, 0.20, 0.85)
+                        ctrl.fillBg:SetEdgeColor(0, 0.8, 0.7, 0.8)
+                    end
+                end
 
             -- Allow clicking status label to toggle paid state manually
             ctrl.status:SetHandler("OnClicked", function()

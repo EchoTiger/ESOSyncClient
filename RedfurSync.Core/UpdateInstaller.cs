@@ -137,7 +137,8 @@ namespace RedfurSync
             if (string.IsNullOrWhiteSpace(stagedPath))
                 throw new ArgumentException("The staged update path must not be empty.", nameof(stagedPath));
 
-            string installDir = Path.GetDirectoryName(Path.GetFullPath(exePath)) ?? string.Empty;
+            string? dir = Path.GetDirectoryName(exePath);
+            string installDir = !string.IsNullOrEmpty(dir) ? dir : (Path.GetDirectoryName(Path.GetFullPath(exePath)) ?? string.Empty);
             string pendingPath = Path.Combine(installDir, "pending.json");
             string healthyPath = Path.Combine(installDir, "HEALTHY");
             string prevPath = exePath + ".prev";

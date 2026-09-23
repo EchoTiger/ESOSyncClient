@@ -264,7 +264,13 @@ public sealed class UpdateTrustAndHandshakeTests
     private sealed class InMemoryTestFileSystem : IUpdateFileSystem
     {
         private readonly Dictionary<string, string> _files = new(StringComparer.OrdinalIgnoreCase);
-        private static string Norm(string p) => p.Replace('\\', '/');
+        private static string Norm(string p)
+        {
+            var s = p.Replace('\\', '/');
+            if (s.Length >= 2 && char.IsLetter(s[0]) && s[1] == ':')
+                s = s.Substring(2);
+            return s;
+        }
 
         public bool FileExists(string path) => _files.ContainsKey(Norm(path));
 

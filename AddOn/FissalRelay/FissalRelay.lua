@@ -716,6 +716,161 @@ function FR:AuditBankDues(guildIndex, limitDays)
     PlayFissalSound()
 end
 
+-- Retrieve aggregate member sales for a guild within a lookback window
+function FR:GetMemberSales(guildId, lookbackDays)
+    lookbackDays = tonumber(lookbackDays) or 14
+    local nowTs = GetTimeStamp()
+    local cutoffTs = nowTs - (lookbackDays * 86400)
+    local salesByMember = {}
+
+    -- 1. Scan FissalRelay native sales cache
+    if self.savedVars and self.savedVars.sales then
+        for _, sale in pairs(self.savedVars.sales) do
+            if sale.guildId == guildId and (sale.timestamp or 0) >= cutoffTs then
+                local seller = sale.seller
+                if seller and seller ~= "" then
+                    local cleanSeller = (seller:sub(1,1) == "@") and seller:sub(2) or seller
+                    local lowerSeller = string.lower(cleanSeller)
+                    local rec = salesByMember[lowerSeller]
+                    if not rec then
+                        rec = { count = 0, gold = 0, lastSaleTs = 0, rawName = "@" .. cleanSeller }
+                        salesByMember[lowerSeller] = rec
+                    end
+                    rec.count = rec.count + 1
+                    rec.gold = rec.gold + (sale.price or 0)
+                    if (sale.timestamp or 0) > rec.lastSaleTs then
+                        rec.lastSaleTs = sale.timestamp
+                    end
+                end
+            end
+        end
+    end
+
+    -- 2. Fallback & cross-reference with MasterMerchant / LibGuildStore if available
+    local MM = _G["LibGuildStore_Internal"]
+    if MM and MM.guildSales then
+        local guildName = GetGuildName(guildId)
+        if MM.guildSales[guildName] and MM.guildSales[guildName].sellers then
+            -- MM timeframe index: 3=this week, 4=last week, 6=7day, 7=10day, 8=30day
+            local mmTf = (lookbackDays <= 7 and 6) or (lookbackDays <= 10 and 7) or (lookbackDays <= 14 and 3) or 8
+            for sellerName, data in pairs(MM.guildSales[guildName].sellers) do
+                local cleanSeller = (sellerName:sub(1,1) == "@") and sellerName:sub(2) or sellerName
+                local lowerSeller = string.lower(cleanSeller)
+                local mmGold = (data.sales and (data.sales[mmTf] or data.sales[3] or data.sales[7])) or 0
+                local mmCount = (data.count and (data.count[mmTf] or data.count[3] or data.count[7])) or 0
+                if mmGold > 0 or mmCount > 0 then
+                    local rec = salesByMember[lowerSeller]
+                    if not rec then
+                        salesByMember[lowerSeller] = { count = mmCount, gold = mmGold, lastSaleTs = nowTs, rawName = "@" .. cleanSeller }
+                    else
+                        if mmGold > rec.gold then rec.gold = mmGold end
+                        if mmCount > rec.count then rec.count = mmCount end
+                    end
+                end
+            end
+        end
+    end
+
+    return salesByMember
+end
+
+-- Grounded Redfur Dues Rules definition
+function FR:GetRedfurDuesRule(guildId)
+    local gName = string.lower(GetGuildName(guildId) or "")
+    if string.find(gName, "post") then
+        return {
+            key = "POST",
+            label = "Redfur Trading Post",
+            windowDays = 10,
+            minSales = 1,
+            minGold = 0,
+            raffleCountsAsSale = true,
+            raffleGoldThreshold = 1000,
+            description = "≥1 sale OR ≥1,000g bank deposit within 10 days"
+        }
+    elseif string.find(gName, "caravan") then
+        return {
+            key = "CARAVAN",
+            label = "Redfur Trading Caravan",
+            windowDays = 15,
+            minSales = 1,
+            minGold = 0,
+            raffleCountsAsSale = false,
+            raffleGoldThreshold = 0,
+            description = "≥1 sale within 15 days"
+        }
+    elseif string.find(gName, "dealer") then
+        return {
+            key = "DEALERS",
+            label = "Redfur Dealers",
+            windowDays = 10,
+            minSales = 0,
+            minGold = 25000,
+            raffleCountsAsSale = false,
+            raffleGoldThreshold = 25000,
+            description = "salesGold + bank deposits ≥ 25,000g within 10 days"
+        }
+    else
+        return {
+            key = "CUSTOM",
+            label = GetGuildName(guildId),
+            windowDays = 14,
+            minSales = 1,
+            minGold = 0,
+            raffleCountsAsSale = true,
+            raffleGoldThreshold = 1000,
+            description = "≥1 sale OR ≥1,000g deposit within 14 days"
+        }
+    end
+end
+
+-- Evaluates whether a member has met their dues based on Redfur standards
+function FR:EvaluateRedfurDues(guildId, rawMemberName, deposits, salesCount, salesGold)
+    local rule = self:GetRedfurDuesRule(guildId)
+    deposits = tonumber(deposits) or 0
+    salesCount = tonumber(salesCount) or 0
+    salesGold = tonumber(salesGold) or 0
+
+    local duesMet = false
+    local reason = ""
+
+    if rule.key == "POST" then
+        if salesCount >= 1 then
+            duesMet = true
+            reason = string.format("%d sales", salesCount)
+        elseif deposits >= (rule.raffleGoldThreshold or 1000) then
+            duesMet = true
+            reason = string.format("%sg deposit", ZO_LocalizeDecimalNumber(deposits))
+        else
+            reason = "No sales & no deposits (10d)"
+        end
+    elseif rule.key == "CARAVAN" then
+        if salesCount >= 1 then
+            duesMet = true
+            reason = string.format("%d sales", salesCount)
+        else
+            reason = "No sales (15d)"
+        end
+    elseif rule.key == "DEALERS" then
+        local total = salesGold + deposits
+        if total >= (rule.minGold or 25000) then
+            duesMet = true
+            reason = string.format("%sg combined", ZO_LocalizeDecimalNumber(total))
+        else
+            reason = string.format("%sg / 25kg (10d)", ZO_LocalizeDecimalNumber(total))
+        end
+    else
+        if salesCount >= 1 or deposits >= 1000 then
+            duesMet = true
+            reason = (salesCount >= 1) and string.format("%d sales", salesCount) or string.format("%sg deposit", ZO_LocalizeDecimalNumber(deposits))
+        else
+            reason = "Dues unmet"
+        end
+    end
+
+    return duesMet, reason, rule
+end
+
 --[[ =========================================================================
      LIBHISTOIRE PROCESSORS & TURBO PUMP ENGINE
 ========================================================================= ]]--
@@ -2074,6 +2229,13 @@ function FR:HandleSlashCommand(arg)
             local days = tonumber(args[3]) or 14
             self:AuditInactives(gIdx, days)
         end
+    elseif cmd == "ranks" or cmd == "autoranks" or cmd == "autorank" or cmd == "ar" then
+        if self.ToggleConsole then
+            self:ToggleConsole(true)
+            self:SelectConsoleTab(6)
+        else
+            PrintChat("Auto-Ranks module initializing...")
+        end
     elseif cmd == "dues" or cmd == "bank" then
         local gIdx = tonumber(args[2]) or 1
         local days = tonumber(args[3]) or 7
@@ -2371,6 +2533,7 @@ local function OnAddOnLoaded(eventCode, addOnName)
     SLASH_COMMANDS["/fissal"] = function(arg) FR:HandleSlashCommand(arg) end
     SLASH_COMMANDS["/fissalrelay"] = function(arg) FR:HandleSlashCommand(arg) end
     SLASH_COMMANDS["/fr"] = function(arg) FR:HandleSlashCommand(arg) end
+    SLASH_COMMANDS["/ar"] = function(arg) FR:HandleSlashCommand("ranks " .. (arg or "")) end
 
     -- Setup LibHistoire integration when ready
     if LibHistoire and LibHistoire.OnReady then

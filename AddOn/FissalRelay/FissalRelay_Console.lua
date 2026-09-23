@@ -230,13 +230,14 @@ function FR:CreateConsoleUI()
         self.guildButtons[i] = gBtn
     end
 
-    -- 9. Navigation Tab Bar (Row 2: Overview, MotD Studio, Auditor, Kiosk Recon, TTC)
+    -- 9. Navigation Tab Bar (Row 2: Overview, MotD Studio, Auditor, Kiosk Recon, TTC, Auto-Ranks)
     local navNames = {
         { id = 1, label = "Overview", desc = "Live guild telemetry, roster count, trader kiosk status, and LibHistoire pipeline health." },
         { id = 2, label = "MotD Studio", desc = "Compose, preview, and broadcast Guild Message of the Day with dynamic live tokens." },
         { id = 3, label = "Auditor", desc = "Inactivity and dues auditor to flag inactive members, check bank history, and send check-in mail." },
         { id = 4, label = "Kiosk Recon", desc = "Kiosk bids ledger and ground reconnaissance vault tracking trader hires and field observations." },
         { id = 5, label = "TTC Bumper", desc = "Scan and refresh your guild store listings on TamrielTradeCentre.com." },
+        { id = 6, label = "Auto-Ranks", desc = "Automate member promotions and demotions based on sales or donations with full preview and safety guards." },
     }
 
     self.navButtons = {}
@@ -368,6 +369,7 @@ function FR:CreateConsoleUI()
     if self.BuildAuditorUI then self:BuildAuditorUI(content) end
     if self.BuildBidsReconUI then self:BuildBidsReconUI(content) end
     if self.BuildTTCBumperTab then self:BuildTTCBumperTab(content) end
+    if self.BuildAutoRanksUI then self:BuildAutoRanksUI(content) end
 
     self:SelectConsoleGuild(1)
     self:SelectConsoleTab(1)
@@ -839,6 +841,8 @@ function FR:SelectConsoleGuild(guildIndex)
         self:UpdateAuditorUI()
     elseif self.activeConsoleTab == 4 and self.UpdateBidsUI then
         self:UpdateBidsUI()
+    elseif self.activeConsoleTab == 6 and self.UpdateAutoRanksUI then
+        self:UpdateAutoRanksUI()
     end
 end
 
@@ -880,6 +884,8 @@ function FR:SelectConsoleTab(tabId)
         self:UpdateAuditorUI()
     elseif tabId == 4 and self.UpdateBidsUI then
         self:UpdateBidsUI()
+    elseif tabId == 6 and self.UpdateAutoRanksUI then
+        self:UpdateAutoRanksUI()
     end
 end
 

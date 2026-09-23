@@ -28,6 +28,10 @@ local ROWS_PER_PAGE = 9
 FR.auditFilterDays = 14
 FR.auditExcludeOfficers = true
 FR.auditExcludeLOA = true
+FR.auditShieldActiveSellers = true
+FR.auditRankFilter = "all"
+FR.auditSortBy = "days"
+FR.auditSortAsc = false
 FR.auditSearchQuery = ""
 FR.auditCurrentPage = 1
 FR.auditFilteredMembers = {}
@@ -75,12 +79,18 @@ function FR:RunRosterAudit()
     local memberCount = GetNumGuildMembers(guildId)
     local cutoffSecs = (self.auditFilterDays or 14) * 86400
 
+    local duesRule = self.GetRedfurDuesRule and self:GetRedfurDuesRule(guildId) or { windowDays = 10 }
+    local scanWindowDays = math.max(self.auditFilterDays or 14, duesRule.windowDays or 10)
+
     -- Retrieve memoized deposit lookup for this guild (case-insensitive)
     local depositsByMember = self:GetMemberDeposits(guildId)
+    -- Retrieve member sales lookup for this guild (case-insensitive)
+    local salesByMember = self.GetMemberSales and self:GetMemberSales(guildId, scanWindowDays) or {}
 
     local rawInactives = {}
     local excusedCount = 0
     local officerCount = 0
+    local shieldedSellerCount = 0
 
     for m = 1, memberCount do
         local name, note, rankIndex, playerStatus, secsSinceLogoff = GetGuildMemberInfo(guildId, m)
@@ -90,6 +100,21 @@ function FR:RunRosterAudit()
             local days = math.floor(secsSinceLogoff / 86400)
             local rankName = GetGuildRankCustomName(guildId, rankIndex)
             local isLeaderOrOfficer = (rankIndex and rankIndex <= 2)
+
+            local rawName = name or ""
+            local cleanName = (rawName:sub(1,1) == "@") and rawName:sub(2) or rawName
+            local lowerName = string.lower(cleanName)
+
+            -- Sales & Deposits
+            local sRec = salesByMember[lowerName] or { count = 0, gold = 0, lastSaleTs = 0 }
+            local mDeposits = depositsByMember[lowerName] or 0
+            local duesMet, duesReason = false, ""
+            if self.EvaluateRedfurDues then
+                duesMet, duesReason = self:EvaluateRedfurDues(guildId, name, mDeposits, sRec.count, sRec.gold)
+            else
+                duesMet = (sRec.count > 0 or mDeposits > 0)
+                duesReason = duesMet and "Active" or "Unmet"
+            end
 
             -- Check LOA / Excused
             local noteLower = string.lower(note or "")
@@ -108,6 +133,21 @@ function FR:RunRosterAudit()
                 passFilter = false
             end
 
+            -- Invisible Player Protection: Shield active sellers from purge
+            if self.auditShieldActiveSellers and (sRec.count > 0 or duesMet) then
+                shieldedSellerCount = shieldedSellerCount + 1
+                passFilter = false
+            end
+
+            -- Rank Filter (e.g. "all" or specific rank name or index)
+            if self.auditRankFilter and self.auditRankFilter ~= "all" then
+                local rankMatches = (tostring(rankIndex) == tostring(self.auditRankFilter)) or
+                                    (string.lower(rankName or "") == string.lower(self.auditRankFilter))
+                if not rankMatches then
+                    passFilter = false
+                end
+            end
+
             if passFilter then
                 -- Text search filter
                 if self.auditSearchQuery and self.auditSearchQuery ~= "" then
@@ -122,7 +162,6 @@ function FR:RunRosterAudit()
 
             if passFilter then
                 local cleanRank = (rankName and rankName ~= "") and rankName or string.format("Rank %d", rankIndex or 0)
-                local lowerName = string.lower(name or "")
                 table.insert(rawInactives, {
                     name = name or "@Unknown",
                     note = note or "",
@@ -131,20 +170,48 @@ function FR:RunRosterAudit()
                     days = days,
                     isLOA = isLOA,
                     isOfficer = isLeaderOrOfficer,
-                    deposits = depositsByMember[lowerName] or 0,
+                    deposits = mDeposits,
+                    salesCount = sRec.count,
+                    salesGold = sRec.gold,
+                    duesMet = duesMet,
+                    duesReason = duesReason,
                 })
             end
         end
     end
 
+    -- Flexible multi-column sorting
     table.sort(rawInactives, function(a, b)
-        return a.days > b.days
+        local sortBy = self.auditSortBy or "days"
+        local asc = self.auditSortAsc or false
+
+        if sortBy == "rank" then
+            if a.rankIndex ~= b.rankIndex then
+                return asc and (a.rankIndex < b.rankIndex) or (a.rankIndex > b.rankIndex)
+            end
+            return a.days > b.days
+        elseif sortBy == "sales" then
+            if a.salesCount ~= b.salesCount then
+                return asc and (a.salesCount < b.salesCount) or (a.salesCount > b.salesCount)
+            end
+            return a.salesGold > b.salesGold
+        elseif sortBy == "dues" then
+            if a.duesMet ~= b.duesMet then
+                return asc and (a.duesMet and not b.duesMet) or (not a.duesMet and b.duesMet)
+            end
+            return a.deposits < b.deposits
+        elseif sortBy == "name" then
+            return asc and (a.name < b.name) or (a.name > b.name)
+        else -- "days"
+            return asc and (a.days < b.days) or (a.days > b.days)
+        end
     end)
 
     self.auditFilteredMembers = rawInactives
     self.auditTotalMembers = memberCount
     self.auditExcusedCount = excusedCount
     self.auditOfficerCount = officerCount
+    self.auditShieldedCount = shieldedSellerCount
 
     -- Save structured audit snapshot
     if self.savedVars and self.savedVars.staff then
@@ -158,6 +225,7 @@ function FR:RunRosterAudit()
             minDays = self.auditFilterDays,
             totalMembers = memberCount,
             inactiveCount = #rawInactives,
+            shieldedSellers = shieldedSellerCount,
             members = rawInactives,
         }
     end
@@ -226,10 +294,10 @@ function FR:BuildAuditorUI(parent)
 
     -- Toggle: Exclude Officers
     local offToggle = wm:CreateControl("$(parent)_OffToggle", card, CT_BUTTON)
-    offToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 275, 7)
-    offToggle:SetDimensions(120, 22)
+    offToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 210, 7)
+    offToggle:SetDimensions(90, 22)
     offToggle:SetFont("ZoFontGameSmall")
-    offToggle:SetText("Exclude Officers")
+    offToggle:SetText("No Officers")
     self:StyleTactileButton(offToggle, {
         normalBg = { 0.04, 0.12, 0.08, 0.85 },
         hoverBg = { 0.06, 0.18, 0.12, 0.95 },
@@ -238,7 +306,7 @@ function FR:BuildAuditorUI(parent)
         normalTextColor = { 0.3, 1, 0.5, 1 },
         hoverTextColor = { 0.6, 1, 0.7, 1 },
         tooltipTitle = "Exclude Officers",
-        tooltipText = "Hide Guild Master and Officer ranks (Ranks 1 & 2) from inactivity warnings and purge candidates.",
+        tooltipText = "Hide Guild Master and Officer ranks (Ranks 1 & 2) from purge list.",
     })
     offToggle:SetHandler("OnClicked", function()
         self.auditExcludeOfficers = not self.auditExcludeOfficers
@@ -249,10 +317,10 @@ function FR:BuildAuditorUI(parent)
 
     -- Toggle: Exclude LOA
     local loaToggle = wm:CreateControl("$(parent)_LoaToggle", card, CT_BUTTON)
-    loaToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 405, 7)
-    loaToggle:SetDimensions(110, 22)
+    loaToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 305, 7)
+    loaToggle:SetDimensions(85, 22)
     loaToggle:SetFont("ZoFontGameSmall")
-    loaToggle:SetText("Exclude [LOA]")
+    loaToggle:SetText("No [LOA]")
     self:StyleTactileButton(loaToggle, {
         normalBg = { 0.04, 0.12, 0.08, 0.85 },
         hoverBg = { 0.06, 0.18, 0.12, 0.95 },
@@ -270,16 +338,60 @@ function FR:BuildAuditorUI(parent)
     end)
     self.auditLoaToggle = loaToggle
 
+    -- Toggle: Shield Active Sellers (Invisible Players)
+    local shieldToggle = wm:CreateControl("$(parent)_ShieldToggle", card, CT_BUTTON)
+    shieldToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 395, 7)
+    shieldToggle:SetDimensions(115, 22)
+    shieldToggle:SetFont("ZoFontGameSmall")
+    shieldToggle:SetText("Shield Sellers")
+    self:StyleTactileButton(shieldToggle, {
+        normalBg = { 0.04, 0.12, 0.14, 0.85 },
+        hoverBg = { 0.06, 0.18, 0.20, 0.95 },
+        normalEdge = { 0.0, 0.75, 0.85, 0.80 },
+        hoverEdge = { 0.0, 1.00, 0.95, 1.00 },
+        normalTextColor = { 0, 1, 0.9, 1 },
+        hoverTextColor = { 0.4, 1, 1, 1 },
+        tooltipTitle = "Shield Active Sellers (Invisible Players)",
+        tooltipText = "Do not flag or kick players who appear offline if they have actively made sales or met guild dues in the active window.",
+    })
+    shieldToggle:SetHandler("OnClicked", function()
+        self.auditShieldActiveSellers = not self.auditShieldActiveSellers
+        self.auditCurrentPage = 1
+        self:UpdateAuditorUI()
+    end)
+    self.auditShieldToggle = shieldToggle
+
+    -- Rank Filter Cycle Button
+    local rankBtn = wm:CreateControl("$(parent)_RankFilterBtn", card, CT_BUTTON)
+    rankBtn:SetAnchor(TOPLEFT, card, TOPLEFT, 515, 7)
+    rankBtn:SetDimensions(105, 22)
+    rankBtn:SetFont("ZoFontGameSmall")
+    rankBtn:SetText("Rank: All")
+    self:StyleTactileButton(rankBtn, {
+        normalBg = { 0.10, 0.08, 0.14, 0.85 },
+        hoverBg = { 0.16, 0.12, 0.22, 0.95 },
+        normalEdge = { 0.60, 0.40, 0.85, 0.80 },
+        hoverEdge = { 0.80, 0.50, 1.00, 1.00 },
+        normalTextColor = { 0.85, 0.70, 1, 1 },
+        hoverTextColor = { 1, 0.85, 1, 1 },
+        tooltipTitle = "Rank Filter",
+        tooltipText = "Filter table by specific guild rank (click to cycle through ranks).",
+    })
+    rankBtn:SetHandler("OnClicked", function()
+        self:CycleAuditRankFilter()
+    end)
+    self.auditRankFilterBtn = rankBtn
+
     -- Search Box Container
     local searchBg = wm:CreateControlFromVirtual("$(parent)_SearchBg", card, "ZO_EditBackdrop")
     searchBg:SetAnchor(TOPRIGHT, card, TOPRIGHT, -12, 6)
-    searchBg:SetDimensions(150, 24)
+    searchBg:SetDimensions(135, 24)
 
     local searchBox = wm:CreateControlFromVirtual("$(parent)_Search", searchBg, "ZO_DefaultEditForBackdrop")
     searchBox:SetAnchorFill()
     searchBox:SetFont("ZoFontGameSmall")
     searchBox:SetTextType(TEXT_TYPE_ALL)
-    searchBox:SetDefaultText("Search member...")
+    searchBox:SetDefaultText("Search...")
     searchBox:SetHandler("OnTextChanged", function(ctrl)
         self.auditSearchQuery = ctrl:GetText()
         self.auditCurrentPage = 1
@@ -304,32 +416,62 @@ function FR:BuildAuditorUI(parent)
     local h1 = wm:CreateControl("$(parent)_H1", colHeader, CT_LABEL)
     h1:SetAnchor(LEFT, colHeader, LEFT, 8, 0)
     h1:SetFont("ZoFontGameBold")
-    h1:SetText(ColorText("MEMBER HANDLE", "FF9900"))
+    h1:SetText(ColorText("MEMBER", "FF9900"))
 
     local h2 = wm:CreateControl("$(parent)_H2", colHeader, CT_LABEL)
-    h2:SetAnchor(LEFT, colHeader, LEFT, 190, 0)
+    h2:SetAnchor(LEFT, colHeader, LEFT, 155, 0)
     h2:SetFont("ZoFontGameBold")
-    h2:SetText(ColorText("RANK", "00FFCC"))
+    h2:SetText(ColorText("RANK ↕", "00FFCC"))
+    h2:SetMouseEnabled(true)
+    h2:SetHandler("OnMouseDown", function()
+        if self.auditSortBy == "rank" then self.auditSortAsc = not self.auditSortAsc else self.auditSortBy = "rank"; self.auditSortAsc = true end
+        self:UpdateAuditorUI()
+    end)
 
     local h3 = wm:CreateControl("$(parent)_H3", colHeader, CT_LABEL)
-    h3:SetAnchor(LEFT, colHeader, LEFT, 310, 0)
+    h3:SetAnchor(LEFT, colHeader, LEFT, 245, 0)
     h3:SetFont("ZoFontGameBold")
-    h3:SetText(ColorText("OFFLINE", "FFD700"))
+    h3:SetText(ColorText("OFFLINE ↕", "FFD700"))
+    h3:SetMouseEnabled(true)
+    h3:SetHandler("OnMouseDown", function()
+        if self.auditSortBy == "days" then self.auditSortAsc = not self.auditSortAsc else self.auditSortBy = "days"; self.auditSortAsc = false end
+        self:UpdateAuditorUI()
+    end)
 
     local h4 = wm:CreateControl("$(parent)_H4", colHeader, CT_LABEL)
-    h4:SetAnchor(LEFT, colHeader, LEFT, 390, 0)
+    h4:SetAnchor(LEFT, colHeader, LEFT, 325, 0)
     h4:SetFont("ZoFontGameBold")
-    h4:SetText(ColorText("BANK DUES", "59E08A"))
+    h4:SetText(ColorText("SALES ↕", "59E08A"))
+    h4:SetMouseEnabled(true)
+    h4:SetHandler("OnMouseDown", function()
+        if self.auditSortBy == "sales" then self.auditSortAsc = not self.auditSortAsc else self.auditSortBy = "sales"; self.auditSortAsc = false end
+        self:UpdateAuditorUI()
+    end)
 
     local h5 = wm:CreateControl("$(parent)_H5", colHeader, CT_LABEL)
-    h5:SetAnchor(LEFT, colHeader, LEFT, 490, 0)
+    h5:SetAnchor(LEFT, colHeader, LEFT, 420, 0)
     h5:SetFont("ZoFontGameBold")
-    h5:SetText(ColorText("NOTE", "FFFFFF"))
+    h5:SetText(ColorText("DUES ↕", "59E08A"))
+    h5:SetMouseEnabled(true)
+    h5:SetHandler("OnMouseDown", function()
+        if self.auditSortBy == "dues" then self.auditSortAsc = not self.auditSortAsc else self.auditSortBy = "dues"; self.auditSortAsc = true end
+        self:UpdateAuditorUI()
+    end)
 
     local h6 = wm:CreateControl("$(parent)_H6", colHeader, CT_LABEL)
-    h6:SetAnchor(RIGHT, colHeader, RIGHT, -20, 0)
+    h6:SetAnchor(LEFT, colHeader, LEFT, 510, 0)
     h6:SetFont("ZoFontGameBold")
-    h6:SetText(ColorText("ACTION", "FF9900"))
+    h6:SetText(ColorText("STATUS", "00FFCC"))
+
+    local h7 = wm:CreateControl("$(parent)_H7", colHeader, CT_LABEL)
+    h7:SetAnchor(LEFT, colHeader, LEFT, 595, 0)
+    h7:SetFont("ZoFontGameBold")
+    h7:SetText(ColorText("NOTE", "FFFFFF"))
+
+    local h8 = wm:CreateControl("$(parent)_H8", colHeader, CT_LABEL)
+    h8:SetAnchor(RIGHT, colHeader, RIGHT, -20, 0)
+    h8:SetFont("ZoFontGameBold")
+    h8:SetText(ColorText("ACTION", "FF9900"))
 
     -- 4. Table Rows (9 Rows)
     self.auditRows = {}
@@ -351,25 +493,37 @@ function FR:BuildAuditorUI(parent)
         row.nameLbl = nameLbl
 
         local rankLbl = wm:CreateControl("$(parent)_Rank", row, CT_LABEL)
-        rankLbl:SetAnchor(LEFT, row, LEFT, 190, 0)
+        rankLbl:SetAnchor(LEFT, row, LEFT, 155, 0)
         rankLbl:SetFont("ZoFontGameSmall")
         rankLbl:SetText("Member")
         row.rankLbl = rankLbl
 
         local daysLbl = wm:CreateControl("$(parent)_Days", row, CT_LABEL)
-        daysLbl:SetAnchor(LEFT, row, LEFT, 310, 0)
+        daysLbl:SetAnchor(LEFT, row, LEFT, 245, 0)
         daysLbl:SetFont("ZoFontGameBold")
         daysLbl:SetText("14d")
         row.daysLbl = daysLbl
 
+        local salesLbl = wm:CreateControl("$(parent)_Sales", row, CT_LABEL)
+        salesLbl:SetAnchor(LEFT, row, LEFT, 325, 0)
+        salesLbl:SetFont("ZoFontGameSmall")
+        salesLbl:SetText("0")
+        row.salesLbl = salesLbl
+
         local duesLbl = wm:CreateControl("$(parent)_Dues", row, CT_LABEL)
-        duesLbl:SetAnchor(LEFT, row, LEFT, 390, 0)
+        duesLbl:SetAnchor(LEFT, row, LEFT, 420, 0)
         duesLbl:SetFont("ZoFontGameSmall")
         duesLbl:SetText("0g")
         row.duesLbl = duesLbl
 
+        local statusLbl = wm:CreateControl("$(parent)_Status", row, CT_LABEL)
+        statusLbl:SetAnchor(LEFT, row, LEFT, 510, 0)
+        statusLbl:SetFont("ZoFontGameSmall")
+        statusLbl:SetText("")
+        row.statusLbl = statusLbl
+
         local noteLbl = wm:CreateControl("$(parent)_Note", row, CT_LABEL)
-        noteLbl:SetAnchor(LEFT, row, LEFT, 490, 0)
+        noteLbl:SetAnchor(LEFT, row, LEFT, 595, 0)
         noteLbl:SetAnchor(RIGHT, row, RIGHT, -96, 0)
         noteLbl:SetFont("ZoFontGameSmall")
         noteLbl:SetText("")
@@ -398,14 +552,14 @@ function FR:BuildAuditorUI(parent)
     -- 5. Bottom Navigation & Status Bar
     local footerY = -8
     local statLbl = wm:CreateControl("$(parent)_StatLbl", card, CT_LABEL)
-    statLbl:SetAnchor(BOTTOMLEFT, card, BOTTOMLEFT, 12, footerY)
+    statLbl:SetAnchor(BOTTOMLEFT, card, BOTTOMLEFT, 14, footerY)
     statLbl:SetFont("ZoFontGameSmall")
-    statLbl:SetText("Audit: Calculating...")
+    statLbl:SetText("Roster: -- | Inactive: -- | Shielded: 0")
     self.auditStatLbl = statLbl
 
     -- Page controls
     local nextBtn = wm:CreateControl("$(parent)_NextBtn", card, CT_BUTTON)
-    nextBtn:SetAnchor(BOTTOMRIGHT, card, BOTTOMRIGHT, -12, footerY)
+    nextBtn:SetAnchor(BOTTOMRIGHT, card, BOTTOMRIGHT, -12, footerY + 2)
     nextBtn:SetDimensions(65, 22)
     nextBtn:SetFont("ZoFontGameSmall")
     nextBtn:SetText("Next >")
@@ -420,7 +574,7 @@ function FR:BuildAuditorUI(parent)
         tooltipText = "View next page of flagged inactive members.",
     })
     nextBtn:SetHandler("OnClicked", function()
-        local maxPages = math.max(1, math.ceil(#self.auditFilteredMembers / ROWS_PER_PAGE))
+        local maxPages = math.max(1, math.ceil(#(self.auditFilteredMembers or {}) / ROWS_PER_PAGE))
         if self.auditCurrentPage < maxPages then
             self.auditCurrentPage = self.auditCurrentPage + 1
             self:RenderAuditorRows()
@@ -470,11 +624,32 @@ function FR:BuildAuditorUI(parent)
         normalTextColor = { 1, 0.85, 0.2, 1 },
         hoverTextColor = { 1, 0.95, 0.5, 1 },
         tooltipTitle = "Export Inactivity Audit",
-        tooltipText = "Print a clean summary of inactive members and their recorded bank deposits to chat and SavedVariables for Discord export.",
+        tooltipText = "Print a clean summary of inactive members, sales, and bank dues to chat and SavedVariables for Discord export.",
     })
     exportBtn:SetHandler("OnClicked", function()
         self:ExportAuditToChat()
     end)
+end
+
+function FR:CycleAuditRankFilter()
+    local gIdx = self.selectedGuildIndex or 1
+    local guildId = GetGuildId(gIdx)
+    local numRanks = GetNumGuildRanks(guildId)
+
+    if self.auditRankFilter == "all" then
+        self.auditRankFilter = numRanks
+    else
+        local cur = tonumber(self.auditRankFilter) or numRanks
+        cur = cur - 1
+        if cur < 1 then
+            self.auditRankFilter = "all"
+        else
+            self.auditRankFilter = cur
+        end
+    end
+
+    self.auditCurrentPage = 1
+    self:UpdateAuditorUI()
 end
 
 --[[ =========================================================================
@@ -483,6 +658,9 @@ end
 
 function FR:UpdateAuditorUI()
     self:RunRosterAudit()
+
+    local gIdx = self.selectedGuildIndex or 1
+    local guildId = GetGuildId(gIdx)
 
     -- Update filter button visual states
     for d, btn in pairs(self.auditDayBtns or {}) do
@@ -529,6 +707,39 @@ function FR:UpdateAuditorUI()
         end
     end
 
+    if self.auditShieldToggle and self.auditShieldToggle.bg then
+        if self.auditShieldActiveSellers then
+            self.auditShieldToggle.isCustomActive = true
+            self.auditShieldToggle.bg:SetCenterColor(0.04, 0.14, 0.18, 0.95)
+            self.auditShieldToggle.bg:SetEdgeColor(0.0, 0.85, 0.95, 0.85)
+            self.auditShieldToggle:SetNormalFontColor(0, 1, 0.9, 1)
+        else
+            self.auditShieldToggle.isCustomActive = false
+            self.auditShieldToggle.bg:SetCenterColor(0.06, 0.06, 0.08, 0.80)
+            self.auditShieldToggle.bg:SetEdgeColor(0.35, 0.35, 0.35, 0.60)
+            self.auditShieldToggle:SetNormalFontColor(0.6, 0.6, 0.6, 1)
+        end
+    end
+
+    if self.auditRankFilterBtn then
+        if self.auditRankFilter == "all" then
+            self.auditRankFilterBtn:SetText("Rank: All")
+            if self.auditRankFilterBtn.bg then
+                self.auditRankFilterBtn.bg:SetCenterColor(0.10, 0.08, 0.14, 0.85)
+                self.auditRankFilterBtn.bg:SetEdgeColor(0.40, 0.30, 0.55, 0.60)
+            end
+        else
+            local rName = GetGuildRankCustomName(guildId, tonumber(self.auditRankFilter) or 1)
+            if not rName or rName == "" then rName = string.format("Rank %s", tostring(self.auditRankFilter)) end
+            if #rName > 10 then rName = rName:sub(1, 8) .. ".." end
+            self.auditRankFilterBtn:SetText("Rank: " .. rName)
+            if self.auditRankFilterBtn.bg then
+                self.auditRankFilterBtn.bg:SetCenterColor(0.18, 0.10, 0.25, 0.95)
+                self.auditRankFilterBtn.bg:SetEdgeColor(0.85, 0.50, 1.00, 1.00)
+            end
+        end
+    end
+
     self:RenderAuditorRows()
 end
 
@@ -555,8 +766,11 @@ function FR:RenderAuditorRows()
                 row.nameLbl:SetMouseEnabled(true)
                 row.nameLbl:SetHandler("OnMouseEnter", function(ctrl)
                     InitializeTooltip(InformationTooltip, ctrl, TOP, 0, -4)
-                    SetTooltipText(InformationTooltip, string.format("|c00FFCC%s|r\n|c888888Rank: %s\nOffline: %d days\nRecorded Bank Deposits: %sg|r",
-                        m.name, m.rank, m.days, ZO_LocalizeDecimalNumber(m.deposits or 0)))
+                    local duesColor = m.duesMet and "59E08A" or "FF5555"
+                    SetTooltipText(InformationTooltip, string.format(
+                        "|c00FFCC%s|r\n|c888888Rank: %s\nOffline: %d days|r\n|c59E08ASales Recorded: %d (%sg)|r\n|cFFD700Bank Deposits: %sg|r\n|c%sDues Status: %s (%s)|r",
+                        m.name, m.rank, m.days, m.salesCount or 0, ZO_LocalizeDecimalNumber(m.salesGold or 0),
+                        ZO_LocalizeDecimalNumber(m.deposits or 0), duesColor, m.duesMet and "DUES MET" or "MISSING DUES", m.duesReason or "Unmet"))
                 end)
                 row.nameLbl:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
 
@@ -567,14 +781,29 @@ function FR:RenderAuditorRows()
                 local dayColor = m.days >= 30 and "FF5555" or (m.days >= 14 and "FFAA00" or "FFD700")
                 row.daysLbl:SetText(string.format("|c%s%d days|r", dayColor, m.days))
 
+                -- Sales
+                if m.salesCount and m.salesCount > 0 then
+                    local goldK = math.floor((m.salesGold or 0) / 1000)
+                    row.salesLbl:SetText(string.format("|c59E08A%d|r |c888888(%dk)|r", m.salesCount, goldK))
+                else
+                    row.salesLbl:SetText("|c6666660|r")
+                end
+
                 -- Bank Dues
-                local depText = m.deposits > 0 and string.format("|c59E08A%sg|r", ZO_LocalizeDecimalNumber(m.deposits)) or "|c8888880g|r"
+                local depText = m.deposits > 0 and string.format("|c59E08A%sg|r", ZO_LocalizeDecimalNumber(m.deposits)) or "|c6666660g|r"
                 row.duesLbl:SetText(depText)
+
+                -- Dues Status Badge
+                if m.duesMet then
+                    row.statusLbl:SetText("|c59E08A[MET ✓]|r")
+                else
+                    row.statusLbl:SetText("|cFF5555[UNMET]|r")
+                end
 
                 -- Note
                 local cleanNote = string.gsub(m.note or "", "\n", " ")
-                if #cleanNote > 16 then
-                    cleanNote = string.sub(cleanNote, 1, 14) .. ".."
+                if #cleanNote > 12 then
+                    cleanNote = string.sub(cleanNote, 1, 10) .. ".."
                 end
                 row.noteLbl:SetText(cleanNote)
                 row.noteLbl:SetMouseEnabled(true)
@@ -597,12 +826,12 @@ function FR:RenderAuditorRows()
     end
 
     if self.auditPageLbl then
-        self.auditPageLbl:SetText(string.format("Page %d/%d (%d inactives)", self.auditCurrentPage, maxPages, total))
+        self.auditPageLbl:SetText(string.format("Page %d/%d (%d shown)", self.auditCurrentPage, maxPages, total))
     end
 
     if self.auditStatLbl then
-        self.auditStatLbl:SetText(string.format("Roster: %d total | Inactive (%dd+): |cFF5555%d|r | Excused: %d",
-            self.auditTotalMembers or 0, self.auditFilterDays or 14, total, self.auditExcusedCount or 0))
+        self.auditStatLbl:SetText(string.format("Roster: %d | Inactive: |cFF5555%d|r | Shielded Active: |c59E08A%d|r | Excused: %d",
+            self.auditTotalMembers or 0, total, self.auditShieldedCount or 0, self.auditExcusedCount or 0))
     end
 end
 
@@ -641,8 +870,9 @@ function FR:ExportAuditToChat()
     local count = math.min(#members, 15)
     for i = 1, count do
         local m = members[i]
-        df("  - %s (%d days offline, %s) | Bank: %sg",
-            m.name, m.days, m.rank, ZO_LocalizeDecimalNumber(m.deposits or 0))
+        df("  - %s (%d days offline, %s) | Sales: %d (%sg) | Bank: %sg | %s",
+            m.name, m.days, m.rank, m.salesCount or 0, ZO_LocalizeDecimalNumber(m.salesGold or 0),
+            ZO_LocalizeDecimalNumber(m.deposits or 0), m.duesMet and "|c59E08A[DUES MET]|r" or "|cFF5555[UNMET]|r")
     end
     if #members > count then
         df("  ...and %d more inactive members saved to SavedVariables.", #members - count)
