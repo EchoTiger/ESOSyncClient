@@ -39,17 +39,71 @@ namespace RedfurSync
                     return null;
                 }
 
-                var json = await response.Content.ReadAsStringAsync();
-                var payload = JsonSerializer.Deserialize<UpdatePayload>(json, new JsonSerializerOptions 
+                var manifestBytes = await response.Content.ReadAsByteArrayAsync();
+
+                // Attempt fetching detached Ed25519 signature (.sig)
+                byte[]? sigBytes = null;
+                try
+                {
+                    using var sigCts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+                    using var sigResp = await _updateHttp.GetAsync(_config.UpdateUrl + ".sig", sigCts.Token);
+                    if (sigResp.IsSuccessStatusCode)
+                    {
+                        sigBytes = await sigResp.Content.ReadAsByteArrayAsync();
+                    }
+                }
+                catch { }
+
+                if (sigBytes != null && sigBytes.Length == 64)
+                {
+                    var (ok, manifest, err) = UpdateTrustVerifier.VerifyAndParse(
+                        manifestBytes,
+                        sigBytes,
+                        revokedKeyIds: _config.RevokedKeyIds,
+                        lastVerifiedSequence: _config.LastVerifiedSequence);
+
+                    if (!ok || manifest == null)
+                    {
+                        LastError = $"Manifest verification failed: {err}";
+                        Console.WriteLine($"[Update Error] ✖ {LastError}");
+                        return null;
+                    }
+
+                    _config.LastVerifiedSequence = Math.Max(_config.LastVerifiedSequence, manifest.Sequence);
+
+                    if (RelayVersion.IsServerNewer(manifest.Version, currentVersion))
+                    {
+                        var primaryArtifact = manifest.Files.FirstOrDefault(f => f.Path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                                           ?? manifest.Files.FirstOrDefault();
+                        if (primaryArtifact != null)
+                        {
+                            var payload = new UpdatePayload
+                            {
+                                Version = manifest.Version,
+                                DownloadUrl = primaryArtifact.Url,
+                                SizeBytes = primaryArtifact.Size,
+                                Sha256 = primaryArtifact.Sha256,
+                                Changelog = $"Fissal Relay v{manifest.Version} (Sequence {manifest.Sequence})"
+                            };
+                            if (IsValidUpdatePayload(payload))
+                                return payload;
+                        }
+                    }
+                    return null;
+                }
+
+                // Fallback for transition/legacy servers lacking detached .sig
+                var json = System.Text.Encoding.UTF8.GetString(manifestBytes);
+                var legacyPayload = JsonSerializer.Deserialize<UpdatePayload>(json, new JsonSerializerOptions 
                 { 
                     PropertyNameCaseInsensitive = true 
                 });
                 
-                if (payload != null && !string.IsNullOrWhiteSpace(payload.Version))
+                if (legacyPayload != null && !string.IsNullOrWhiteSpace(legacyPayload.Version))
                 {
-                    if (RelayVersion.IsServerNewer(payload.Version, currentVersion) && IsValidUpdatePayload(payload))
+                    if (RelayVersion.IsServerNewer(legacyPayload.Version, currentVersion) && IsValidUpdatePayload(legacyPayload))
                     {
-                        return payload;
+                        return legacyPayload;
                     }
                 }
             }

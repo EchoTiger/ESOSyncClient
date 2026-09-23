@@ -40,8 +40,8 @@ namespace RedfurSync
         public const string AddonDirectoryName = "FissalRelay";
         public const string ClientDirectoryName = "Client";
         public const string TargetExeName = "RedfurSync.exe";
-        public const string LatestAddonVersion = "1.5.0";
-        public const int LatestAddonVersionCode = 10500;
+        public const string LatestAddonVersion = "1.5.1";
+        public const int LatestAddonVersionCode = 10501;
         public static readonly string[] AddonFiles = new[]
         {
             "FissalRelay.txt",
@@ -357,6 +357,49 @@ namespace RedfurSync
                 var clientDir = Path.Combine(addonDir, ClientDirectoryName);
                 Directory.CreateDirectory(clientDir);
 
+                // Priority 1: Download latest verified archive if remote URL is available
+                if (!string.IsNullOrWhiteSpace(RemoteAddonDownloadUrl))
+                {
+                    try
+                    {
+                        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(12) };
+                        using var response = client.GetAsync(RemoteAddonDownloadUrl).GetAwaiter().GetResult();
+                        if (response.IsSuccessStatusCode)
+                        {
+                            using var stream = response.Content.ReadAsStream();
+                            using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
+                            foreach (var entry in archive.Entries)
+                            {
+                                if (string.IsNullOrWhiteSpace(entry.Name)) continue; // directory
+
+                                string entryPath = entry.FullName.Replace('/', Path.DirectorySeparatorChar);
+                                if (entryPath.StartsWith(AddonDirectoryName + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    entryPath = entryPath.Substring((AddonDirectoryName + Path.DirectorySeparatorChar).Length);
+                                }
+                                if (string.IsNullOrWhiteSpace(entryPath)) continue;
+
+                                if (entryPath.StartsWith(ClientDirectoryName + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    continue; // protect running client binary
+                                }
+
+                                string destFile = Path.Combine(addonDir, entryPath);
+                                Directory.CreateDirectory(Path.GetDirectoryName(destFile)!);
+                                entry.ExtractToFile(destFile, overwrite: true);
+                            }
+
+                            string effectiveVer = ActiveLatestAddonVersion ?? LatestAddonVersion;
+                            message = $"Fissal Relay addon v{effectiveVer} installed successfully!";
+                            return true;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[AddonInstaller] Remote download fallback: {ex.Message}");
+                    }
+                }
+
                 var manifest = GetAddonFileContent("FissalRelay.txt") ?? AddonManifestTemplate;
                 var lua = GetAddonFileContent("FissalRelay.lua") ?? AddonLuaTemplate;
                 var ui = GetAddonFileContent("FissalRelay_UI.lua") ?? AddonUiTemplate;
@@ -380,7 +423,8 @@ namespace RedfurSync
                     }
                 }
 
-                message = $"Fissal Relay addon v{LatestAddonVersion} installed successfully!";
+                string fallbackVer = ActiveLatestAddonVersion ?? LatestAddonVersion;
+                message = $"Fissal Relay addon v{fallbackVer} installed successfully!";
                 return true;
             }
             catch (Exception ex)
@@ -521,8 +565,8 @@ namespace RedfurSync
 
         private const string AddonManifestTemplate = @"## Title: |cFF9900Fissal's|r Cogwork Relay
 ## Author: Echo & Fissal
-## Version: 1.5.0
-## AddOnVersion: 10500
+## Version: 1.5.1
+## AddOnVersion: 10501
 ## APIVersion: 101048 101049
 ## SavedVariables: FissalRelay_SavedVariables
 ## DependsOn: LibHistoire>=1062 LibAddonMenu-2.0>=41

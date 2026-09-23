@@ -10,16 +10,25 @@ FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
 FR.name = "FissalRelay"
-FR.version = "1.5.0"
+FR.version = "1.5.1"
 FR.author = "Echo & Fissal"
 
 -- Defaults for SavedVariables
 local DEFAULT_SAVED_VARS = {
-    version = 2,
+    version = 3,
     historyDepthDays = 30,
     lastSeenEventId = {},
     sales = {},
     kiosks = {},
+    nextSeq = 0,
+    audit = {
+        schemaVersion = 3,
+        domains = {
+            sales = { counter = 0, watermark = 0, generation = 0, valid = false },
+            deposits = { counter = 0, watermark = 0, generation = 0, valid = false },
+        },
+        fingerprint = nil,
+    },
     staff = {
         bankDeposits = {},
         rosterSnapshots = {},
@@ -27,6 +36,10 @@ local DEFAULT_SAVED_VARS = {
         bids = {},
         bidRefunds = {},
         categorySync = {},
+    },
+    raffle = {
+        allowedOfficers = { all = {}, post = {}, dealers = {} },
+        voided = { users = {}, entries = {} },
     },
     rafflePayouts = {},
     settings = {
@@ -41,6 +54,8 @@ local DEFAULT_SAVED_VARS = {
         bumperPos = { x = 0, y = 0 },
         motdPos = { x = 0, y = 0 },
         showBumper = true,
+        bumperAutoReload = false,
+        bumperWaitForLibHistoire = true,
         bankGuilds = {},
         raffleMail = {
             autoShowOnMail = true,
@@ -79,6 +94,67 @@ local function PlayFissalSound()
     end
 end
 FR.PlayFissalSound = PlayFissalSound
+
+-- Known bankers, assistants, test dummies, and non-kiosk NPCs
+local TRADER_BLACKLIST = {
+    ["Kargiz"] = true,                     -- Rimmen Banker NPC
+    ["Shuzug"] = true,                     -- Non-ESO synthetic test entry
+    ["Angier Stower"] = true,              -- Wayrest Banker NPC
+    ["Tythis Andromo"] = true,             -- Banker Assistant
+    ["Ezabi"] = true,                      -- Banker Assistant
+    ["Fezez"] = true,                      -- Merchant Assistant
+    ["Baron Jangleplume"] = true,          -- Banker Assistant
+    ["Factotum Property Steward"] = true,   -- Banker Assistant
+    ["Giladil the Ragpicker"] = true,       -- Deconstruction Assistant
+    ["Zuqoth"] = true,                     -- Armory Assistant
+    ["Pyroclast"] = true,                  -- Armory Assistant
+    ["Ghrasharog"] = true,                 -- Armory Assistant
+}
+FR.TRADER_BLACKLIST = TRADER_BLACKLIST
+
+function FR:IsBlacklistedTrader(name)
+    if not name or name == "" then return true end
+    return TRADER_BLACKLIST[name] == true
+end
+
+-- Monotonic Audit & Counter Invariant (Ruling 4.2 - Claude Fable 5.1)
+function FR:OnRecordAppended(domain, record)
+    if not self.savedVars or not self.savedVars.audit or not self.savedVars.audit.domains then return end
+    local a = self.savedVars.audit.domains[domain]
+    if not a then return end
+
+    if a.scan then
+        -- A rebuild is in flight. Buffer for post-scan drain.
+        if record.seq and a.scan.ceiling and record.seq > a.scan.ceiling then
+            a.scan.pending[#a.scan.pending + 1] = record.seq
+        end
+        return
+    end
+
+    if record.seq and record.seq > (a.watermark or 0) then
+        -- Watermark assigned FIRST so any transient error under-counts rather than over-counts
+        a.watermark = record.seq
+        a.counter = (a.counter or 0) + 1
+    end
+end
+
+function FR:GetCount(domain)
+    if not self.savedVars or not self.savedVars.audit or not self.savedVars.audit.domains then
+        return 0, false
+    end
+    local a = self.savedVars.audit.domains[domain]
+    if not a then return 0, false end
+
+    if a.valid and a.counter then
+        return a.counter, a.scan ~= nil
+    end
+
+    -- If not valid and not already scanning, trigger background rebuild
+    if not a.scan and self.BeginRebuild then
+        self:BeginRebuild(domain)
+    end
+    return a.counter or 0, true
+end
 
 -- Helper: Check if the player holds an officer+ rank in any guild
 function FR:IsPlayerOfficerInAnyGuild()
@@ -129,8 +205,12 @@ function FR:AddSale(event, guildId)
         wasKiosk = false
     end
 
-    self.savedVars.sales[eventIdStr] = {
+    self.savedVars.nextSeq = (self.savedVars.nextSeq or 0) + 1
+    local seq = self.savedVars.nextSeq
+
+    local saleRecord = {
         id = eventIdStr,
+        seq = seq,
         timestamp = eventTime,
         guildId = guildId,
         guildName = guildName,
@@ -141,6 +221,9 @@ function FR:AddSale(event, guildId)
         quant = quantity,
         wasKiosk = wasKiosk,
     }
+    self.savedVars.sales[eventIdStr] = saleRecord
+    self:OnRecordAppended("sales", saleRecord)
+    self.savedVars.totalSalesGold = (self.savedVars.totalSalesGold or 0) + price
 
     -- Keep track of latest event ID for this guild.
     -- IDs are 64-bit integers stored as strings; compare numerically to avoid
@@ -177,8 +260,12 @@ function FR:AddBankDeposit(event, guildId)
     local guildName = GetGuildName(guildId)
     local eventTime = event:GetEventTimestampS() or GetTimeStamp()
 
-    self.savedVars.staff.bankDeposits[eventIdStr] = {
+    self.savedVars.nextSeq = (self.savedVars.nextSeq or 0) + 1
+    local seq = self.savedVars.nextSeq
+
+    local depRecord = {
         id = eventIdStr,
+        seq = seq,
         timestamp = eventTime,
         guildId = guildId,
         guildName = guildName,
@@ -186,6 +273,9 @@ function FR:AddBankDeposit(event, guildId)
         amount = info.amount or 0,
         rawType = CURT_MONEY,
     }
+    self.savedVars.staff.bankDeposits[eventIdStr] = depRecord
+    self:OnRecordAppended("deposits", depRecord)
+    if self.InvalidateDepositCache then self:InvalidateDepositCache(guildId) end
 
     return true
 end
@@ -331,6 +421,19 @@ function FR:PruneExpiredData(isManual)
 
     local totalPruned = prunedSalesCount + prunedStaffCount
     if totalPruned > 0 then
+        if self.savedVars and self.savedVars.audit and self.savedVars.audit.domains then
+            if self.savedVars.audit.domains.sales and prunedSalesCount > 0 then
+                local a = self.savedVars.audit.domains.sales
+                a.counter = math.max(0, (a.counter or 0) - prunedSalesCount)
+                a.generation = (a.generation or 0) + 1
+            end
+            if self.savedVars.audit.domains.deposits and prunedStaffCount > 0 then
+                local d = self.savedVars.audit.domains.deposits
+                d.counter = math.max(0, (d.counter or 0) - prunedStaffCount)
+                d.generation = (d.generation or 0) + 1
+            end
+        end
+
         local msg = string.format("Pruning Engine: Purged %s expired records (> %d days old).",
             ColorText(ZO_LocalizeDecimalNumber(totalPruned), "FFD700"), historyDepthDays)
         if prunedStaffCount > 0 then
@@ -352,13 +455,28 @@ end
 ========================================================================= ]]--
 
 function FR:RecordKioskObservation()
+    -- Kiosk ground recon guard: Never record during active TTC bumper passes
+    if self.isBumping then return end
+
+    -- Interaction type guard: Require true trading house interaction (patch-stable)
+    local interactType = GetInteractionType and GetInteractionType()
+    if interactType ~= INTERACTION_TRADINGHOUSE then return end
+
+    -- Scene guard: Require active trading house scene
+    if SCENE_MANAGER and SCENE_MANAGER.IsShowing then
+        if not SCENE_MANAGER:IsShowing("tradinghouse") then return end
+    end
+
+    local traderName = GetUnitName("interact")
+    if not traderName or traderName == "" then return end
+
+    -- Blacklist guard: Exclude known bankers, assistants, test dummies, and synthetic entities
+    if self:IsBlacklistedTrader(traderName) then return end
+
     local guildId, guildName = GetCurrentTradingHouseGuildDetails()
     if not guildName or guildName == "" then
         guildId, guildName = GetTradingHouseGuildDetails(1)
     end
-    local traderName = GetUnitName("interact")
-
-    if not traderName or traderName == "" then return end
     if not guildName or guildName == "" then
         guildName = "No Hiring Guild (Vacant)"
         guildId = 0
@@ -1270,12 +1388,120 @@ function FR:StartBump()
 end
 
 function FR:CancelBump()
-    if self.isBumping then
+    if self.isBumping or self.isWaitingForLibHistoireReload then
         self.isBumping = false
+        self.isWaitingForLibHistoireReload = false
         self.bumpQueue = {}
-        PrintChat("TTC Bumping halted by user.")
-        if self.UpdateBumperUI then self:UpdateBumperUI() end
+        PrintChat("TTC Bumping / Auto-reload halted by user.")
+        if self.UpdateBumperUI then self:UpdateBumperUI("Bumping halted.") end
     end
+end
+
+function FR:HasPendingLibHistoireRequests()
+    if not LibHistoire or not LibHistoire.internal or not LibHistoire.internal.historyCache then
+        return false, 0, 0
+    end
+
+    local cacheManager = LibHistoire.internal.historyCache
+    local numGuilds = GetNumGuilds()
+    local pendingRequests = 0
+
+    for i = 1, numGuilds do
+        local guildId = GetGuildId(i)
+        for _, cat in ipairs({ GUILD_HISTORY_EVENT_CATEGORY_TRADER, GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY }) do
+            local canTrack = self.CanTrackCategory and self:CanTrackCategory(guildId, cat)
+            if canTrack then
+                local cache = cacheManager:GetCategoryCache(guildId, cat)
+                if cache then
+                    local hasPending = (cache.HasPendingRequest and cache:HasPendingRequest())
+                        or (cache.request ~= nil)
+                        or (cache.hasPendingRequest == true)
+                    if hasPending then
+                        pendingRequests = pendingRequests + 1
+                    end
+                end
+            end
+        end
+    end
+
+    local pendingEvents = 0
+    for _, proc in pairs(self.processors or {}) do
+        if proc.GetPendingEventMetrics then
+            local remaining = proc:GetPendingEventMetrics()
+            if remaining and remaining > 0 then
+                pendingEvents = pendingEvents + remaining
+            end
+        end
+    end
+
+    local isBusy = (pendingRequests > 0) or (pendingEvents > 0)
+    return isBusy, pendingRequests, pendingEvents
+end
+
+function FR:TriggerBumperAutoReload()
+    local waitForLH = self.savedVars and self.savedVars.settings and self.savedVars.settings.bumperWaitForLibHistoire
+    self.isWaitingForLibHistoireReload = true
+    self.autoReloadStartTime = GetTimeStamp()
+
+    local function DoReload()
+        if not self.isWaitingForLibHistoireReload then return end
+        self.isWaitingForLibHistoireReload = false
+        PrintChat("|c59E08A[Fissal]|r Reloading UI to upload fresh TTC listings...")
+        ReloadUI()
+    end
+
+    if not waitForLH then
+        PrintChat("|c00FFCC[Fissal]|r Bumping complete! Auto-reloading UI in 2 seconds...")
+        if self.UpdateBumperUI then
+            self:UpdateBumperUI("|c00FFCCReloading UI in 2s...|r")
+        end
+        zo_callLater(DoReload, 2000)
+        return
+    end
+
+    -- Check if LibHistoire has active requests or queued events
+    local isBusy, numRequests, numEvents = self:HasPendingLibHistoireRequests()
+    if not isBusy then
+        PrintChat("|c59E08A[Fissal]|r LibHistoire is fully synchronized. Auto-reloading UI in 2 seconds...")
+        if self.UpdateBumperUI then
+            self:UpdateBumperUI("|c59E08ALibHistoire idle. Reloading in 2s...|r")
+        end
+        zo_callLater(DoReload, 2000)
+        return
+    end
+
+    PrintChat(string.format("|cFF9900[Fissal]|r Bumping complete! Waiting for LibHistoire requests to finish before reload (%d active, %d queued events)...",
+        numRequests, numEvents))
+    if self.UpdateBumperUI then
+        self:UpdateBumperUI(string.format("|cFF9900Waiting for LibHistoire (%d req, %d ev)...|r", numRequests, numEvents))
+    end
+
+    -- Poll every 1.5s until clear or 45s safety timeout
+    local maxWaitSeconds = 45
+    local function CheckLHPoll()
+        if not self.isWaitingForLibHistoireReload then return end
+
+        local elapsed = GetTimeStamp() - self.autoReloadStartTime
+        local busy, reqs, evs = self:HasPendingLibHistoireRequests()
+
+        if not busy then
+            PrintChat("|c59E08A[Fissal]|r LibHistoire requests complete! Auto-reloading UI now...")
+            if self.UpdateBumperUI then
+                self:UpdateBumperUI("|c59E08ALibHistoire finished! Reloading...|r")
+            end
+            zo_callLater(DoReload, 1000)
+        elseif elapsed >= maxWaitSeconds then
+            PrintChat(string.format("|cFF9900[Fissal]|r LibHistoire wait timeout (%ds reached). Proceeding with UI reload...", maxWaitSeconds))
+            DoReload()
+        else
+            if self.UpdateBumperUI then
+                self:UpdateBumperUI(string.format("|cFF9900Waiting for LibHistoire (%ds elapsed)...|r", elapsed))
+            end
+            zo_callLater(CheckLHPoll, 1500)
+        end
+    end
+
+    zo_callLater(CheckLHPoll, 1500)
 end
 
 function FR:StepNextBumpGuild()
@@ -1285,9 +1511,16 @@ function FR:StepNextBumpGuild()
         self.isBumping = false
         self.savedVars.lastBumpTime = GetTimeStamp()
         PlayFissalSound()
-        PrintChat(string.format("All %d guild(s) successfully bumped! Total %s listings recorded for TTC. Hit [ReloadUI] to upload.",
+        PrintChat(string.format("All %d guild(s) successfully bumped! Total %s listings recorded for TTC.",
             #self.bumpQueue, ColorText(ZO_LocalizeDecimalNumber(self.bumpTotalItemsScanned), "FFD700")))
         if self.UpdateBumperUI then self:UpdateBumperUI() end
+
+        local isAutoReload = self.savedVars and self.savedVars.settings and self.savedVars.settings.bumperAutoReload
+        if isAutoReload then
+            self:TriggerBumperAutoReload()
+        else
+            PrintChat("Hit [ReloadUI] to upload fresh listings to TamrielTradeCentre.")
+        end
         return
     end
 
@@ -1360,10 +1593,10 @@ function FR:ReplaceRaffleField(text, fieldLabel, newVal)
 
     -- 1. Check explicit placeholder tags first (e.g. {pot}, [pot], {tickets})
     local tags = {
-        ["currently at"] = { "{pot}", "[pot]", "{gold}", "[gold]" },
-        ["tickets in pool"] = { "{tickets}", "[tickets]", "{pool}", "[pool]" },
-        ["entrants"] = { "{entrants}", "[entrants]", "{members}", "[members]" },
-        ["entries"] = { "{entries}", "[entries]", "{deposits}", "[deposits]" },
+        ["currently at"] = { "{pot}", "[pot]", "{gold}", "[gold]", "{raffle_pot}" },
+        ["tickets in pool"] = { "{tickets}", "[tickets]", "{pool}", "[pool]", "{raffle_tickets}" },
+        ["entrants"] = { "{entrants}", "[entrants]", "{members}", "[members]", "{raffle_entrants}" },
+        ["entries"] = { "{entries}", "[entries]", "{deposits}", "[deposits]", "{raffle_entries}" },
     }
     local list = tags[fieldLabel]
     if list then
@@ -1414,6 +1647,8 @@ end
 
 function FR:ResolveGuildId(guildIndexOrId)
     local numGuilds = GetNumGuilds()
+    if not guildIndexOrId then return GetGuildId(1) end
+
     local n = tonumber(guildIndexOrId)
     if n and n >= 1 and n <= numGuilds then
         return GetGuildId(n)
@@ -1423,29 +1658,154 @@ function FR:ResolveGuildId(guildIndexOrId)
             if GetGuildId(i) == n then return n end
         end
     end
+
+    local str = tostring(guildIndexOrId):lower()
+    for i = 1, numGuilds do
+        local gId = GetGuildId(i)
+        local gName = GetGuildName(gId):lower()
+        if gName:find(str, 1, true) or (str:find("post", 1, true) and gName:find("post", 1, true)) or (str:find("dealer", 1, true) and gName:find("dealer", 1, true)) then
+            return gId
+        end
+    end
+
     return GetGuildId(1)
+end
+
+function FR:GetMemberRankIndex(guildId, depositorName)
+    if not guildId or not depositorName then return 99 end
+    local cleanName = tostring(depositorName):gsub("^@", ""):lower()
+
+    -- 1. Try live guild roster
+    local memberCount = GetNumGuildMembers(guildId)
+    if memberCount and memberCount > 0 then
+        for m = 1, memberCount do
+            local name, _, rankIndex = GetGuildMemberInfo(guildId, m)
+            if name then
+                local c = tostring(name):gsub("^@", ""):lower()
+                if c == cleanName then
+                    return rankIndex
+                end
+            end
+        end
+    end
+
+    -- 2. Fall back to saved roster snapshots
+    if self.savedVars and self.savedVars.staff and self.savedVars.staff.rosterSnapshots then
+        local snap = self.savedVars.staff.rosterSnapshots[guildId]
+        if snap and snap.members then
+            for name, info in pairs(snap.members) do
+                local c = tostring(name):gsub("^@", ""):lower()
+                if c == cleanName then
+                    return info.rankIndex or 99
+                end
+            end
+        end
+    end
+
+    return 99
+end
+
+function FR:IsAllowedOfficer(guildKey, depositorName)
+    local clean = tostring(depositorName or ""):gsub("^@", ""):lower()
+    if clean == "" then return false end
+
+    -- Check server manifest
+    local ledger = FR.OfficialRaffleLedger
+    if ledger and ledger.allowedOfficers then
+        local ao = ledger.allowedOfficers
+        if ao.all and (ao.all[clean] or ao.all["@" .. clean]) then return true end
+        if guildKey and ao[guildKey] and (ao[guildKey][clean] or ao[guildKey]["@" .. clean]) then return true end
+    end
+
+    -- Check local SavedVariables overrides
+    local localAo = self.savedVars and self.savedVars.raffle and self.savedVars.raffle.allowedOfficers
+    if localAo then
+        if localAo.all and (localAo.all[clean] or localAo.all["@" .. clean]) then return true end
+        if guildKey and localAo[guildKey] and (localAo[guildKey][clean] or localAo[guildKey]["@" .. clean]) then return true end
+    end
+
+    return false
+end
+
+function FR:IsVoided(guildKey, depositorName, entryId)
+    local clean = tostring(depositorName or ""):gsub("^@", ""):lower()
+    local strId = entryId and tostring(entryId) or nil
+
+    -- Check server manifest
+    local ledger = FR.OfficialRaffleLedger
+    if ledger and ledger.voided then
+        local v = ledger.voided
+        if clean ~= "" and v.users and (v.users[clean] or v.users["@" .. clean]) then return true end
+        if strId and v.entries and v.entries[strId] then return true end
+    end
+
+    -- Check local SavedVariables overrides
+    local localVoided = self.savedVars and self.savedVars.raffle and self.savedVars.raffle.voided
+    if localVoided then
+        if clean ~= "" and localVoided.users and (localVoided.users[clean] or localVoided.users["@" .. clean]) then return true end
+        if strId and localVoided.entries and localVoided.entries[strId] then return true end
+    end
+
+    return false
+end
+
+-- Canonical Sunday 7:00 PM ET (19:00 ET) raffle cutoff boundary
+-- Anchor: Sunday Sep 20, 2026 19:00:00 EDT = 1789945200 UTC
+function FR:GetCurrentRaffleWeekStart(nowTs)
+    nowTs = nowTs or GetTimeStamp()
+    local anchor = 1789945200
+    local elapsed = nowTs - anchor
+    local weeks = math.floor(elapsed / 604800)
+    return anchor + (weeks * 604800)
 end
 
 function FR:CalculateRaffleMetrics(guildId, lookbackDays, ticketPrice)
     ticketPrice = tonumber(ticketPrice) or 1000
-    lookbackDays = tonumber(lookbackDays) or 7
 
     local nowTs = GetTimeStamp()
-    local cutoffTs = nowTs - (lookbackDays * 86400)
+    local cutoffTs
+    if type(lookbackDays) == "number" and lookbackDays ~= 7 then
+        cutoffTs = nowTs - (lookbackDays * 86400)
+    else
+        cutoffTs = self:GetCurrentRaffleWeekStart(nowTs)
+    end
+
+    local gName = GetGuildName(guildId):lower()
+    local gKey = gName:find("post", 1, true) and "post" or (gName:find("dealer", 1, true) and "dealers" or "all")
 
     local totalGold = 0
     local entrantsMap = {}
     local entriesCount = 0
+    local officerCount = 0
+    local voidedCount = 0
 
     if self.savedVars and self.savedVars.staff and self.savedVars.staff.bankDeposits then
         for _, dep in pairs(self.savedVars.staff.bankDeposits) do
             if dep.guildId == guildId and (dep.timestamp or 0) >= cutoffTs then
                 local amount = tonumber(dep.amount) or 0
-                if amount > 0 then
-                    totalGold = totalGold + amount
-                    entriesCount = entriesCount + 1
-                    if dep.depositor and dep.depositor ~= "" then
-                        entrantsMap[dep.depositor] = (entrantsMap[dep.depositor] or 0) + amount
+                -- Rule 1: Strict increment parity. Deposits must be an exact positive multiple of ticketPrice!
+                if amount > 0 and (amount % ticketPrice == 0) then
+                    local depositor = dep.depositor or ""
+                    local entryId = dep.id or dep.eventId
+
+                    -- Rule 2: Void check (user or deposit ID)
+                    if self:IsVoided(gKey, depositor, entryId) then
+                        voidedCount = voidedCount + 1
+                    else
+                        -- Rule 3: Officer rank check (ranks 1-3 excluded unless exempted in allowedOfficers)
+                        local isAllowed = self:IsAllowedOfficer(gKey, depositor)
+                        local rankIdx = self:GetMemberRankIndex(guildId, depositor)
+
+                        if not isAllowed and rankIdx <= 3 then
+                            officerCount = officerCount + 1
+                        else
+                            totalGold = totalGold + amount
+                            local tickets = math.floor(amount / ticketPrice)
+                            entriesCount = entriesCount + 1
+                            if depositor ~= "" then
+                                entrantsMap[depositor] = (entrantsMap[depositor] or 0) + tickets
+                            end
+                        end
                     end
                 end
             end
@@ -1462,6 +1822,8 @@ function FR:CalculateRaffleMetrics(guildId, lookbackDays, ticketPrice)
         entries = entriesCount,
         ticketPrice = ticketPrice,
         lookbackDays = lookbackDays,
+        officersExcluded = officerCount,
+        entriesVoided = voidedCount,
     }
 end
 
@@ -1486,6 +1848,7 @@ function FR:GetRaffleMotDPreview(guildIndexOrId, lookbackDays, ticketPrice)
     updatedMotD, ok4, oldEntries = self:ReplaceRaffleField(updatedMotD, "entries", entriesStr)
 
     local matchedAny = ok1 or ok2 or ok3 or ok4
+    local MAX_MOTD_CHARS = MAX_GUILD_MOTD_LENGTH or 2048
     local charCount = (zo_strlen and zo_strlen(updatedMotD)) or #updatedMotD
     local byteCount = #updatedMotD
 
@@ -1502,7 +1865,7 @@ function FR:GetRaffleMotDPreview(guildIndexOrId, lookbackDays, ticketPrice)
         matchedAny = matchedAny,
         charCount = charCount,
         byteCount = byteCount,
-        isOverLimit = (charCount > 1024),
+        isOverLimit = (charCount > MAX_MOTD_CHARS),
         oldGold = oldGold,
         oldTickets = oldTickets,
         oldEntrants = oldEntrants,
@@ -1536,9 +1899,10 @@ function FR:UpdateGuildMotDRaffle(guildIndexOrId, dryRun, lookbackDays, ticketPr
         return false
     end
 
+    local MAX_MOTD_CHARS = MAX_GUILD_MOTD_LENGTH or 2048
     local charCount = preview.charCount
     local byteCount = preview.byteCount
-    local charColor = (charCount <= 950 and "00FF00") or (charCount <= 1024 and "FFCC00") or "FF5555"
+    local charColor = (charCount <= (MAX_MOTD_CHARS - 150) and "00FF00") or (charCount <= MAX_MOTD_CHARS and "FFCC00") or "FF5555"
 
     if dryRun then
         PrintChat(string.format("=== |cFF9900[Fissal]|r MotD Raffle Preview: %s (Past %d Days) ===", ColorText(guildName, "00FFCC"), preview.metrics.lookbackDays))
@@ -1546,25 +1910,25 @@ function FR:UpdateGuildMotDRaffle(guildIndexOrId, dryRun, lookbackDays, ticketPr
         PrintChat(string.format("  Tickets:   %s -> %s tickets", ColorText(preview.oldTickets or "?", "888888"), ColorText(preview.ticketsStr, "00FFCC")))
         PrintChat(string.format("  Entrants:  %s -> %s members", ColorText(preview.oldEntrants or "?", "888888"), ColorText(preview.entrantsStr, "FFFFFF")))
         PrintChat(string.format("  Entries:   %s -> %s deposits", ColorText(preview.oldEntries or "?", "888888"), ColorText(preview.entriesStr, "FFFFFF")))
-        PrintChat(string.format("  Length:    |c%s%d / 1024 characters|r (|c888888%s bytes|r)", charColor, charCount, ZO_LocalizeDecimalNumber(byteCount)))
+        PrintChat(string.format("  Length:    |c%s%d / %d characters|r (|c888888%s bytes|r)", charColor, charCount, MAX_MOTD_CHARS, ZO_LocalizeDecimalNumber(byteCount)))
 
-        if charCount > 1024 then
-            PrintChat(string.format("  |cFF5555Warning:|r Message is %d chars over the 1024 character limit! Type |cFF9900/fissal motd|r to open the editor and trim it.", charCount - 1024))
+        if charCount > MAX_MOTD_CHARS then
+            PrintChat(string.format("  |cFF5555Warning:|r Message is %d chars over the %d character limit! Type |cFF9900/fissal motd|r to open the editor and trim it.", charCount - MAX_MOTD_CHARS, MAX_MOTD_CHARS))
         else
             PrintChat("Type |cFF9900/fissal motd update " .. tostring(guildIndexOrId or 1) .. "|r to push live to the guild server.")
         end
         return true
     else
-        if charCount > 1024 then
-            PrintChat(string.format("|cFF5555Error:|r Resulting MotD length (%d / 1024 characters, %d bytes) exceeds ESO limit by %d characters. Push aborted.",
-                charCount, byteCount, charCount - 1024))
+        if charCount > MAX_MOTD_CHARS then
+            PrintChat(string.format("|cFF5555Error:|r Resulting MotD length (%d / %d characters, %d bytes) exceeds ESO limit by %d characters. Push aborted.",
+                charCount, MAX_MOTD_CHARS, byteCount, charCount - MAX_MOTD_CHARS))
             PrintChat("Type |cFF9900/fissal motd|r to open the visual MotD editor, review the message, and trim it before pushing.")
             return false
         end
 
         SetGuildMotD(guildId, preview.updatedMotD)
-        PrintChat(string.format("✓ |c00FF00MotD Raffle Updated for %s!|r Pot: %s gold (%s tickets, %s entrants, %s deposits) [|c%s%d/1024 chars|r].",
-            ColorText(guildName, "00FFCC"), ColorText(preview.goldStr, "FFD700"), preview.ticketsStr, preview.entrantsStr, preview.entriesStr, charColor, charCount))
+        PrintChat(string.format("✓ |c00FF00MotD Raffle Updated for %s!|r Pot: %s gold (%s tickets, %s entrants, %s deposits) [|c%s%d/%d chars|r].",
+            ColorText(guildName, "00FFCC"), ColorText(preview.goldStr, "FFD700"), preview.ticketsStr, preview.entrantsStr, preview.entriesStr, charColor, charCount, MAX_MOTD_CHARS))
         PlayFissalSound()
         return true
     end
@@ -1616,8 +1980,8 @@ function FR:HandleSlashCommand(arg)
             self:StartBump()
         end
     elseif cmd == "status" then
-        local saleCount = NonContiguousCount(self.savedVars.sales)
-        local depositCount = NonContiguousCount(self.savedVars.staff and self.savedVars.staff.bankDeposits or {})
+        local saleCount = self:GetCount("sales")
+        local depositCount = self:GetCount("deposits")
         local kioskCount = NonContiguousCount(self.savedVars.kiosks or {})
         local bidCount = NonContiguousCount(self.savedVars.staff and self.savedVars.staff.bids or {})
         local rosterCount = NonContiguousCount(self.savedVars.staff and self.savedVars.staff.rosterSnapshots or {})
@@ -1709,7 +2073,7 @@ function FR:HandleSlashCommand(arg)
         local gIdx = tonumber(args[2]) or 1
         local days = tonumber(args[3]) or 7
         self:AuditBankDues(gIdx, days)
-    elseif cmd == "motd" or cmd == "raffle" then
+    elseif cmd == "motd" then
         local subCmd = string.lower(args[2] or "")
         if subCmd == "" or subCmd == "ui" or subCmd == "menu" or subCmd == "window" or subCmd == "open" then
             if self.ToggleConsole then
@@ -1730,6 +2094,119 @@ function FR:HandleSlashCommand(arg)
                 self:UpdateGuildMotDRaffle(gIndex, true, days)
             end
         end
+    elseif cmd == "raffle" then
+        local subCmd = string.lower(args[2] or "")
+        if subCmd == "allow" then
+            local tag = args[3]
+            local guild = string.lower(args[4] or "all")
+            if not tag or tag == "" then
+                PrintChat("Usage: |cFF9900/fissal raffle allow @handle [guild]|r")
+            else
+                local clean = tag:gsub("^@", ""):lower()
+                if not self.savedVars.raffle then self.savedVars.raffle = {} end
+                if not self.savedVars.raffle.allowedOfficers then self.savedVars.raffle.allowedOfficers = { all = {}, post = {}, dealers = {} } end
+                if not self.savedVars.raffle.allowedOfficers[guild] then self.savedVars.raffle.allowedOfficers[guild] = {} end
+                self.savedVars.raffle.allowedOfficers[guild][clean] = true
+                PrintChat(string.format("Allowed officer exemption added for |c00FFCC@%s|r in |cFFD700%s|r.", clean, guild))
+                PlayFissalSound()
+            end
+        elseif subCmd == "disallow" then
+            local tag = args[3]
+            local guild = string.lower(args[4] or "all")
+            if not tag or tag == "" then
+                PrintChat("Usage: |cFF9900/fissal raffle disallow @handle [guild]|r")
+            else
+                local clean = tag:gsub("^@", ""):lower()
+                if self.savedVars.raffle and self.savedVars.raffle.allowedOfficers and self.savedVars.raffle.allowedOfficers[guild] then
+                    self.savedVars.raffle.allowedOfficers[guild][clean] = nil
+                end
+                PrintChat(string.format("Officer exemption removed for |c00FFCC@%s|r in |cFFD700%s|r.", clean, guild))
+                PlayFissalSound()
+            end
+        elseif subCmd == "void" then
+            local target = args[3]
+            if not target or target == "" then
+                PrintChat("Usage: |cFF9900/fissal raffle void <@handle|depositId>|r")
+            else
+                if not self.savedVars.raffle then self.savedVars.raffle = {} end
+                if not self.savedVars.raffle.voided then self.savedVars.raffle.voided = { users = {}, entries = {} } end
+                if target:sub(1, 1) == "@" or tonumber(target) == nil then
+                    local clean = target:gsub("^@", ""):lower()
+                    self.savedVars.raffle.voided.users[clean] = true
+                    PrintChat(string.format("Voided user |cFF5555@%s|r across raffle ledger.", clean))
+                else
+                    self.savedVars.raffle.voided.entries[tostring(target)] = true
+                    PrintChat(string.format("Voided deposit entry #|cFF5555%s|r across raffle ledger.", target))
+                end
+                PlayFissalSound()
+            end
+        elseif subCmd == "unvoid" then
+            local target = args[3]
+            if not target or target == "" then
+                PrintChat("Usage: |cFF9900/fissal raffle unvoid <@handle|depositId>|r")
+            else
+                if self.savedVars.raffle and self.savedVars.raffle.voided then
+                    local clean = target:gsub("^@", ""):lower()
+                    self.savedVars.raffle.voided.users[clean] = nil
+                    self.savedVars.raffle.voided.entries[tostring(target)] = nil
+                end
+                PrintChat(string.format("Unvoided target |c59E08A%s|r.", target))
+                PlayFissalSound()
+            end
+        elseif subCmd == "status" or subCmd == "list" or subCmd == "overrides" then
+            PrintChat("=== Fissal Relay: Active Raffle Overrides ===")
+            local aoList = {}
+            if FR.OfficialRaffleLedger and FR.OfficialRaffleLedger.allowedOfficers then
+                for g, map in pairs(FR.OfficialRaffleLedger.allowedOfficers) do
+                    for u in pairs(map) do table.insert(aoList, string.format("@%s (%s - Server)", u, g)) end
+                end
+            end
+            if self.savedVars.raffle and self.savedVars.raffle.allowedOfficers then
+                for g, map in pairs(self.savedVars.raffle.allowedOfficers) do
+                    for u in pairs(map) do table.insert(aoList, string.format("@%s (%s - Local)", u, g)) end
+                end
+            end
+            if #aoList > 0 then
+                PrintChat("Allowed Officers: " .. table.concat(aoList, ", "))
+            else
+                PrintChat("Allowed Officers: None (all ranks <= 3 excluded).")
+            end
+
+            local vList = {}
+            if FR.OfficialRaffleLedger and FR.OfficialRaffleLedger.voided then
+                if FR.OfficialRaffleLedger.voided.users then
+                    for u in pairs(FR.OfficialRaffleLedger.voided.users) do table.insert(vList, "@" .. u) end
+                end
+                if FR.OfficialRaffleLedger.voided.entries then
+                    for e in pairs(FR.OfficialRaffleLedger.voided.entries) do table.insert(vList, "#" .. e) end
+                end
+            end
+            if self.savedVars.raffle and self.savedVars.raffle.voided then
+                if self.savedVars.raffle.voided.users then
+                    for u in pairs(self.savedVars.raffle.voided.users) do table.insert(vList, "@" .. u .. " (Local)") end
+                end
+                if self.savedVars.raffle.voided.entries then
+                    for e in pairs(self.savedVars.raffle.voided.entries) do table.insert(vList, "#" .. e .. " (Local)") end
+                end
+            end
+            if #vList > 0 then
+                PrintChat("Voided Targets: " .. table.concat(vList, ", "))
+            else
+                PrintChat("Voided Targets: None.")
+            end
+            PlayFissalSound()
+        elseif subCmd == "payout" or subCmd == "payouts" or subCmd == "mail" then
+            if self.ToggleRaffleMailUI then
+                self:ToggleRaffleMailUI(true)
+            end
+        else
+            if self.ToggleConsole then
+                self:ToggleConsole(true)
+                self:SelectConsoleTab(2)
+            elseif self.ToggleRaffleMailUI then
+                self:ToggleRaffleMailUI(true)
+            end
+        end
     elseif cmd == "turbo" or cmd == "pump" then
         PrintChat("Activating Fissal Clockwork Turbo Pumper...")
         self:PumpLibHistoire(true)
@@ -1740,7 +2217,7 @@ function FR:HandleSlashCommand(arg)
         local snapped = self:TakeRosterSnapshot()
         local kiosksFound = self:ScanOwnedKiosks()
         local bidCount = NonContiguousCount(self.savedVars.staff and self.savedVars.staff.bids or {})
-        local saleCount = NonContiguousCount(self.savedVars.sales)
+        local saleCount = self:GetCount("sales")
         PrintChat(string.format("All listeners aligned. %d rosters snapped, %d kiosks, %d bids recorded. %s sales ready for courier dispatch.",
             snapped, kiosksFound, bidCount, ColorText(tostring(saleCount), "00FFCC")))
         if self.UpdateHUD then self:UpdateHUD() end
@@ -1806,7 +2283,7 @@ local function OnAddOnLoaded(eventCode, addOnName)
 
     -- Initialize SavedVariables
     FR.savedVars = ZO_SavedVars:NewAccountWide(
-        "FissalRelay_SavedVariables", 2, nil, DEFAULT_SAVED_VARS
+        "FissalRelay_SavedVariables", 3, nil, DEFAULT_SAVED_VARS
     )
     if not FR.savedVars.kiosks then FR.savedVars.kiosks = {} end
     if not FR.savedVars.staff then FR.savedVars.staff = {} end
@@ -1816,6 +2293,59 @@ local function OnAddOnLoaded(eventCode, addOnName)
     if not FR.savedVars.staff.rosterSnapshots then FR.savedVars.staff.rosterSnapshots = {} end
     if not FR.savedVars.staff.inactivityAudits then FR.savedVars.staff.inactivityAudits = {} end
     if not FR.savedVars.staff.categorySync then FR.savedVars.staff.categorySync = {} end
+    if not FR.savedVars.nextSeq then FR.savedVars.nextSeq = 0 end
+    if not FR.savedVars.raffle then FR.savedVars.raffle = {} end
+    if not FR.savedVars.raffle.allowedOfficers then FR.savedVars.raffle.allowedOfficers = { all = {}, post = {}, dealers = {} } end
+    if not FR.savedVars.raffle.voided then FR.savedVars.raffle.voided = { users = {}, entries = {} } end
+    if not FR.savedVars.settings then FR.savedVars.settings = {} end
+    if FR.savedVars.settings.bumperAutoReload == nil then FR.savedVars.settings.bumperAutoReload = false end
+    if FR.savedVars.settings.bumperWaitForLibHistoire == nil then FR.savedVars.settings.bumperWaitForLibHistoire = true end
+
+    -- Ground Recon Quarantine Purge (Ruling 4.2 & Fable 5.1): Remove Kargiz, Shuzug, and assistant bankers
+    if FR.savedVars.kiosks then
+        for bName in pairs(FR.TRADER_BLACKLIST) do
+            if FR.savedVars.kiosks[bName] then
+                FR.savedVars.kiosks[bName] = nil
+            end
+        end
+    end
+
+    -- Initialize & Validate Monotonic Audit Domains
+    if not FR.savedVars.audit then
+        FR.savedVars.audit = {
+            schemaVersion = 3,
+            domains = {
+                sales = { counter = 0, watermark = 0, generation = 0, valid = false },
+                deposits = { counter = 0, watermark = 0, generation = 0, valid = false },
+            },
+            fingerprint = nil,
+        }
+    end
+
+    local guildList = {}
+    for i = 1, GetNumGuilds() do table.insert(guildList, tostring(GetGuildId(i))) end
+    local currentFingerprint = string.format("3:%s:%s", GetDisplayName() or "player", table.concat(guildList, ","))
+    local auditState = FR.savedVars.audit
+
+    if auditState.fingerprint ~= currentFingerprint or auditState.schemaVersion ~= 3 or not auditState.domains.sales.valid or not auditState.domains.deposits.valid then
+        auditState.fingerprint = currentFingerprint
+        auditState.schemaVersion = 3
+        auditState.domains.sales.valid = false
+        auditState.domains.deposits.valid = false
+        zo_callLater(function()
+            if FR.BeginRebuild then
+                FR:BeginRebuild("sales")
+                FR:BeginRebuild("deposits")
+            end
+        end, 3000)
+    end
+
+    -- Schedule background shadow reconciliation at 60s post-login
+    zo_callLater(function()
+        if FR.ScheduleShadowReconciliation then
+            FR:ScheduleShadowReconciliation()
+        end
+    end, 60000)
 
     -- Register automatic pruning on player activation (safe, delayed, combat-guarded)
     EVENT_MANAGER:RegisterForEvent(FR.name .. "_Prune", EVENT_PLAYER_ACTIVATED, OnPlayerActivated)

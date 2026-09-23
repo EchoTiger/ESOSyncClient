@@ -60,76 +60,7 @@ public static class KioskReconScanner
 
     public static List<KioskObservation> ReadKiosks(string filePath)
     {
-        var observations = new List<KioskObservation>();
-        if (!File.Exists(filePath)) return observations;
-
-        string content;
-        try
-        {
-            content = File.ReadAllText(filePath, Encoding.UTF8);
-        }
-        catch
-        {
-            return observations;
-        }
-
-        // Find the kiosks table block
-        int kiosksIdx = content.IndexOf("[\"kiosks\"]", StringComparison.OrdinalIgnoreCase);
-        if (kiosksIdx < 0) return observations;
-
-        // Substring from kiosks forward up to next major top-level key
-        int staffIdx = content.IndexOf("[\"staff\"]", kiosksIdx, StringComparison.OrdinalIgnoreCase);
-        string section = staffIdx > kiosksIdx
-            ? content.Substring(kiosksIdx, staffIdx - kiosksIdx)
-            : content.Substring(kiosksIdx);
-
-        var matches = KioskBlockRegex.Matches(section);
-        foreach (Match match in matches)
-        {
-            var traderKey = match.Groups[1].Value.Trim();
-            var block = match.Groups[2].Value;
-
-            string GetString(string key)
-            {
-                // Build the pattern on-demand. The key is a safe alphanumeric identifier from
-                // the outer KioskBlockRegex capture group, so no Regex.Escape is required.
-                var m = GetStringPattern(key).Match(block);
-                return m.Success ? m.Groups[1].Value.Trim() : "";
-            }
-
-            long GetLong(string key)
-            {
-                var m = GetIntegerPattern(key).Match(block);
-                return m.Success && long.TryParse(m.Groups[1].Value, out var val) ? val : 0;
-            }
-
-            int GetInt(string key)
-            {
-                var m = GetIntegerPattern(key).Match(block);
-                return m.Success && int.TryParse(m.Groups[1].Value, out var val) ? val : 0;
-            }
-
-            var trader = GetString("trader");
-            if (string.IsNullOrEmpty(trader)) trader = traderKey;
-
-            var guildName = GetString("guildName");
-            if (string.IsNullOrEmpty(guildName)) continue;
-
-            observations.Add(new KioskObservation
-            {
-                Trader = trader,
-                GuildId = GetInt("guildId"),
-                GuildName = guildName,
-                Zone = GetString("zone"),
-                City = GetString("city"),
-                X = GetString("x"),
-                Y = GetString("y"),
-                Timestamp = GetLong("timestamp"),
-                ObservedBy = GetString("observedBy"),
-            });
-        }
-
-        return observations;
+        return LuaStreamingReader.ReadKioskObservations(filePath);
     }
 
     public static string ExportInactivesCsv(InactivityAudit audit)

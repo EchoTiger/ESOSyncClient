@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -9,6 +10,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using static RedfurSync.FissalTheme;
@@ -165,8 +167,10 @@ namespace RedfurSync
         private Label _tickerLabel = null!;
         private Panel _tickerPanel = null!;
         private bool _batchInProgress = false;
-        private bool _syncRefreshPending;
         private bool _isConnected = true;
+        private readonly SynchronizationContext? _syncContext;
+        private readonly System.Threading.Timer? _syncCoalesceTimer;
+        private long _lastRenderedJobVersion = -1;
 
         private sealed class JobCardControls
         {
@@ -311,6 +315,8 @@ namespace RedfurSync
         {
             _watcher = watcher;
             _applyUpdateAction = applyUpdateAction;
+            _syncContext = SynchronizationContext.Current;
+            _syncCoalesceTimer = new System.Threading.Timer(OnSyncCoalesceTick, null, 150, 150);
 
             SetStyle(ControlStyles.AllPaintingInWmPaint |
                      ControlStyles.UserPaint |
@@ -412,6 +418,7 @@ namespace RedfurSync
         {
             if (disposing)
             {
+                _syncCoalesceTimer?.Dispose();
                 _animTimer?.Stop();
                 _animTimer?.Dispose();
                 _watcher.JobsChanged -= OnWatcherJobsChanged;
@@ -688,12 +695,7 @@ namespace RedfurSync
                 string errorFile = "";
                 bool hasError = false, hasReadyUpdate = false;
 
-                var safeJobs = new List<UploadJob>();
-                lock (_watcher.Jobs)
-                {
-                    for (int k = 0; k < _watcher.Jobs.Count; k++)
-                        try { safeJobs.Add(_watcher.Jobs[k]); } catch { break; }
-                }
+                var safeJobs = _watcher.GetJobsSnapshot();
 
                 foreach (var j in safeJobs)
                 {
@@ -738,7 +740,7 @@ namespace RedfurSync
                     statuses.Add(("> STAND BY... MONITORING ESO LIVE", Color.FromArgb(255, 50, 255, 50), 0));
                     statuses.Add(("● TONAL TRANSCEIVER RESONANT • REDFUR RELAY", Color.FromArgb(255, 50, 255, 50), 0));
                     if (!string.IsNullOrEmpty(userStatus)) statuses.Add((userStatus, Color.FromArgb(255, 50, 255, 50), 0));
-                    if (safeJobs.Count > 0)
+                    if (safeJobs.Length > 0)
                     {
                         int doneCount = safeJobs.Count(j => j.Status == UploadStatus.Done);
                         statuses.Add(($"> {doneCount} TRANSMISSIONS ARCHIVED", Color.FromArgb(255, 50, 255, 50), 0));
@@ -1243,7 +1245,7 @@ namespace RedfurSync
             _btnRefreshJobs.Click += (_, _) =>
             {
                 RefreshSyncView();
-                LogTelemetry("REFRESH", $"Audited {_watcher.Jobs.Count} live transmission cassettes.", CGoldBrt);
+                LogTelemetry("REFRESH", $"Audited {_watcher.GetJobsSnapshot().Length} live transmission cassettes.", CGoldBrt);
             };
             topBar.Controls.Add(_btnRefreshJobs, 2, 0);
 
@@ -1252,10 +1254,9 @@ namespace RedfurSync
             _btnClearCompleted.Margin = new Padding((int)(4 * _scale), 0, (int)(4 * _scale), 0);
             _btnClearCompleted.Click += (_, _) =>
             {
-                var doneJobs = _watcher.Jobs.Where(j => j.Status is UploadStatus.Done or UploadStatus.Cancelled).ToList();
-                foreach (var j in doneJobs) _watcher.Jobs.Remove(j);
+                int removed = _watcher.RemoveCompletedJobs();
                 RefreshSyncView();
-                LogTelemetry("CLEARED", $"Cleared {doneJobs.Count} completed sync records from live deck.", CTextSub);
+                LogTelemetry("CLEARED", $"Cleared {removed} completed sync records from live deck.", CTextSub);
             };
             topBar.Controls.Add(_btnClearCompleted, 3, 0);
 
@@ -1395,7 +1396,7 @@ namespace RedfurSync
             _oscilloscopePanel.Paint += (s, e) =>
             {
                 var g = e.Graphics;
-                var activeJob = _watcher.Jobs.FirstOrDefault(j => j.Status == UploadStatus.Uploading);
+                var activeJob = _watcher.GetJobsSnapshot().FirstOrDefault(j => j.Status == UploadStatus.Uploading);
                 bool isTx = activeJob != null;
                 Color waveCol = isTx ? CGoldBrt : CGreen;
                 DrawTonalWaveform(g, new Rectangle(0, 0, _oscilloscopePanel.Width, _oscilloscopePanel.Height), _animFrame * 0.22f, waveCol, isTx, _scale);
@@ -1480,9 +1481,10 @@ namespace RedfurSync
             }
 
             // Vacuum tube filament and gas glow pulse
-            bool isUploading = _watcher.Jobs.Any(j => j.Status == UploadStatus.Uploading);
-            bool hasError = _watcher.Jobs.Any(j => j.Status == UploadStatus.Failed || j.Status == UploadStatus.Cancelled);
-            bool hasUpdate = _watcher.Jobs.Any(j => j.Status == UploadStatus.UpdateReady);
+            var jobsSnapshot = _watcher.GetJobsSnapshot();
+            bool isUploading = jobsSnapshot.Any(j => j.Status == UploadStatus.Uploading);
+            bool hasError = jobsSnapshot.Any(j => j.Status == UploadStatus.Failed || j.Status == UploadStatus.Cancelled);
+            bool hasUpdate = jobsSnapshot.Any(j => j.Status == UploadStatus.UpdateReady);
 
             int targetStep = hasError ? 2 : isUploading ? 3 : hasUpdate ? 1 : 1;
             _glowStep = _glowStep > 0 ? targetStep : -targetStep;
@@ -1515,10 +1517,10 @@ namespace RedfurSync
             _oscilloscopePanel?.Invalidate();
             _syncJobsList?.Invalidate();
 
-            var activeJob = _watcher.Jobs.FirstOrDefault(j => j.Status == UploadStatus.Uploading);
+            var activeJob = jobsSnapshot.FirstOrDefault(j => j.Status == UploadStatus.Uploading);
             if (activeJob == null)
             {
-                int queued = _watcher.Jobs.Count(j => j.Status == UploadStatus.Queued);
+                int queued = jobsSnapshot.Count(j => j.Status == UploadStatus.Queued);
                 if (queued > 0)
                 {
                     if (_tickerLabel != null && !_tickerLabel.IsDisposed)
@@ -1625,7 +1627,8 @@ namespace RedfurSync
                 return;
             }
 
-            var jobs = _watcher.Jobs.ToList();
+            _lastRenderedJobVersion = _watcher.CurrentJobVersion;
+            var jobs = _watcher.GetJobsSnapshot();
             int queued = jobs.Count(j => j.Status == UploadStatus.Queued);
             int uploading = jobs.Count(j => j.Status == UploadStatus.Uploading);
             int done = jobs.Count(j => j.Status == UploadStatus.Done);
@@ -1721,12 +1724,12 @@ namespace RedfurSync
                 currentSession.Jobs.Add(job);
             }
 
-            _syncSummaryLabel.Text = $"Sessions: {sessions.Count}  |  Active: {uploading}  |  Queued: {queued}  |  Synced: {done}  |  Errors: {failed}  |  Total: {jobs.Count}";
+            _syncSummaryLabel.Text = $"Sessions: {sessions.Count}  |  Active: {uploading}  |  Queued: {queued}  |  Synced: {done}  |  Errors: {failed}  |  Total: {jobs.Length}";
 
             _syncJobsList.SuspendLayout();
 
             // 1. Remove empty placeholder if we have content
-            if (jobs.Count > 0)
+            if (jobs.Length > 0)
             {
                 for (int i = _syncJobsList.Controls.Count - 1; i >= 0; i--)
                 {
@@ -1808,7 +1811,7 @@ namespace RedfurSync
             }
 
             // 5. Empty placeholder when no jobs exist
-            if (jobs.Count == 0 && _syncJobsList.Controls.Count == 0)
+            if (jobs.Length == 0 && _syncJobsList.Controls.Count == 0)
             {
                 var emptyCard = new DoubleBufferedPanel
                 {
@@ -4133,7 +4136,7 @@ namespace RedfurSync
 
         private void RefreshDiagnosticsView()
         {
-            _watcherStatusLabel.Text = _watcher.Jobs.Any(j => j.Status == UploadStatus.Uploading) ? "TRANSMITTING" : "ACTIVE MONITORING";
+            _watcherStatusLabel.Text = _watcher.GetJobsSnapshot().Any(j => j.Status == UploadStatus.Uploading) ? "TRANSMITTING" : "ACTIVE MONITORING";
             _watcherStatusLabel.ForeColor = CGreen;
 
             string context = _watcher.GetAssistantContext();
@@ -4182,15 +4185,26 @@ namespace RedfurSync
             RefreshDiagnosticsView();
         }
 
+        private void OnSyncCoalesceTick(object? state)
+        {
+            if (IsDisposed || !IsHandleCreated) return;
+            long currentVer = _watcher.CurrentJobVersion;
+            if (currentVer != _lastRenderedJobVersion)
+            {
+                _lastRenderedJobVersion = currentVer;
+                _syncContext?.Post(_ =>
+                {
+                    if (!IsDisposed && IsHandleCreated)
+                    {
+                        RefreshSyncView();
+                    }
+                }, null);
+            }
+        }
+
         private void OnWatcherJobsChanged()
         {
-            if (IsDisposed || _syncRefreshPending) return;
-            _syncRefreshPending = true;
-            BeginInvoke(() =>
-            {
-                _syncRefreshPending = false;
-                RefreshSyncView();
-            });
+            // Coalesced 150ms timer handles rendering dispatching to prevent UI thrashing during file bursts
         }
 
         private void OnWatcherConnectionChecked(bool ok, string msg)

@@ -5,3 +5,4 @@ publish_win/
 AddOn/**/Client/
 *.user
 *.exe
+publish_v150/

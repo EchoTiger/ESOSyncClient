@@ -36,6 +36,35 @@ FR.auditFilteredMembers = {}
      AUDITOR DATA ENGINE
 ========================================================================= ]]--
 
+-- Memoized bank deposits per guild
+FR.depositCache = {}
+
+function FR:InvalidateDepositCache(guildId)
+    if guildId then
+        self.depositCache[guildId] = nil
+    else
+        self.depositCache = {}
+    end
+end
+
+function FR:GetMemberDeposits(guildId)
+    if self.depositCache[guildId] then
+        return self.depositCache[guildId]
+    end
+
+    local lookup = {}
+    if self.savedVars and self.savedVars.staff and self.savedVars.staff.bankDeposits then
+        for _, dep in pairs(self.savedVars.staff.bankDeposits) do
+            if dep.guildId == guildId and dep.depositor then
+                local lowerDep = string.lower(dep.depositor)
+                lookup[lowerDep] = (lookup[lowerDep] or 0) + (dep.amount or 0)
+            end
+        end
+    end
+    self.depositCache[guildId] = lookup
+    return lookup
+end
+
 function FR:RunRosterAudit()
     local gIdx = self.selectedGuildIndex or 1
     local numGuilds = GetNumGuilds()
@@ -46,16 +75,8 @@ function FR:RunRosterAudit()
     local memberCount = GetNumGuildMembers(guildId)
     local cutoffSecs = (self.auditFilterDays or 14) * 86400
 
-    -- Build deposit lookup for this guild (case-insensitive)
-    local depositsByMember = {}
-    if self.savedVars and self.savedVars.staff and self.savedVars.staff.bankDeposits then
-        for _, dep in pairs(self.savedVars.staff.bankDeposits) do
-            if dep.guildId == guildId and dep.depositor then
-                local lowerDep = string.lower(dep.depositor)
-                depositsByMember[lowerDep] = (depositsByMember[lowerDep] or 0) + (dep.amount or 0)
-            end
-        end
-    end
+    -- Retrieve memoized deposit lookup for this guild (case-insensitive)
+    local depositsByMember = self:GetMemberDeposits(guildId)
 
     local rawInactives = {}
     local excusedCount = 0
@@ -625,5 +646,147 @@ function FR:ExportAuditToChat()
     end
     if #members > count then
         df("  ...and %d more inactive members saved to SavedVariables.", #members - count)
+    end
+end
+
+--[[ =========================================================================
+     CHUNKED AUDIT REBUILD & SHADOW RECONCILIATION ENGINE
+     (Rulings 4.5 & 4.7 - Claude Fable 5.1)
+========================================================================= ]]--
+
+local FRAME_BUDGET_MS = 2.0
+local MAX_PER_TICK    = 2000
+
+function FR:BeginRebuild(domain)
+    if not self.savedVars or not self.savedVars.audit or not self.savedVars.audit.domains then return end
+    local a = self.savedVars.audit.domains[domain]
+    if not a or a.scan then return end -- already running
+
+    local records = (domain == "sales") and self.savedVars.sales or (self.savedVars.staff and self.savedVars.staff.bankDeposits)
+    if not records then return end
+
+    a.scan = {
+        ceiling  = self.savedVars.nextSeq or 0,
+        count    = 0,
+        iter     = nil,
+        pending  = {},
+        startGen = a.generation or 0,
+    }
+    a.valid = false
+
+    local updateEventName = "FissalAuditRebuild_" .. domain
+    EVENT_MANAGER:RegisterForUpdate(updateEventName, 0, function()
+        self:RebuildTick(domain)
+    end)
+end
+
+function FR:RebuildTick(domain)
+    local a = self.savedVars.audit.domains[domain]
+    if not a or not a.scan then return end
+    local s = a.scan
+    local records = (domain == "sales") and self.savedVars.sales or (self.savedVars.staff and self.savedVars.staff.bankDeposits)
+    if not records then
+        EVENT_MANAGER:UnregisterForUpdate("FissalAuditRebuild_" .. domain)
+        a.scan = nil
+        return
+    end
+
+    local t0 = GetGameTimeMilliseconds()
+    local n = 0
+    local k, v = next(records, s.iter)
+
+    while k ~= nil do
+        local seq = v.seq or 0
+        if seq <= s.ceiling then
+            s.count = s.count + 1
+        end
+        n = n + 1
+        if n >= MAX_PER_TICK or (GetGameTimeMilliseconds() - t0) >= FRAME_BUDGET_MS then
+            s.iter = k
+            return
+        end
+        k, v = next(records, k)
+    end
+
+    -- Scan complete
+    EVENT_MANAGER:UnregisterForUpdate("FissalAuditRebuild_" .. domain)
+
+    if (a.generation or 0) ~= s.startGen then
+        -- Something pruned/mutated mid-scan; restart cleanly
+        a.scan = nil
+        return self:BeginRebuild(domain)
+    end
+
+    self:CommitRebuild(domain)
+end
+
+function FR:CommitRebuild(domain)
+    local a = self.savedVars.audit.domains[domain]
+    if not a or not a.scan then return end
+    local s = a.scan
+
+    -- Step 1: adopt scan result. Everything <= ceiling is now counted.
+    a.counter   = s.count
+    a.watermark = s.ceiling
+
+    -- Step 2: drain buffered live events strictly > ceiling
+    table.sort(s.pending)
+    for _, seq in ipairs(s.pending) do
+        if seq > a.watermark then
+            a.watermark = seq
+            a.counter   = a.counter + 1
+        end
+    end
+
+    a.scan  = nil
+    a.valid = true
+
+    if self.UpdateHUD then self:UpdateHUD() end
+    if self.UpdateConsoleStatus then self:UpdateConsoleStatus() end
+end
+
+-- Slow count strictly for shadow reconciliation (never used in UI or frame loops)
+function FR:_SlowCount(tbl)
+    if not tbl then return 0 end
+    local count = 0
+    for _ in pairs(tbl) do
+        count = count + 1
+    end
+    return count
+end
+
+function FR:ScheduleShadowReconciliation()
+    local function TryReconcile()
+        if IsUnitInCombat and IsUnitInCombat("player") then
+            zo_callLater(TryReconcile, 15000)
+            return
+        end
+        self:RunShadowReconciliation()
+    end
+    zo_callLater(TryReconcile, 10000)
+end
+
+function FR:RunShadowReconciliation()
+    if not self.savedVars or not self.savedVars.audit or not self.savedVars.audit.domains then return end
+    local audit = self.savedVars.audit
+
+    -- Shadow check sales
+    local liveSales = audit.domains.sales and audit.domains.sales.counter or 0
+    local shadowSales = self:_SlowCount(self.savedVars.sales)
+    if liveSales ~= shadowSales then
+        audit.domains.sales.counter = shadowSales
+        audit.domains.sales.watermark = self.savedVars.nextSeq or 0
+        audit.domains.sales.valid = true
+        audit.driftEvents = (audit.driftEvents or 0) + 1
+    end
+
+    -- Shadow check deposits
+    local liveDeposits = audit.domains.deposits and audit.domains.deposits.counter or 0
+    local shadowDeposits = self:_SlowCount(self.savedVars.staff and self.savedVars.staff.bankDeposits)
+    if liveDeposits ~= shadowDeposits then
+        audit.domains.deposits.counter = shadowDeposits
+        audit.domains.deposits.watermark = self.savedVars.nextSeq or 0
+        audit.domains.deposits.valid = true
+        audit.driftEvents = (audit.driftEvents or 0) + 1
     end
 end

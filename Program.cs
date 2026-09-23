@@ -15,6 +15,32 @@ namespace RedfurSync
         static void Main(string[] args)
         {
             TraceLog("Main started. Args: " + string.Join(" ", args));
+
+            // ── Crash-during-commit recovery (Fable 5.1 Ruling 3.5) ──────────────
+            UpdateInstaller.RecoverPendingUpdate(AppDomain.CurrentDomain.BaseDirectory);
+
+            // ── Post-update verification handshake ─────────────────────────────
+            foreach (var arg in args)
+            {
+                if (arg.Equals("--post-update-verify", StringComparison.OrdinalIgnoreCase))
+                {
+                    TraceLog("Executing post-update verification...");
+                    try
+                    {
+                        _ = AppConfig.Instance;
+                        var healthyPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "HEALTHY");
+                        File.WriteAllText(healthyPath, $"HEALTHY {DateTimeOffset.UtcNow:O}");
+                        TraceLog("HEALTHY sentinel written successfully.");
+                    }
+                    catch (Exception ex)
+                    {
+                        TraceLog($"Post-update verification failed: {ex.Message}");
+                        return;
+                    }
+                    break;
+                }
+            }
+
             // ── DPI awareness ─────────────────────────────────────────────────
             // Must be called before anything else to prevent blurry text on
             // high-DPI / 4K displays. PerMonitorV2 lets each monitor use its
@@ -101,6 +127,11 @@ namespace RedfurSync
                 if (File.Exists(oldExe))
                 {
                     try { File.Delete(oldExe); } catch { /* It will be deleted next time */ }
+                }
+                string prevExe = exePath + ".prev";
+                if (File.Exists(prevExe))
+                {
+                    try { File.Delete(prevExe); } catch { }
                 }
             }
 

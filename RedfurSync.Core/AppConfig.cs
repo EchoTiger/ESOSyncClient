@@ -101,6 +101,15 @@ namespace RedfurSync
         [JsonPropertyName("LastUpdatePrompt")]
         public DateTime LastUpdatePrompt { get; set; } = DateTime.MinValue;
 
+        [JsonPropertyName("LastVerifiedSequence")]
+        public long LastVerifiedSequence { get; set; } = 0;
+
+        [JsonPropertyName("RevokedKeyIds")]
+        public List<string> RevokedKeyIds { get; set; } = new();
+
+        [JsonPropertyName("QuarantinedSequences")]
+        public List<long> QuarantinedSequences { get; set; } = new();
+
         [JsonPropertyName("SyncedFileHashes")]
         public Dictionary<string, string> SyncedFileHashes { get; set; } = new(StringComparer.OrdinalIgnoreCase);
         

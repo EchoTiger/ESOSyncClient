@@ -54,6 +54,39 @@ FissalRelay_SavedVariables = {
     }
 
     [Fact]
+    public void ReadKiosks_HandlesEscapedStringsAndComments()
+    {
+        using var tempDir = new TemporaryDirectory();
+        var sampleLua = @"
+-- Initial comment with braces { }
+FissalRelay_SavedVariables = {
+    [""kiosks""] = {
+        [""Trader Special""] = {
+            [""trader""] = ""Trader Special"",
+            [""guildId""] = 10,
+            [""guildName""] = ""Redfur Dealers"",
+            [""zone""] = ""Craglorn"",
+            [""city""] = ""Belkarth {Upper}"",
+            [""timestamp""] = 1725332000,
+            [""observedBy""] = ""@Tester""
+        }
+    },
+    [""sales""] = {
+        -- thousands of sales lines that should be ignored
+    }
+}
+";
+        var filePath = tempDir.WriteFile("FissalRelay.lua", sampleLua);
+        var kiosks = KioskReconScanner.ReadKiosks(filePath);
+
+        Assert.Single(kiosks);
+        var k = kiosks[0];
+        Assert.Equal("Trader Special", k.Trader);
+        Assert.Equal("Redfur Dealers", k.GuildName);
+        Assert.Equal("Belkarth {Upper}", k.City);
+    }
+
+    [Fact]
     public void ExportKiosksMarkdown_ProducesMarkdownTable()
     {
         var kiosks = new List<KioskObservation>

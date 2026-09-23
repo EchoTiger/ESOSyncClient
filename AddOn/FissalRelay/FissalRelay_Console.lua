@@ -21,7 +21,7 @@ FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
 local CONSOLE_WIDTH = 720
-local CONSOLE_HEIGHT = 560
+local CONSOLE_HEIGHT = 580
 
 FR.selectedGuildIndex = 1
 FR.activeConsoleTab = 1
@@ -171,19 +171,13 @@ function FR:CreateConsoleUI()
 
     -- 4. Header Bar: Clockwork Guild Emblem
     local icon = wm:CreateControl("$(parent)_Icon", console, CT_TEXTURE)
-    icon:SetAnchor(TOPLEFT, console, TOPLEFT, 12, 10)
+    icon:SetAnchor(TOPLEFT, console, TOPLEFT, 14, 12)
     icon:SetDimensions(22, 22)
     icon:SetTexture("EsoUI/Art/MainMenu/menuBar_guilds_up.dds")
 
-    -- 5. Title & Version
-    local title = wm:CreateControl("$(parent)_Title", console, CT_LABEL)
-    title:SetAnchor(LEFT, icon, RIGHT, 8, 0)
-    title:SetFont("ZoFontGameBold")
-    title:SetText("|cFF9900FISSAL RELAY PRIME|r  |c00FFCCCOMMAND CONSOLE|r  |c888888v1.5.0|r")
-
-    -- 6. Close Button [×]
+    -- 5. Close Button [x]
     local closeBtn = wm:CreateControl("$(parent)_Close", console, CT_BUTTON)
-    closeBtn:SetAnchor(TOPRIGHT, console, TOPRIGHT, -10, 8)
+    closeBtn:SetAnchor(TOPRIGHT, console, TOPRIGHT, -12, 12)
     closeBtn:SetDimensions(20, 20)
     closeBtn:SetFont("ZoFontGameBold")
     closeBtn:SetNormalFontColor(0.7, 0.7, 0.7, 1)
@@ -193,21 +187,31 @@ function FR:CreateConsoleUI()
         self:ToggleConsole(false)
     end)
 
+    -- 6. Title & Version (Centered vertically between icon and close button)
+    local title = wm:CreateControl("$(parent)_Title", console, CT_LABEL)
+    title:SetAnchor(LEFT, icon, RIGHT, 8, 0)
+    title:SetAnchor(RIGHT, closeBtn, LEFT, -8, 0)
+    title:SetHeight(22)
+    title:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+    title:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+    title:SetFont("ZoFontGameBold")
+    title:SetText("|cFF9900FISSAL RELAY PRIME|r  |c00FFCCCOMMAND CONSOLE|r  |c888888v1.5.1|r")
+
     -- 7. Top Divider Line
     local topDiv = wm:CreateControl("$(parent)_DivTop", console, CT_TEXTURE)
-    topDiv:SetAnchor(TOPLEFT, console, TOPLEFT, 10, 34)
-    topDiv:SetAnchor(TOPRIGHT, console, TOPRIGHT, -10, 34)
+    topDiv:SetAnchor(TOPLEFT, console, TOPLEFT, 10, 42)
+    topDiv:SetAnchor(TOPRIGHT, console, TOPRIGHT, -10, 42)
     topDiv:SetHeight(1)
     topDiv:SetColor(0.8, 0.5, 0.1, 0.4)
 
     -- 8. Guild Switcher Tabs (Row 1 under title)
     self.guildButtons = {}
-    local numGuilds = math.min(GetNumGuilds(), 5)
-    local tabWidth = math.floor((CONSOLE_WIDTH - 24) / math.max(numGuilds, 1))
+    local numGuilds = math.min(math.max(GetNumGuilds(), 1), 5)
+    local tabWidth = math.floor((CONSOLE_WIDTH - 24) / numGuilds)
 
     for i = 1, 5 do
         local gBtn = wm:CreateControl("$(parent)_GuildTab_" .. i, console, CT_BUTTON)
-        gBtn:SetAnchor(TOPLEFT, console, TOPLEFT, 12 + (i - 1) * tabWidth, 38)
+        gBtn:SetAnchor(TOPLEFT, console, TOPLEFT, 12 + (i - 1) * tabWidth, 48)
         gBtn:SetDimensions(tabWidth - 4, 24)
         gBtn:SetFont("ZoFontGameSmall")
         self:StyleTactileButton(gBtn, {
@@ -240,7 +244,7 @@ function FR:CreateConsoleUI()
 
     for idx, nav in ipairs(navNames) do
         local nBtn = wm:CreateControl("$(parent)_NavTab_" .. nav.id, console, CT_BUTTON)
-        nBtn:SetAnchor(TOPLEFT, console, TOPLEFT, 12 + (idx - 1) * navWidth, 66)
+        nBtn:SetAnchor(TOPLEFT, console, TOPLEFT, 12 + (idx - 1) * navWidth, 78)
         nBtn:SetDimensions(navWidth - 4, 26)
         nBtn:SetFont("ZoFontGameBold")
         nBtn:SetText(nav.label)
@@ -262,14 +266,14 @@ function FR:CreateConsoleUI()
 
     -- 10. Nav Divider
     local navDiv = wm:CreateControl("$(parent)_DivNav", console, CT_TEXTURE)
-    navDiv:SetAnchor(TOPLEFT, console, TOPLEFT, 10, 96)
-    navDiv:SetAnchor(TOPRIGHT, console, TOPRIGHT, -10, 96)
+    navDiv:SetAnchor(TOPLEFT, console, TOPLEFT, 10, 110)
+    navDiv:SetAnchor(TOPRIGHT, console, TOPRIGHT, -10, 110)
     navDiv:SetHeight(1)
     navDiv:SetColor(0.8, 0.5, 0.1, 0.4)
 
     -- 11. Central Tab Content Container
     local content = wm:CreateControl("$(parent)_Content", console, CT_CONTROL)
-    content:SetAnchor(TOPLEFT, console, TOPLEFT, 12, 100)
+    content:SetAnchor(TOPLEFT, console, TOPLEFT, 12, 116)
     content:SetAnchor(BOTTOMRIGHT, console, BOTTOMRIGHT, -12, -36)
     self.consoleContent = content
 
@@ -690,15 +694,95 @@ function FR:BuildTTCBumperTab(parent)
         end
     end)
 
-    local autoBumpCheck = wm:CreateControl("$(parent)_AutoBump", card, CT_LABEL)
-    autoBumpCheck:SetAnchor(TOPLEFT, card, TOPLEFT, 14, 135)
-    autoBumpCheck:SetFont("ZoFontGameSmall")
-    local isAuto = self.savedVars and self.savedVars.settings and self.savedVars.settings.autoBumpOnStoreOpen
-    autoBumpCheck:SetText(string.format("Auto-bump on Guild Store open: %s",
-        isAuto and ColorText("Enabled", "59E08A") or ColorText("Disabled", "888888")))
+    -- Automation Options Section
+    local autoBumpBtn = wm:CreateControl("$(parent)_AutoBumpBtn", card, CT_BUTTON)
+    autoBumpBtn:SetAnchor(TOPLEFT, card, TOPLEFT, 14, 135)
+    autoBumpBtn:SetDimensions(320, 26)
+    autoBumpBtn:SetFont("ZoFontGame")
+
+    local function UpdateAutoBumpBtn()
+        local isAuto = self.savedVars and self.savedVars.settings and self.savedVars.settings.showBumper
+        autoBumpBtn:SetText(string.format("Auto-Show at Guild Store: %s",
+            isAuto and ColorText("Enabled", "59E08A") or ColorText("Disabled", "888888")))
+    end
+    UpdateAutoBumpBtn()
+    self:StyleTactileButton(autoBumpBtn, {
+        normalBg = { 0.05, 0.08, 0.08, 0.85 },
+        hoverBg = { 0.08, 0.12, 0.12, 0.95 },
+        normalEdge = { 0.35, 0.30, 0.20, 0.65 },
+        hoverEdge = { 0, 0.85, 0.75, 0.90 },
+        normalTextColor = { 0.9, 0.9, 0.9, 1 },
+        hoverTextColor = { 1, 1, 1, 1 },
+        tooltipTitle = "Auto-Show at Guild Store",
+        tooltipText = "Automatically open the Bumper selection window whenever you access a Guild Store.",
+    })
+    autoBumpBtn:SetHandler("OnClicked", function()
+        self.savedVars.settings.showBumper = not self.savedVars.settings.showBumper
+        UpdateAutoBumpBtn()
+        if self.UpdateBumperUI then self:UpdateBumperUI() end
+    end)
+
+    local autoReloadBtn = wm:CreateControl("$(parent)_AutoReloadBtn", card, CT_BUTTON)
+    autoReloadBtn:SetAnchor(TOPLEFT, card, TOPLEFT, 14, 168)
+    autoReloadBtn:SetDimensions(320, 26)
+    autoReloadBtn:SetFont("ZoFontGame")
+
+    local function UpdateAutoReloadBtn()
+        local isAR = self.savedVars and self.savedVars.settings and self.savedVars.settings.bumperAutoReload
+        autoReloadBtn:SetText(string.format("Auto-Reload UI After Bump: %s",
+            isAR and ColorText("Enabled", "59E08A") or ColorText("Disabled", "888888")))
+    end
+    UpdateAutoReloadBtn()
+    self:StyleTactileButton(autoReloadBtn, {
+        normalBg = { 0.05, 0.08, 0.08, 0.85 },
+        hoverBg = { 0.08, 0.12, 0.12, 0.95 },
+        normalEdge = { 0.35, 0.30, 0.20, 0.65 },
+        hoverEdge = { 0, 0.85, 0.75, 0.90 },
+        normalTextColor = { 0.9, 0.9, 0.9, 1 },
+        hoverTextColor = { 1, 1, 1, 1 },
+        tooltipTitle = "Automatically Reload UI After Bump",
+        tooltipText = "Automatically execute /reloadui once all selected guild stores are bumped to flush listings to disk for TTC.",
+    })
+    autoReloadBtn:SetHandler("OnClicked", function()
+        self.savedVars.settings.bumperAutoReload = not (self.savedVars.settings.bumperAutoReload)
+        UpdateAutoReloadBtn()
+        if self.UpdateBumperUI then self:UpdateBumperUI() end
+    end)
+
+    local waitLHBtn = wm:CreateControl("$(parent)_WaitLHBtn", card, CT_BUTTON)
+    waitLHBtn:SetAnchor(TOPLEFT, card, TOPLEFT, 14, 201)
+    waitLHBtn:SetDimensions(320, 26)
+    waitLHBtn:SetFont("ZoFontGame")
+
+    local function UpdateWaitLHBtn()
+        local isAR = self.savedVars and self.savedVars.settings and self.savedVars.settings.bumperAutoReload
+        local isWait = self.savedVars and self.savedVars.settings and self.savedVars.settings.bumperWaitForLibHistoire
+        if not isAR then
+            waitLHBtn:SetText(string.format("Wait for LibHistoire: %s", ColorText("Off (Requires Auto-Reload)", "555555")))
+        else
+            waitLHBtn:SetText(string.format("Wait for LibHistoire: %s",
+                isWait and ColorText("Enabled", "00FFCC") or ColorText("Disabled", "888888")))
+        end
+    end
+    UpdateWaitLHBtn()
+    self:StyleTactileButton(waitLHBtn, {
+        normalBg = { 0.05, 0.08, 0.08, 0.85 },
+        hoverBg = { 0.08, 0.12, 0.12, 0.95 },
+        normalEdge = { 0.35, 0.30, 0.20, 0.65 },
+        hoverEdge = { 0, 0.85, 0.75, 0.90 },
+        normalTextColor = { 0.9, 0.9, 0.9, 1 },
+        hoverTextColor = { 1, 1, 1, 1 },
+        tooltipTitle = "Wait for LibHistoire Requests",
+        tooltipText = "When auto-reloading UI after a bump, wait for any active LibHistoire guild history requests or event queues to settle before reloading.",
+    })
+    waitLHBtn:SetHandler("OnClicked", function()
+        self.savedVars.settings.bumperWaitForLibHistoire = not (self.savedVars.settings.bumperWaitForLibHistoire)
+        UpdateWaitLHBtn()
+        if self.UpdateBumperUI then self:UpdateBumperUI() end
+    end)
 
     local bumpStatus = wm:CreateControl("$(parent)_Status", card, CT_LABEL)
-    bumpStatus:SetAnchor(TOPLEFT, card, TOPLEFT, 14, 165)
+    bumpStatus:SetAnchor(TOPLEFT, card, TOPLEFT, 14, 238)
     bumpStatus:SetFont("ZoFontGameSmall")
     bumpStatus:SetText("TTC Addon Status: " .. (TamrielTradeCentre and ColorText("Detected & Active", "59E08A") or ColorText("Not Installed", "FF5555")))
 end
@@ -708,17 +792,23 @@ end
 ========================================================================= ]]--
 
 function FR:SelectConsoleGuild(guildIndex)
-    local numGuilds = GetNumGuilds()
-    if guildIndex < 1 or guildIndex > numGuilds then guildIndex = 1 end
+    local rawGuilds = GetNumGuilds()
+    local numGuilds = math.min(math.max(rawGuilds, 1), 5)
+    if guildIndex < 1 or guildIndex > rawGuilds then guildIndex = 1 end
     self.selectedGuildIndex = guildIndex
 
-    -- Update guild buttons visual state
+    local tabWidth = math.floor((CONSOLE_WIDTH - 24) / numGuilds)
+
+    -- Update guild buttons visual state and dynamically distribute horizontally
     for i = 1, 5 do
         local btn = self.guildButtons and self.guildButtons[i]
         if btn then
-            if i <= numGuilds then
+            if i <= rawGuilds and i <= 5 then
                 local gId = GetGuildId(i)
                 local name = GetGuildName(gId)
+                btn:ClearAnchors()
+                btn:SetAnchor(TOPLEFT, self.consoleWindow, TOPLEFT, 12 + (i - 1) * tabWidth, 48)
+                btn:SetDimensions(tabWidth - 4, 24)
                 btn:SetHidden(false)
                 btn:SetText(name ~= "" and name or ("Guild " .. i))
                 if btn.bg then
@@ -849,9 +939,9 @@ function FR:UpdateOverviewTab()
             hasClaim and ColorText("[YES]", "59E08A") or ColorText("[NO]", "888888")))
     end
 
-    -- LibHistoire Status
-    local saleCount = NonContiguousCount(self.savedVars and self.savedVars.sales or {})
-    local depositCount = NonContiguousCount(self.savedVars and self.savedVars.staff and self.savedVars.staff.bankDeposits or {})
+    -- LibHistoire Status (O(1) lookup)
+    local saleCount = self:GetCount("sales")
+    local depositCount = self:GetCount("deposits")
     if self.overviewRecordsLbl then
         self.overviewRecordsLbl:SetText(string.format("Stored Sales: %s | Bank Deposits: %s",
             ColorText(FormatGold(saleCount), "00FFCC"), ColorText(FormatGold(depositCount), "FFAA00")))
@@ -891,15 +981,49 @@ function FR:UpdateOverviewTab()
             ColorText(tostring(totalSpeed), "00FFCC")))
     end
 
-    -- Raffle Metrics Card
+    -- Raffle Metrics Card (Prioritizes live bank ledger with sealed fallback)
     local isPost = string.find(guildName, "Post") ~= nil
     local isDealers = string.find(guildName, "Dealer") ~= nil
     local gKey = isPost and "post" or (isDealers and "dealers" or nil)
     local raffleData = gKey and self.GetRaffleData and self:GetRaffleData(gKey)
+    local liveMetrics = self.CalculateRaffleMetrics and self:CalculateRaffleMetrics(guildId, 7, 1000)
 
-    if raffleData then
+    if liveMetrics and liveMetrics.totalGold > 0 then
         if self.overviewPotLbl then
-            self.overviewPotLbl:SetText(string.format("Pot: %s gold", ColorText(FormatGold(raffleData.pot or 0), "FFD700")))
+            self.overviewPotLbl:SetText(string.format("Pot: %s gold |c59E08A(Live Bank Ledger)|r", ColorText(FormatGold(liveMetrics.totalGold), "FFD700")))
+        end
+        if self.overviewTixLbl then
+            self.overviewTixLbl:SetText(string.format("Tickets: %s", ColorText(FormatGold(liveMetrics.totalTickets), "00FFCC")))
+        end
+        if self.overviewEntLbl then
+            self.overviewEntLbl:SetText(string.format("Entrants: %s members (%d deposits)", ColorText(tostring(liveMetrics.entrants), "FFFFFF"), liveMetrics.entries))
+        end
+        if self.overviewPrizesLbl then
+            local pFirst = math.floor(liveMetrics.totalGold * 0.30)
+            local pSecond = math.floor(liveMetrics.totalGold * 0.20)
+            local pThird = math.floor(liveMetrics.totalGold * 0.10)
+            local pGuild = math.floor(liveMetrics.totalGold * 0.40)
+            self.overviewPrizesLbl:SetText(string.format("Projected: 1st: %s | 2nd: %s | 3rd: %s | Guild: %s",
+                ColorText(FormatGold(pFirst), "FFD700"),
+                ColorText(FormatGold(pSecond), "FFAA00"),
+                ColorText(FormatGold(pThird), "FF8800"),
+                ColorText(FormatGold(pGuild), "00FFCC")))
+        end
+        if self.overviewWinnersLbl then
+            if raffleData and raffleData.winners and #raffleData.winners > 0 then
+                local winText = string.format("Prior Week Winners (%s):\n", raffleData.weekLabel or "Sealed")
+                for _, w in ipairs(raffleData.winners) do
+                    winText = winText .. string.format("  #%d %s - %s gold (Ticket #%d)\n",
+                        w.place, ColorText(w.name, "00FFCC"), FormatGold(w.prize), w.ticket)
+                end
+                self.overviewWinnersLbl:SetText(winText)
+            else
+                self.overviewWinnersLbl:SetText("Drawing Sunday! Live entries actively recording from guild bank.")
+            end
+        end
+    elseif raffleData then
+        if self.overviewPotLbl then
+            self.overviewPotLbl:SetText(string.format("Pot: %s gold |c888888(Sealed Prior Week)|r", ColorText(FormatGold(raffleData.pot or 0), "FFD700")))
         end
         if self.overviewTixLbl then
             self.overviewTixLbl:SetText(string.format("Tickets: %s", ColorText(FormatGold(raffleData.tickets or 0), "00FFCC")))
@@ -934,8 +1058,8 @@ end
 
 function FR:UpdateConsoleStatus()
     if not self.consoleStatusLbl then return end
-    local saleCount = NonContiguousCount(self.savedVars and self.savedVars.sales or {})
-    local depositCount = NonContiguousCount(self.savedVars and self.savedVars.staff and self.savedVars.staff.bankDeposits or {})
+    local saleCount = self:GetCount("sales")
+    local depositCount = self:GetCount("deposits")
     self.consoleStatusLbl:SetText(string.format("%s | Sales: %s | Bank: %s | Guild: %d",
         ColorText("[ON] Connected", "59E08A"),
         ColorText(FormatGold(saleCount), "00FFCC"),
@@ -957,12 +1081,16 @@ function FR:ToggleConsole(show)
         show = self.consoleWindow:IsHidden()
     end
 
-    self.consoleWindow:SetHidden(not show)
-
     if show then
+        -- Suppress standalone legacy MotD window to prevent overlapping dialogs
+        if self.motdWindow and not self.motdWindow:IsHidden() then
+            self.motdWindow:SetHidden(true)
+        end
         self:SelectConsoleGuild(self.selectedGuildIndex or 1)
         self:SelectConsoleTab(self.activeConsoleTab or 1)
         self:UpdateOverviewTab()
         self:UpdateConsoleStatus()
     end
+
+    self.consoleWindow:SetHidden(not show)
 end

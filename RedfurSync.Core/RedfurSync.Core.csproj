@@ -11,6 +11,7 @@
   <ItemGroup>
     <!-- DPAPI: compiles everywhere, throws PlatformNotSupportedException off Windows.
          Only reached when DeviceToken is non-empty, which never happens in tests. -->
+    <PackageReference Include="NSec.Cryptography" Version="26.4.0" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
   </ItemGroup>
 

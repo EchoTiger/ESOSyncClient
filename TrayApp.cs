@@ -224,8 +224,8 @@ private void CheckBatchCompletion()
         {
             try
             {
-                var jobs = _watcher.Jobs;
-                if (jobs.Count == 0) { _prevActiveCount = 0; return; }
+                var jobs = _watcher.GetJobsSnapshot();
+                if (jobs.Length == 0) { _prevActiveCount = 0; return; }
 
                 DateTime newestTime = jobs.Max(j => j.QueuedAt);
                 var recentGroup = jobs
@@ -504,8 +504,23 @@ private void CheckBatchCompletion()
             }
 
             // Backup → replace → launch lives in Core so failure injection is testable on Linux.
-            var installer = new UpdateInstaller(new PhysicalUpdateFileSystem(), path => Process.Start(path));
-            var outcome = installer.Apply(exePath, job.FilePath);
+            var installer = new UpdateInstaller(new PhysicalUpdateFileSystem(), path =>
+            {
+                var psi = new ProcessStartInfo
+                {
+                    FileName = path,
+                    Arguments = "--post-update-verify",
+                    UseShellExecute = true
+                };
+                Process.Start(psi);
+            });
+            var outcome = installer.ApplyWithHandshake(
+                exePath,
+                job.FilePath,
+                sequence: AppConfig.Instance.LastVerifiedSequence,
+                fromVersion: RelayVersion.Current,
+                toVersion: job.UpdateVersion,
+                handshakeTimeout: TimeSpan.FromSeconds(30));
             if (!outcome.Ok)
             {
                 ShowAlert("Update Failed!", $"Fissal's claws slipped: {outcome.Message}", FissalAlert.AlertLevel.TotalError);

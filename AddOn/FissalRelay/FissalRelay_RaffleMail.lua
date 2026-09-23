@@ -75,7 +75,11 @@ function FR:EnsureRaffleState()
             autoShowOnMail = true,
             soundEffects = true,
             sourceMode = "official",
+            onlyShowIfPending = true,
         }
+    end
+    if self.savedVars.settings.raffleMail.onlyShowIfPending == nil then
+        self.savedVars.settings.raffleMail.onlyShowIfPending = true
     end
     self.raffleSourceMode = self.savedVars.settings.raffleMail.sourceMode or "official"
 end
@@ -145,6 +149,24 @@ function FR:IsPayoutSent(guildKey, weekKey, place)
         return true, gPayouts[wKey][place]
     end
     return false, nil
+end
+
+-- Check if there are any winners across all guilds that have not yet been marked paid
+function FR:HasPendingRafflePayouts()
+    self:EnsureRaffleState()
+    for _, gKey in ipairs({ "post", "dealers" }) do
+        local data = self:GetRaffleData(gKey)
+        if data and data.winners and #data.winners > 0 then
+            local weekKey = data.weekStart or data.weekLabel or "latest"
+            for i = 1, #data.winners do
+                local isPaid = self:IsPayoutSent(gKey, weekKey, i)
+                if not isPaid then
+                    return true
+                end
+            end
+        end
+    end
+    return false
 end
 
 -- Mark a winner as paid or unpaid
@@ -786,9 +808,12 @@ function FR:CreateRaffleMailUI()
         mailScene:RegisterCallback("StateChange", function(oldState, newState)
             if newState == SCENE_SHOWN then
                 local shouldShow = true
-                if self.savedVars and self.savedVars.settings and self.savedVars.settings.raffleMail then
-                    if self.savedVars.settings.raffleMail.autoShowOnMail == false then
+                local rmSettings = self.savedVars and self.savedVars.settings and self.savedVars.settings.raffleMail
+                if rmSettings then
+                    if rmSettings.autoShowOnMail == false then
                         shouldShow = false
+                    elseif rmSettings.onlyShowIfPending ~= false then
+                        shouldShow = self:HasPendingRafflePayouts()
                     end
                 end
                 if shouldShow then

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Collections.ObjectModel;
 using System.IO;
 using System.Linq;
@@ -31,6 +32,40 @@ namespace RedfurSync
         private readonly Action<AppConfig> _saveConfig;
 
         public ObservableCollection<UploadJob> Jobs { get; } = new();
+        private ImmutableArray<UploadJob> _jobsSnapshot = ImmutableArray<UploadJob>.Empty;
+        private long _jobVersion = 0;
+
+        public ImmutableArray<UploadJob> GetJobsSnapshot()
+        {
+            lock (_jobLock)
+            {
+                if (_jobsSnapshot.IsDefaultOrEmpty && Jobs.Count > 0)
+                {
+                    _jobsSnapshot = Jobs.ToImmutableArray();
+                }
+                return _jobsSnapshot;
+            }
+        }
+
+        public long CurrentJobVersion
+        {
+            get
+            {
+                lock (_jobLock) return _jobVersion;
+            }
+        }
+
+        public int RemoveCompletedJobs()
+        {
+            lock (_jobLock)
+            {
+                var done = Jobs.Where(j => j.Status is UploadStatus.Done or UploadStatus.Cancelled).ToList();
+                foreach (var j in done) Jobs.Remove(j);
+                NotifyChanged();
+                return done.Count;
+            }
+        }
+
         public event Action?               JobsChanged;
         public event Action<bool, string>? ConnectionChecked;
 
@@ -722,7 +757,15 @@ namespace RedfurSync
             }
         }
 
-        private void NotifyChanged() => JobsChanged?.Invoke();
+        private void NotifyChanged()
+        {
+            lock (_jobLock)
+            {
+                _jobVersion++;
+                _jobsSnapshot = Jobs.ToImmutableArray();
+            }
+            JobsChanged?.Invoke();
+        }
 
         public void Dispose()
         {

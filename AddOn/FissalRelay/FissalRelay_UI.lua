@@ -330,12 +330,9 @@ end
 function FR:UpdateHUD()
     if not self.hud or not self.hudElements or self.hud:IsHidden() then return end
 
-    -- 1. Sales Count and Accumulated Value
-    local saleCount = NonContiguousCount(self.savedVars.sales or {})
-    local totalGold = 0
-    for _, s in pairs(self.savedVars.sales or {}) do
-        totalGold = totalGold + (s.price or 0)
-    end
+    -- 1. Sales Count and Accumulated Value (O(1) lookup)
+    local saleCount = self:GetCount("sales")
+    local totalGold = self.savedVars and self.savedVars.totalSalesGold or 0
     local goldStr = ""
     if totalGold >= 1000000 then
         goldStr = string.format(" (|cFFD700%.1fM|r)", totalGold / 1000000)
@@ -396,7 +393,7 @@ function FR:UpdateHUD()
 
     -- 4. Rosters & Bank Dues
     local rosters = NonContiguousCount(self.savedVars.staff and self.savedVars.staff.rosterSnapshots or {})
-    local deposits = NonContiguousCount(self.savedVars.staff and self.savedVars.staff.bankDeposits or {})
+    local deposits = self:GetCount("deposits")
     self.hudElements.rosterVal:SetText(string.format("|c00FFFF%d|r guilds • |cFFAA00%s|r deps",
         rosters, ZO_LocalizeDecimalNumber(deposits)))
 
@@ -478,7 +475,7 @@ function FR:CreateBumperUI()
 
     -- 1. Main TopLevelWindow (Draggable & clamped)
     local bumper = wm:CreateTopLevelWindow("FissalRelay_Bumper")
-    bumper:SetDimensions(320, 240)
+    bumper:SetDimensions(320, 292)
     bumper:SetClampedToScreen(true)
     bumper:SetMouseEnabled(true)
     bumper:SetMovable(true)
@@ -592,26 +589,112 @@ function FR:CreateBumperUI()
         }
     end
 
-    -- 10. Bottom Divider Line
+    -- 10. Mid Divider Line
     local divider2 = wm:CreateControl("$(parent)_Div2", bumper, CT_TEXTURE)
-    divider2:SetAnchor(TOPLEFT, bumper, TOPLEFT, 8, 172)
-    divider2:SetAnchor(TOPRIGHT, bumper, TOPRIGHT, -8, 172)
+    divider2:SetAnchor(TOPLEFT, bumper, TOPLEFT, 8, 170)
+    divider2:SetAnchor(TOPRIGHT, bumper, TOPRIGHT, -8, 170)
     divider2:SetHeight(1)
     divider2:SetColor(0.3, 0.3, 0.35, 0.4)
 
     -- 11. Status / Progress Label
     local statusLbl = wm:CreateControl("$(parent)_Status", bumper, CT_LABEL)
-    statusLbl:SetAnchor(TOPLEFT, bumper, TOPLEFT, 12, 177)
-    statusLbl:SetAnchor(TOPRIGHT, bumper, TOPRIGHT, -12, 177)
+    statusLbl:SetAnchor(TOPLEFT, bumper, TOPLEFT, 12, 174)
+    statusLbl:SetAnchor(TOPRIGHT, bumper, TOPRIGHT, -12, 174)
+    statusLbl:SetHeight(18)
     statusLbl:SetFont("ZoFontGameSmall")
     statusLbl:SetText("Ready to bump.")
     self.bumperStatusText = statusLbl
 
-    -- 12. Bump Action Button [⚡ Bump Selected Guilds]
+    -- 12. Automation Option Divider
+    local divider3 = wm:CreateControl("$(parent)_Div3", bumper, CT_TEXTURE)
+    divider3:SetAnchor(TOPLEFT, bumper, TOPLEFT, 8, 195)
+    divider3:SetAnchor(TOPRIGHT, bumper, TOPRIGHT, -8, 195)
+    divider3:SetHeight(1)
+    divider3:SetColor(0.8, 0.5, 0.1, 0.25)
+
+    -- 13. Auto-Reload UI Checkbox Row
+    local autoReloadRow = wm:CreateControl("$(parent)_AutoReloadRow", bumper, CT_CONTROL)
+    autoReloadRow:SetAnchor(TOPLEFT, bumper, TOPLEFT, 10, 199)
+    autoReloadRow:SetDimensions(300, 20)
+    autoReloadRow:SetMouseEnabled(true)
+
+    local arCheck = wm:CreateControl("$(parent)_Check", autoReloadRow, CT_BUTTON)
+    arCheck:SetAnchor(LEFT, autoReloadRow, LEFT, 2, 0)
+    arCheck:SetDimensions(18, 18)
+    arCheck:SetFont("ZoFontGameBold")
+    arCheck:SetText("[ ]")
+
+    local arLbl = wm:CreateControl("$(parent)_Lbl", autoReloadRow, CT_LABEL)
+    arLbl:SetAnchor(LEFT, arCheck, RIGHT, 6, 0)
+    arLbl:SetFont("ZoFontGameSmall")
+    arLbl:SetText("Auto-Reload UI after bump")
+
+    local function ToggleAutoReload()
+        if self.isBumping then return end
+        local cur = self.savedVars.settings.bumperAutoReload or false
+        self.savedVars.settings.bumperAutoReload = not cur
+        self:UpdateBumperUI()
+    end
+
+    arCheck:SetHandler("OnClicked", ToggleAutoReload)
+    autoReloadRow:SetHandler("OnMouseUp", ToggleAutoReload)
+    autoReloadRow:SetHandler("OnMouseEnter", function(c)
+        InitializeTooltip(InformationTooltip, c, TOP, 0, -4)
+        SetTooltipText(InformationTooltip, "Automatically reload the interface once all selected guild stores are bumped, uploading fresh listings to TamrielTradeCentre.")
+    end)
+    autoReloadRow:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
+
+    self.bumperAutoReloadCheck = arCheck
+    self.bumperAutoReloadLbl = arLbl
+
+    -- 14. Wait for LibHistoire Checkbox Row (Subordinate)
+    local waitLHRow = wm:CreateControl("$(parent)_WaitLHRow", bumper, CT_CONTROL)
+    waitLHRow:SetAnchor(TOPLEFT, bumper, TOPLEFT, 20, 221)
+    waitLHRow:SetDimensions(290, 20)
+    waitLHRow:SetMouseEnabled(true)
+
+    local wlhCheck = wm:CreateControl("$(parent)_Check", waitLHRow, CT_BUTTON)
+    wlhCheck:SetAnchor(LEFT, waitLHRow, LEFT, 2, 0)
+    wlhCheck:SetDimensions(18, 18)
+    wlhCheck:SetFont("ZoFontGameBold")
+    wlhCheck:SetText("[ ]")
+
+    local wlhLbl = wm:CreateControl("$(parent)_Lbl", waitLHRow, CT_LABEL)
+    wlhLbl:SetAnchor(LEFT, wlhCheck, RIGHT, 6, 0)
+    wlhLbl:SetFont("ZoFontGameSmall")
+    wlhLbl:SetText("Wait for LibHistoire requests")
+
+    local function ToggleWaitLH()
+        if self.isBumping then return end
+        if not (self.savedVars.settings.bumperAutoReload) then return end
+        local cur = self.savedVars.settings.bumperWaitForLibHistoire or false
+        self.savedVars.settings.bumperWaitForLibHistoire = not cur
+        self:UpdateBumperUI()
+    end
+
+    wlhCheck:SetHandler("OnClicked", ToggleWaitLH)
+    waitLHRow:SetHandler("OnMouseUp", ToggleWaitLH)
+    waitLHRow:SetHandler("OnMouseEnter", function(c)
+        InitializeTooltip(InformationTooltip, c, TOP, 0, -4)
+        SetTooltipText(InformationTooltip, "Ensure active LibHistoire guild history server requests and event queues finish before reloading UI, preventing interrupted history synchronization.")
+    end)
+    waitLHRow:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
+
+    self.bumperWaitLHCheck = wlhCheck
+    self.bumperWaitLHLbl = wlhLbl
+
+    -- 15. Action Button Divider
+    local divider4 = wm:CreateControl("$(parent)_Div4", bumper, CT_TEXTURE)
+    divider4:SetAnchor(TOPLEFT, bumper, TOPLEFT, 8, 245)
+    divider4:SetAnchor(TOPRIGHT, bumper, TOPRIGHT, -8, 245)
+    divider4:SetHeight(1)
+    divider4:SetColor(0.3, 0.3, 0.35, 0.4)
+
+    -- 16. Bump Action Button [⚡ Bump Selected Guilds]
     local bumpBtn = wm:CreateControl("$(parent)_BumpBtn", bumper, CT_BUTTON)
     bumpBtn:SetAnchor(BOTTOMLEFT, bumper, BOTTOMLEFT, 12, -8)
     bumpBtn:SetAnchor(BOTTOMRIGHT, bumper, BOTTOMRIGHT, -12, -8)
-    bumpBtn:SetHeight(24)
+    bumpBtn:SetHeight(26)
     bumpBtn:SetFont("ZoFontGameBold")
     bumpBtn:SetNormalFontColor(0, 1, 0.8, 1)
     bumpBtn:SetMouseOverFontColor(1, 0.9, 0.4, 1)
@@ -744,7 +827,43 @@ function FR:UpdateBumperUI(customStatus)
             for i = 1, numGuilds do
                 if self:IsGuildBumpSelected(GetGuildId(i)) then count = count + 1 end
             end
-            self.bumperStatusText:SetText(string.format("Ready to bump |c00FFCC%d|r guild(s).", count))
+        end
+    end
+
+    -- Update Auto-Reload UI and Wait for LibHistoire toggles
+    local isAutoReload = self.savedVars and self.savedVars.settings and self.savedVars.settings.bumperAutoReload
+    local isWaitLH = self.savedVars and self.savedVars.settings and self.savedVars.settings.bumperWaitForLibHistoire
+
+    if self.bumperAutoReloadCheck then
+        if isAutoReload then
+            self.bumperAutoReloadCheck:SetText("|c59E08A■|r")
+            if self.bumperAutoReloadLbl then
+                self.bumperAutoReloadLbl:SetText("|cFFFFFFAuto-Reload UI after bump|r")
+            end
+        else
+            self.bumperAutoReloadCheck:SetText("|c555555□|r")
+            if self.bumperAutoReloadLbl then
+                self.bumperAutoReloadLbl:SetText("|c888888Auto-Reload UI after bump|r")
+            end
+        end
+    end
+
+    if self.bumperWaitLHCheck then
+        if not isAutoReload then
+            self.bumperWaitLHCheck:SetText("|c333333□|r")
+            if self.bumperWaitLHLbl then
+                self.bumperWaitLHLbl:SetText("|c555555Wait for LibHistoire requests|r")
+            end
+        elseif isWaitLH then
+            self.bumperWaitLHCheck:SetText("|c00FFCC■|r")
+            if self.bumperWaitLHLbl then
+                self.bumperWaitLHLbl:SetText("|c00FFCCWait for LibHistoire requests|r")
+            end
+        else
+            self.bumperWaitLHCheck:SetText("|c555555□|r")
+            if self.bumperWaitLHLbl then
+                self.bumperWaitLHLbl:SetText("|c888888Wait for LibHistoire requests|r")
+            end
         end
     end
 end
@@ -787,6 +906,8 @@ end
      MOTD RAFFLE MANAGER UI (Interactive Editor & Live Character Gauge)
 ========================================================================= ]]--
 
+local MAX_MOTD_CHARS = MAX_GUILD_MOTD_LENGTH or 2048
+
 local RAFFLE_TEMPLATE_BLOCK = [[|cFFD700★ WEEKLY GUILD RAFFLE ★|r
 Pot: currently at |cFFD7000|r |t16:16:EsoUI/Art/currency/currency_gold.dds|t
 Pool: |c00FFCCtickets in pool|r |c00FFCC0|r |t16:16:EsoUI/Art/icons/quest_ticket.dds|t
@@ -800,17 +921,17 @@ function FR:UpdateMotDGauge()
     local byteCount = #text
 
     local colorCode = "00FF00"
-    local statusNote = string.format("%d characters remaining", 1024 - charCount)
-    if charCount > 1024 then
+    local statusNote = string.format("%d characters remaining", MAX_MOTD_CHARS - charCount)
+    if charCount > MAX_MOTD_CHARS then
         colorCode = "FF5555"
-        statusNote = string.format("|cFF5555+%d characters OVER the 1024 limit!|r", charCount - 1024)
-    elseif charCount > 950 then
+        statusNote = string.format("|cFF5555+%d characters OVER the %d limit!|r", charCount - MAX_MOTD_CHARS, MAX_MOTD_CHARS)
+    elseif charCount > (MAX_MOTD_CHARS - 100) then
         colorCode = "FFCC00"
-        statusNote = string.format("|cFFCC00%d characters remaining (Near limit)|r", 1024 - charCount)
+        statusNote = string.format("|cFFCC00%d characters remaining (Near limit)|r", MAX_MOTD_CHARS - charCount)
     end
 
-    self.motdGaugeLbl:SetText(string.format("Length: |c%s%d / 1024 characters|r (|c888888%s bytes|r) • %s",
-        colorCode, charCount, ZO_LocalizeDecimalNumber(byteCount), statusNote))
+    self.motdGaugeLbl:SetText(string.format("Length: |c%s%d / %d characters|r (|c888888%s bytes|r) • %s",
+        colorCode, charCount, MAX_MOTD_CHARS, ZO_LocalizeDecimalNumber(byteCount), statusNote))
 end
 
 function FR:CreateMotDUI()
@@ -1029,7 +1150,7 @@ function FR:CreateMotDUI()
     local gaugeLbl = wm:CreateControl("$(parent)_GaugeLbl", motdWin, CT_LABEL)
     gaugeLbl:SetAnchor(TOPLEFT, motdWin, TOPLEFT, 14, 412)
     gaugeLbl:SetFont("ZoFontGameBold")
-    gaugeLbl:SetText("Length: 0 / 1024 characters (0 bytes)")
+    gaugeLbl:SetText(string.format("Length: 0 / %d characters (0 bytes)", MAX_MOTD_CHARS))
     self.motdGaugeLbl = gaugeLbl
 
     -- 15. Action Buttons - Row 1 (Raffle Tools)
@@ -1248,30 +1369,39 @@ function FR:PushEditorMotDToGuild()
     local charCount = (zo_strlen and zo_strlen(text)) or #text
     local byteCount = #text
 
-    if charCount > 1024 then
+    if charCount > MAX_MOTD_CHARS then
         if self.motdStatusText then
-            self.motdStatusText:SetText(string.format("|cFF5555Cannot Push:|r Message is %d chars (%d chars over 1024 limit). Please trim before pushing.", charCount, charCount - 1024))
+            self.motdStatusText:SetText(string.format("|cFF5555Cannot Push:|r Message is %d chars (%d chars over %d limit). Please trim before pushing.", charCount, charCount - MAX_MOTD_CHARS, MAX_MOTD_CHARS))
         end
-        self.PrintChat(string.format("|cFF5555Push Aborted:|r MotD is %d characters (%d over the 1024 limit). Please trim text first.", charCount, charCount - 1024))
+        self.PrintChat(string.format("|cFF5555Push Aborted:|r MotD is %d characters (%d over the %d limit). Please trim text first.", charCount, charCount - MAX_MOTD_CHARS, MAX_MOTD_CHARS))
         return false
     end
 
     SetGuildMotD(guildId, text)
     if self.motdStatusText then
-        self.motdStatusText:SetText(string.format("✓ |c00FF00Successfully pushed MotD to %s!|r (%d/1024 characters)", guildName, charCount))
+        self.motdStatusText:SetText(string.format("✓ |c00FF00Successfully pushed MotD to %s!|r (%d/%d characters)", guildName, charCount, MAX_MOTD_CHARS))
     end
-    self.PrintChat(string.format("✓ |c00FF00MotD successfully pushed live to %s!|r [|c00FFCC%d/1024 chars|r]", ColorText(guildName, "00FFCC"), charCount))
+    self.PrintChat(string.format("✓ |c00FF00MotD successfully pushed live to %s!|r [|c00FFCC%d/%d chars|r]", ColorText(guildName, "00FFCC"), charCount, MAX_MOTD_CHARS))
     PlayFissalSound()
     return true
 end
 
 function FR:ToggleMotDUI(show, initialGuildIndex)
-    if not self.motdWindow then
-        self:CreateMotDUI()
+    if initialGuildIndex and tonumber(initialGuildIndex) then
+        self.selectedGuildIndex = tonumber(initialGuildIndex)
     end
 
-    if initialGuildIndex and tonumber(initialGuildIndex) then
-        self.motdSelectedGuildIndex = tonumber(initialGuildIndex)
+    -- Redirect to unified Console Tab 2 (MotD Broadcast Studio)
+    if self.ToggleConsole then
+        self:ToggleConsole(show)
+        if show or (show == nil and self.consoleWindow and not self.consoleWindow:IsHidden()) then
+            self:SelectConsoleTab(2)
+        end
+        return
+    end
+
+    if not self.motdWindow then
+        self:CreateMotDUI()
     end
 
     if show == nil then
@@ -1435,6 +1565,29 @@ function FR:CreateSettingsMenu()
             default = true,
         },
         {
+            type = "checkbox",
+            name = "Automatically Reload UI After Bump",
+            tooltip = "Automatically execute /reloadui once all selected guild stores are bumped to write TTC listings to disk.",
+            getFunc = function() return FR.savedVars.settings.bumperAutoReload end,
+            setFunc = function(value)
+                FR.savedVars.settings.bumperAutoReload = value
+                if FR.UpdateBumperUI then FR:UpdateBumperUI() end
+            end,
+            default = false,
+        },
+        {
+            type = "checkbox",
+            name = "Wait for LibHistoire Requests",
+            tooltip = "When auto-reloading UI after a bump, wait for any active LibHistoire guild history server requests or event queues to settle before reloading.",
+            getFunc = function() return FR.savedVars.settings.bumperWaitForLibHistoire end,
+            setFunc = function(value)
+                FR.savedVars.settings.bumperWaitForLibHistoire = value
+                if FR.UpdateBumperUI then FR:UpdateBumperUI() end
+            end,
+            disabled = function() return not FR.savedVars.settings.bumperAutoReload end,
+            default = true,
+        },
+        {
             type = "button",
             name = "Reset Bumper Position",
             tooltip = "Reset the Bumper window position back to default.",
@@ -1581,6 +1734,25 @@ function FR:CreateSettingsMenu()
             setFunc = function(value)
                 if not FR.savedVars.settings.raffleMail then FR.savedVars.settings.raffleMail = {} end
                 FR.savedVars.settings.raffleMail.autoShowOnMail = value
+            end,
+            default = true,
+        })
+        table.insert(optionsData, {
+            type = "checkbox",
+            name = "Only Auto-Show if Pending Payouts Exist",
+            tooltip = "When enabled, the Raffle Assistant only opens automatically if there are unpaid winners in the active ledger. Once all winners are marked [PAID], regular mail opens unobstructed.",
+            getFunc = function()
+                if FR.savedVars and FR.savedVars.settings and FR.savedVars.settings.raffleMail then
+                    return FR.savedVars.settings.raffleMail.onlyShowIfPending ~= false
+                end
+                return true
+            end,
+            setFunc = function(value)
+                if not FR.savedVars.settings.raffleMail then FR.savedVars.settings.raffleMail = {} end
+                FR.savedVars.settings.raffleMail.onlyShowIfPending = value
+            end,
+            disabled = function()
+                return FR.savedVars and FR.savedVars.settings and FR.savedVars.settings.raffleMail and FR.savedVars.settings.raffleMail.autoShowOnMail == false
             end,
             default = true,
         })
