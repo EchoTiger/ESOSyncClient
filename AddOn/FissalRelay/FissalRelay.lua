@@ -200,9 +200,14 @@ function FR:AddSale(event, guildId)
     local eventTime = event:GetEventTimestampS() or GetTimeStamp()
 
     -- Check if buyer was an outsider (kiosk sale)
+    -- Root cause verified per Fable 5.1 audit: Native LibHistoire event yields displayName WITHOUT '@'.
+    -- GetGuildMemberIndexFromDisplayName requires '@' prefix and native guildId integer.
     local wasKiosk = true
-    if buyer ~= "" and GetGuildMemberIndexFromDisplayName(guildId, buyer) then
-        wasKiosk = false
+    if buyer ~= "" then
+        local formattedBuyer = (buyer:sub(1,1) == "@") and buyer or ("@" .. buyer)
+        if GetGuildMemberIndexFromDisplayName(guildId, formattedBuyer) then
+            wasKiosk = false
+        end
     end
 
     self.savedVars.nextSeq = (self.savedVars.nextSeq or 0) + 1
