@@ -1275,6 +1275,7 @@ function FR:RefreshRaffleMailUI()
         end
     end
 end
+end
 
 function FR:ToggleRaffleMailUI(show)
     if not self.raffleMailWindow then
