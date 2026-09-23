@@ -10,7 +10,7 @@ FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
 FR.name = "FissalRelay"
-FR.version = "1.5.1"
+FR.version = "1.6.0"
 FR.author = "Echo & Fissal"
 
 -- Defaults for SavedVariables

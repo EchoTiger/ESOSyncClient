@@ -59,15 +59,32 @@ end
 
 function FR:IsOfficerCapableRank(guildId, rankIndex)
     if not guildId or not rankIndex then return false end
-    if IsGuildRankGuildMaster and IsGuildRankGuildMaster(guildId, rankIndex) then return true end
+    if IsGuildRankGuildMaster and IsGuildRankGuildMaster(guildId, rankIndex) then
+        return true, "Guild Master"
+    end
     if DoesGuildRankHavePermission then
-        for _, perm in pairs({ GUILD_PERMISSION_PROMOTE, GUILD_PERMISSION_DEMOTE,
-                               GUILD_PERMISSION_REMOVE, GUILD_PERMISSION_INVITE,
-                               GUILD_PERMISSION_NOTE_EDIT, GUILD_PERMISSION_SET_MOTD }) do
-            if perm and DoesGuildRankHavePermission(guildId, rankIndex, perm) then return true end
+        local officerPerms = {
+            { perm = GUILD_PERMISSION_PROMOTE, name = "Promote" },
+            { perm = GUILD_PERMISSION_DEMOTE, name = "Demote" },
+            { perm = GUILD_PERMISSION_REMOVE, name = "Remove / Kick" },
+            { perm = GUILD_PERMISSION_SET_MOTD, name = "Set MotD" },
+        }
+        if GUILD_PERMISSION_CLAIM_KIOSK then
+            table.insert(officerPerms, { perm = GUILD_PERMISSION_CLAIM_KIOSK, name = "Claim Kiosk" })
+        end
+        if GUILD_PERMISSION_DESCRIPTION_EDIT then
+            table.insert(officerPerms, { perm = GUILD_PERMISSION_DESCRIPTION_EDIT, name = "Edit Description" })
+        end
+
+        for _, entry in ipairs(officerPerms) do
+            if entry.perm and DoesGuildRankHavePermission(guildId, rankIndex, entry.perm) then
+                return true, entry.name
+            end
         end
     end
-    return rankIndex <= 2  -- conservative floor
+    -- In ESO, rank 1 is always Guild Master
+    if rankIndex == 1 then return true, "Rank 1 (GM)" end
+    return false
 end
 
 function FR:ResolveRankIndex(guildId, wantedName)
@@ -77,9 +94,9 @@ function FR:ResolveRankIndex(guildId, wantedName)
     local names = {}
     for r = 1, numRanks do names[r] = string.lower(GetFinalGuildRankName(guildId, r) or "") end
 
-    -- Pass 1: exact match
+    -- Pass 1: exact match (excluding officer ranks)
     for r = 1, numRanks do
-        if names[r] == target then return r end
+        if names[r] == target and not self:IsOfficerCapableRank(guildId, r) then return r end
     end
     -- Pass 2: substring, bottom-up, non-officer only (Fable 5.1 B2)
     for r = numRanks, 1, -1 do
@@ -128,17 +145,26 @@ function FR:EvaluateAutoRanks(guildId)
     end
 
     -- Identify guild rank indices dynamically by name (Fable 5.1 Architecture)
-    local windowShopperRankIdx = self:ResolveRankIndex(guildId, "window shopper") or self:ResolveRankIndex(guildId, "shopper") or numRanks
-    local defaultTraderRankIdx = self:ResolveRankIndex(guildId, "trader") or math.max(numRanks - 2, 3)
+    local windowShopperRankIdx = self:ResolveRankIndex(guildId, "window shopper")
+        or self:ResolveRankIndex(guildId, "shopper")
+        or numRanks
+    local defaultTraderRankIdx = self:ResolveRankIndex(guildId, "trader")
+        or self:ResolveRankIndex(guildId, "dealer")
+        or self:ResolveRankIndex(guildId, "member")
+        or math.max(numRanks - 2, 2)
 
     -- Critical B2 & P3 Assertions (Fable 5.1): Target ranks must be in range and NEVER officer-capable
     if defaultTraderRankIdx > numRanks or windowShopperRankIdx > numRanks then
         self.PrintChat(string.format("|cFF5555[Configuration Error]|r Target rank index exceeds guild rank count (%d)! Auto-Rank aborted.", numRanks))
         return {}
     end
-    if self:IsOfficerCapableRank(guildId, defaultTraderRankIdx) or self:IsOfficerCapableRank(guildId, windowShopperRankIdx) then
-        self.PrintChat(string.format("|cFF5555[Security Block]|r Target rank (%s / %s) possesses officer permissions! Auto-Rank aborted.",
-            GetFinalGuildRankName(guildId, defaultTraderRankIdx), GetFinalGuildRankName(guildId, windowShopperRankIdx)))
+    local isTraderOfficer, traderReason = self:IsOfficerCapableRank(guildId, defaultTraderRankIdx)
+    local isShopperOfficer, shopperReason = self:IsOfficerCapableRank(guildId, windowShopperRankIdx)
+    if isTraderOfficer or isShopperOfficer then
+        local badRank = isTraderOfficer and defaultTraderRankIdx or windowShopperRankIdx
+        local badReason = isTraderOfficer and traderReason or shopperReason
+        self.PrintChat(string.format("|cFF5555[Security Block]|r Target rank '%s' possesses officer permission (%s)! Auto-Rank aborted.",
+            GetFinalGuildRankName(guildId, badRank), tostring(badReason)))
         return {}
     end
 
@@ -205,7 +231,9 @@ function FR:EvaluateAutoRanks(guildId)
 
         else
             -- Evaluate rank transition based on guild rules
-            if rule.ruleType == "DEALERS" then
+            local ruleKey = rule.key or rule.ruleType or "CUSTOM"
+
+            if ruleKey == "DEALERS" then
                 -- 25,000g sales + deposit requirement
                 if not duesMet then
                     -- Failed dues: Target is Window Shopper
@@ -219,7 +247,7 @@ function FR:EvaluateAutoRanks(guildId)
                         statusReason = "On Window Shopper"
                     end
                 else
-                    -- Met dues: If on Window Shopper, promote back to Trader!
+                    -- Met dues: If on Window Shopper, promote back to Trader/Dealer!
                     if rankIndex == windowShopperRankIdx then
                         targetRankIndex = defaultTraderRankIdx
                         action = "PROMOTE"
@@ -231,19 +259,19 @@ function FR:EvaluateAutoRanks(guildId)
                     end
                 end
 
-            elseif rule.ruleType == "POST" then
+            elseif ruleKey == "POST" then
                 -- 1 sale or 1,000g deposit in 10 days
                 if not duesMet then
-                    if rankIndex < numRanks then
-                        targetRankIndex = numRanks
+                    if rankIndex ~= windowShopperRankIdx then
+                        targetRankIndex = windowShopperRankIdx
                         action = "DEMOTE"
                         statusReason = "0 Sales / 0 Deposits"
                     else
                         action = "KEEP"
-                        statusReason = "Lowest Rank"
+                        statusReason = "On Window Shopper"
                     end
                 else
-                    if rankIndex == numRanks then
+                    if rankIndex == windowShopperRankIdx then
                         targetRankIndex = defaultTraderRankIdx
                         action = "PROMOTE"
                         statusReason = string.format("Dues Met (%s sales, %sg)", salesCount, ZO_CommaDelimitNumber(depGold))
@@ -253,19 +281,19 @@ function FR:EvaluateAutoRanks(guildId)
                     end
                 end
 
-            elseif rule.ruleType == "CARAVAN" then
+            elseif ruleKey == "CARAVAN" then
                 -- >= 1 sale in 15 days
                 if not duesMet then
-                    if rankIndex < numRanks then
-                        targetRankIndex = numRanks
+                    if rankIndex ~= windowShopperRankIdx then
+                        targetRankIndex = windowShopperRankIdx
                         action = "DEMOTE"
                         statusReason = "0 Sales in 15d"
                     else
                         action = "KEEP"
-                        statusReason = "Lowest Rank"
+                        statusReason = "On Window Shopper"
                     end
                 else
-                    if rankIndex == numRanks then
+                    if rankIndex == windowShopperRankIdx then
                         targetRankIndex = defaultTraderRankIdx
                         action = "PROMOTE"
                         statusReason = string.format("%d Sales", salesCount)
@@ -275,8 +303,25 @@ function FR:EvaluateAutoRanks(guildId)
                     end
                 end
             else
-                action = "KEEP"
-                statusReason = "Standard"
+                if not duesMet then
+                    if rankIndex ~= windowShopperRankIdx then
+                        targetRankIndex = windowShopperRankIdx
+                        action = "DEMOTE"
+                        statusReason = "Missing Dues"
+                    else
+                        action = "KEEP"
+                        statusReason = "On Window Shopper"
+                    end
+                else
+                    if rankIndex == windowShopperRankIdx then
+                        targetRankIndex = defaultTraderRankIdx
+                        action = "PROMOTE"
+                        statusReason = "Dues Met"
+                    else
+                        action = "KEEP"
+                        statusReason = "Active"
+                    end
+                end
             end
 
             -- Apply Restrict Demotions safety option
@@ -572,12 +617,12 @@ function FR:BuildAutoRanksUI(parent)
     local title = wm:CreateControl("$(parent)_Title", card, CT_LABEL)
     title:SetAnchor(TOPLEFT, card, TOPLEFT, 12, 10)
     title:SetFont("ZoFontGameBold")
-    title:SetText("|cFF9900AUTO-RANK ROSTER AUTOMATION|r • |c00FFCCSmart Promotion & Dues Protection|r")
+    title:SetText("|cFF9900AUTO-RANK ROSTER AUTOMATION|r  |c00FFCC(Dues & Promotions)|r")
 
     local statSummaryLbl = wm:CreateControl("$(parent)_Stats", card, CT_LABEL)
     statSummaryLbl:SetAnchor(TOPRIGHT, card, TOPRIGHT, -12, 10)
     statSummaryLbl:SetFont("ZoFontGameSmall")
-    statSummaryLbl:SetText("Evaluated: --  |  Promote: --  |  Demote: --")
+    statSummaryLbl:SetText("Evaluated: --  |  Promote: --  |  Demote: --  |  Kept: --")
     self.autoRanksSummaryLbl = statSummaryLbl
 
     -- 3. Filter Bar & Action Buttons
@@ -588,10 +633,10 @@ function FR:BuildAutoRanksUI(parent)
 
     -- Filter Buttons: All, Changes Only, Promotes, Demotes
     local filters = {
-        { id = "all", label = "All" },
-        { id = "changes", label = "Changes Only" },
-        { id = "promote", label = "Promotions" },
-        { id = "demote", label = "Demotions" },
+        { id = "all", label = "All", width = 64 },
+        { id = "changes", label = "Changes Only", width = 96 },
+        { id = "promote", label = "Promotions", width = 84 },
+        { id = "demote", label = "Demotions", width = 84 },
     }
     self.autoRankFilterBtns = {}
 
@@ -599,7 +644,7 @@ function FR:BuildAutoRanksUI(parent)
     for _, f in ipairs(filters) do
         local btn = wm:CreateControl("$(parent)_F_" .. f.id, controlRow, CT_BUTTON)
         btn:SetAnchor(TOPLEFT, controlRow, TOPLEFT, curX, 3)
-        btn:SetDimensions(86, 24)
+        btn:SetDimensions(f.width, 24)
         btn:SetFont("ZoFontGameSmall")
         btn:SetText(f.label)
         self:StyleTactileButton(btn, {
@@ -614,13 +659,13 @@ function FR:BuildAutoRanksUI(parent)
             self:RefreshAutoRanksGrid()
         end)
         self.autoRankFilterBtns[f.id] = btn
-        curX = curX + 90
+        curX = curX + f.width + 6
     end
 
     -- Lookback Window cycle button
     local windowBtn = wm:CreateControl("$(parent)_WindowBtn", controlRow, CT_BUTTON)
-    windowBtn:SetAnchor(TOPLEFT, controlRow, TOPLEFT, curX + 10, 3)
-    windowBtn:SetDimensions(80, 24)
+    windowBtn:SetAnchor(TOPLEFT, controlRow, TOPLEFT, curX + 6, 3)
+    windowBtn:SetDimensions(76, 24)
     windowBtn:SetFont("ZoFontGameSmall")
     windowBtn:SetText("10 Days")
     self:StyleTactileButton(windowBtn, {
@@ -650,28 +695,10 @@ function FR:BuildAutoRanksUI(parent)
     end)
     self.autoRanksWindowBtn = windowBtn
 
-    -- Right Action Buttons: Evaluate, Apply Changes, Abort
-    local evalBtn = wm:CreateControl("$(parent)_EvalBtn", controlRow, CT_BUTTON)
-    evalBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, -180, 2)
-    evalBtn:SetDimensions(90, 26)
-    evalBtn:SetFont("ZoFontGameBold")
-    evalBtn:SetText("Evaluate")
-    self:StyleTactileButton(evalBtn, {
-        normalBg = { 0.04, 0.14, 0.14, 0.90 },
-        hoverBg = { 0.06, 0.22, 0.20, 0.98 },
-        normalEdge = { 0, 0.80, 0.70, 0.85 },
-        hoverEdge = { 0, 1.00, 0.90, 1.00 },
-        normalTextColor = { 0, 1, 0.85, 1 },
-    })
-    evalBtn:SetHandler("OnClicked", function()
-        local gId = self:ResolveGuildId(self.selectedGuildIndex or 1)
-        self:EvaluateAutoRanks(gId)
-        self:UpdateAutoRanksUI()
-    end)
-
+    -- Right Action Buttons: Apply Changes, Evaluate, Progress, Abort
     local applyBtn = wm:CreateControl("$(parent)_ApplyBtn", controlRow, CT_BUTTON)
     applyBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, -8, 2)
-    applyBtn:SetDimensions(165, 26)
+    applyBtn:SetDimensions(145, 26)
     applyBtn:SetFont("ZoFontGameBold")
     applyBtn:SetText("Apply Changes")
     self:StyleTactileButton(applyBtn, {
@@ -689,7 +716,7 @@ function FR:BuildAutoRanksUI(parent)
 
     local abortBtn = wm:CreateControl("$(parent)_AbortBtn", controlRow, CT_BUTTON)
     abortBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, -8, 2)
-    abortBtn:SetDimensions(165, 26)
+    abortBtn:SetDimensions(145, 26)
     abortBtn:SetFont("ZoFontGameBold")
     abortBtn:SetText("|cFF5555[STOP / ABORT]|r")
     abortBtn:SetHidden(true)
@@ -705,8 +732,26 @@ function FR:BuildAutoRanksUI(parent)
     end)
     self.autoRanksAbortBtn = abortBtn
 
+    local evalBtn = wm:CreateControl("$(parent)_EvalBtn", controlRow, CT_BUTTON)
+    evalBtn:SetAnchor(RIGHT, applyBtn, LEFT, -10, 0)
+    evalBtn:SetDimensions(85, 26)
+    evalBtn:SetFont("ZoFontGameBold")
+    evalBtn:SetText("Evaluate")
+    self:StyleTactileButton(evalBtn, {
+        normalBg = { 0.04, 0.14, 0.14, 0.90 },
+        hoverBg = { 0.06, 0.22, 0.20, 0.98 },
+        normalEdge = { 0, 0.80, 0.70, 0.85 },
+        hoverEdge = { 0, 1.00, 0.90, 1.00 },
+        normalTextColor = { 0, 1, 0.85, 1 },
+    })
+    evalBtn:SetHandler("OnClicked", function()
+        local gId = self:ResolveGuildId(self.selectedGuildIndex or 1)
+        self:EvaluateAutoRanks(gId)
+        self:UpdateAutoRanksUI()
+    end)
+
     local progLbl = wm:CreateControl("$(parent)_ProgLbl", controlRow, CT_LABEL)
-    progLbl:SetAnchor(RIGHT, applyBtn, LEFT, -12, 0)
+    progLbl:SetAnchor(RIGHT, evalBtn, LEFT, -12, 0)
     progLbl:SetFont("ZoFontGameSmall")
     progLbl:SetText("")
     self.autoRanksProgressLbl = progLbl
@@ -746,17 +791,18 @@ function FR:BuildAutoRanksUI(parent)
         l:SetFont("ZoFontGameBold")
         l:SetColor(0.75, 0.75, 0.80, 1)
         l:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+        l:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
         l:SetText(text)
         return l
     end
 
     local hMember = MakeHdrLbl("HMember", masterCheck, LEFT, RIGHT, 8, 160, "Member (@Name)")
-    local hCurRank = MakeHdrLbl("HCurRank", hMember, LEFT, RIGHT, 6, 120, "Current Rank")
-    local hTgtRank = MakeHdrLbl("HTgtRank", hCurRank, LEFT, RIGHT, 6, 120, "Target Rank")
-    local hAction = MakeHdrLbl("HAction", hTgtRank, LEFT, RIGHT, 6, 85, "Action")
-    local hSales = MakeHdrLbl("HSales", hAction, LEFT, RIGHT, 6, 100, "Sales Gold")
-    local hDep = MakeHdrLbl("HDep", hSales, LEFT, RIGHT, 6, 85, "Bank Dues")
-    local hNote = MakeHdrLbl("HNote", hDep, LEFT, RIGHT, 6, 170, "Assessment / Note")
+    local hCurRank = MakeHdrLbl("HCurRank", hMember, LEFT, RIGHT, 6, 110, "Current Rank")
+    local hTgtRank = MakeHdrLbl("HTgtRank", hCurRank, LEFT, RIGHT, 6, 110, "Target Rank")
+    local hAction = MakeHdrLbl("HAction", hTgtRank, LEFT, RIGHT, 6, 75, "Action")
+    local hSales = MakeHdrLbl("HSales", hAction, LEFT, RIGHT, 6, 85, "Sales Gold")
+    local hDep = MakeHdrLbl("HDep", hSales, LEFT, RIGHT, 6, 80, "Bank Dues")
+    local hNote = MakeHdrLbl("HNote", hDep, LEFT, RIGHT, 6, 134, "Assessment / Note")
 
     -- 5. Scrollable Data Grid
     local scrollContainer = wm:CreateControl("$(parent)_Scroll", card, CT_SCROLL)
@@ -766,7 +812,7 @@ function FR:BuildAutoRanksUI(parent)
     self.autoRanksGridRows = {}
     self.autoRanksScrollContainer = scrollContainer
 
-    -- Pre-create row pool (up to 20 rows visible at once, expandable)
+    -- Pre-create row pool (up to 24 rows visible at once, expandable)
     for r = 1, 24 do
         local row = wm:CreateControl("$(parent)_Row" .. r, scrollContainer, CT_CONTROL)
         row:SetAnchor(TOPLEFT, scrollContainer, TOPLEFT, 0, (r - 1) * 24)
@@ -790,34 +836,37 @@ function FR:BuildAutoRanksUI(parent)
         memberLbl:SetDimensions(160, 22)
         memberLbl:SetFont("ZoFontGameSmall")
         memberLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+        memberLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
 
         local curRankLbl = wm:CreateControl("$(parent)_CurRank", row, CT_LABEL)
         curRankLbl:SetAnchor(LEFT, memberLbl, RIGHT, 6, 0)
-        curRankLbl:SetDimensions(120, 22)
+        curRankLbl:SetDimensions(110, 22)
         curRankLbl:SetFont("ZoFontGameSmall")
         curRankLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+        curRankLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
 
         local tgtRankLbl = wm:CreateControl("$(parent)_TgtRank", row, CT_LABEL)
         tgtRankLbl:SetAnchor(LEFT, curRankLbl, RIGHT, 6, 0)
-        tgtRankLbl:SetDimensions(120, 22)
+        tgtRankLbl:SetDimensions(110, 22)
         tgtRankLbl:SetFont("ZoFontGameSmall")
         tgtRankLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+        tgtRankLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
 
         local actLbl = wm:CreateControl("$(parent)_Act", row, CT_LABEL)
         actLbl:SetAnchor(LEFT, tgtRankLbl, RIGHT, 6, 0)
-        actLbl:SetDimensions(85, 22)
+        actLbl:SetDimensions(75, 22)
         actLbl:SetFont("ZoFontGameSmall")
         actLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
 
         local salesLbl = wm:CreateControl("$(parent)_Sales", row, CT_LABEL)
         salesLbl:SetAnchor(LEFT, actLbl, RIGHT, 6, 0)
-        salesLbl:SetDimensions(100, 22)
+        salesLbl:SetDimensions(85, 22)
         salesLbl:SetFont("ZoFontGameSmall")
         salesLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
 
         local depLbl = wm:CreateControl("$(parent)_Dep", row, CT_LABEL)
         depLbl:SetAnchor(LEFT, salesLbl, RIGHT, 6, 0)
-        depLbl:SetDimensions(85, 22)
+        depLbl:SetDimensions(80, 22)
         depLbl:SetFont("ZoFontGameSmall")
         depLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
 
