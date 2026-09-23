@@ -286,8 +286,8 @@ function FR:BuildAuditorUI(parent)
     for idx, opt in ipairs(dayOptions) do
         local d = opt.days
         local btn = wm:CreateControl("$(parent)_DayBtn_" .. d, card, CT_BUTTON)
-        btn:SetAnchor(TOPLEFT, card, TOPLEFT, 85 + (idx - 1) * 44, 7)
-        btn:SetDimensions(40, 22)
+        btn:SetAnchor(TOPLEFT, card, TOPLEFT, 85 + (idx - 1) * 42, 7)
+        btn:SetDimensions(38, 22)
         btn:SetFont("ZoFontGameSmall")
         btn:SetText(string.format("%dd", d))
         self:StyleTactileButton(btn, {
@@ -310,7 +310,7 @@ function FR:BuildAuditorUI(parent)
 
     -- Toggle: Exclude Officers
     local offToggle = wm:CreateControl("$(parent)_OffToggle", card, CT_BUTTON)
-    offToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 210, 7)
+    offToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 260, 7)
     offToggle:SetDimensions(90, 22)
     offToggle:SetFont("ZoFontGameSmall")
     offToggle:SetText("No Officers")
@@ -333,8 +333,8 @@ function FR:BuildAuditorUI(parent)
 
     -- Toggle: Exclude LOA
     local loaToggle = wm:CreateControl("$(parent)_LoaToggle", card, CT_BUTTON)
-    loaToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 305, 7)
-    loaToggle:SetDimensions(85, 22)
+    loaToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 356, 7)
+    loaToggle:SetDimensions(82, 22)
     loaToggle:SetFont("ZoFontGameSmall")
     loaToggle:SetText("No [LOA]")
     self:StyleTactileButton(loaToggle, {
@@ -356,8 +356,8 @@ function FR:BuildAuditorUI(parent)
 
     -- Toggle: Shield Active Sellers (Invisible Players)
     local shieldToggle = wm:CreateControl("$(parent)_ShieldToggle", card, CT_BUTTON)
-    shieldToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 395, 7)
-    shieldToggle:SetDimensions(115, 22)
+    shieldToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 444, 7)
+    shieldToggle:SetDimensions(102, 22)
     shieldToggle:SetFont("ZoFontGameSmall")
     shieldToggle:SetText("Shield Sellers")
     self:StyleTactileButton(shieldToggle, {
@@ -379,8 +379,8 @@ function FR:BuildAuditorUI(parent)
 
     -- Rank Filter Cycle Button
     local rankBtn = wm:CreateControl("$(parent)_RankFilterBtn", card, CT_BUTTON)
-    rankBtn:SetAnchor(TOPLEFT, card, TOPLEFT, 515, 7)
-    rankBtn:SetDimensions(105, 22)
+    rankBtn:SetAnchor(TOPLEFT, card, TOPLEFT, 552, 7)
+    rankBtn:SetDimensions(110, 22)
     rankBtn:SetFont("ZoFontGameSmall")
     rankBtn:SetText("Rank: All")
     self:StyleTactileButton(rankBtn, {
@@ -401,7 +401,7 @@ function FR:BuildAuditorUI(parent)
     -- Search Box Container
     local searchBg = wm:CreateControlFromVirtual("$(parent)_SearchBg", card, "ZO_EditBackdrop")
     searchBg:SetAnchor(TOPRIGHT, card, TOPRIGHT, -12, 6)
-    searchBg:SetDimensions(135, 24)
+    searchBg:SetDimensions(145, 24)
 
     local searchBox = wm:CreateControlFromVirtual("$(parent)_Search", searchBg, "ZO_DefaultEditForBackdrop")
     searchBox:SetAnchorFill()
@@ -430,12 +430,12 @@ function FR:BuildAuditorUI(parent)
     colHeader:SetEdgeTexture("", 8, 1, 0)
 
     local h1 = wm:CreateControl("$(parent)_H1", colHeader, CT_LABEL)
-    h1:SetAnchor(LEFT, colHeader, LEFT, 8, 0)
+    h1:SetAnchor(LEFT, colHeader, LEFT, 10, 0)
     h1:SetFont("ZoFontGameBold")
     h1:SetText(ColorText("MEMBER", "FF9900"))
 
     local h2 = wm:CreateControl("$(parent)_H2", colHeader, CT_LABEL)
-    h2:SetAnchor(LEFT, colHeader, LEFT, 155, 0)
+    h2:SetAnchor(LEFT, colHeader, LEFT, 210, 0)
     h2:SetFont("ZoFontGameBold")
     h2:SetText(ColorText("RANK ↕", "00FFCC"))
     h2:SetMouseEnabled(true)
@@ -445,7 +445,7 @@ function FR:BuildAuditorUI(parent)
     end)
 
     local h3 = wm:CreateControl("$(parent)_H3", colHeader, CT_LABEL)
-    h3:SetAnchor(LEFT, colHeader, LEFT, 245, 0)
+    h3:SetAnchor(LEFT, colHeader, LEFT, 355, 0)
     h3:SetFont("ZoFontGameBold")
     h3:SetText(ColorText("OFFLINE ↕", "FFD700"))
     h3:SetMouseEnabled(true)
@@ -455,7 +455,7 @@ function FR:BuildAuditorUI(parent)
     end)
 
     local h4 = wm:CreateControl("$(parent)_H4", colHeader, CT_LABEL)
-    h4:SetAnchor(LEFT, colHeader, LEFT, 325, 0)
+    h4:SetAnchor(LEFT, colHeader, LEFT, 445, 0)
     h4:SetFont("ZoFontGameBold")
     h4:SetText(ColorText("SALES ↕", "59E08A"))
     h4:SetMouseEnabled(true)
@@ -465,27 +465,22 @@ function FR:BuildAuditorUI(parent)
     end)
 
     local h5 = wm:CreateControl("$(parent)_H5", colHeader, CT_LABEL)
-    h5:SetAnchor(LEFT, colHeader, LEFT, 420, 0)
+    h5:SetAnchor(LEFT, colHeader, LEFT, 535, 0)
     h5:SetFont("ZoFontGameBold")
     h5:SetText(ColorText("DUES ↕", "59E08A"))
     h5:SetMouseEnabled(true)
     h5:SetHandler("OnMouseDown", function()
-        if self.auditSortBy == "dues" then self.auditSortAsc = not self.auditSortAsc else self.auditSortBy = "dues"; self.auditSortAsc = true end
+        if self.auditSortBy == "dues" then self.auditSortAsc = not self.auditSortAsc else self.auditSortBy = "dues"; self.auditSortAsc = false end
         self:UpdateAuditorUI()
     end)
 
     local h6 = wm:CreateControl("$(parent)_H6", colHeader, CT_LABEL)
-    h6:SetAnchor(LEFT, colHeader, LEFT, 510, 0)
+    h6:SetAnchor(LEFT, colHeader, LEFT, 620, 0)
     h6:SetFont("ZoFontGameBold")
     h6:SetText(ColorText("STATUS", "00FFCC"))
 
-    local h7 = wm:CreateControl("$(parent)_H7", colHeader, CT_LABEL)
-    h7:SetAnchor(LEFT, colHeader, LEFT, 595, 0)
-    h7:SetFont("ZoFontGameBold")
-    h7:SetText(ColorText("NOTE", "FFFFFF"))
-
     local h8 = wm:CreateControl("$(parent)_H8", colHeader, CT_LABEL)
-    h8:SetAnchor(RIGHT, colHeader, RIGHT, -20, 0)
+    h8:SetAnchor(RIGHT, colHeader, RIGHT, -16, 0)
     h8:SetFont("ZoFontGameBold")
     h8:SetText(ColorText("ACTION", "FF9900"))
 
@@ -503,51 +498,58 @@ function FR:BuildAuditorUI(parent)
         row:SetEdgeTexture("", 8, 1, 0)
 
         local nameLbl = wm:CreateControl("$(parent)_Name", row, CT_LABEL)
-        nameLbl:SetAnchor(LEFT, row, LEFT, 8, 0)
+        nameLbl:SetAnchor(LEFT, row, LEFT, 10, 0)
+        nameLbl:SetDimensions(190, 22)
         nameLbl:SetFont("ZoFontGameMedium")
+        nameLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+        nameLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
         nameLbl:SetText("@Member")
         row.nameLbl = nameLbl
 
         local rankLbl = wm:CreateControl("$(parent)_Rank", row, CT_LABEL)
-        rankLbl:SetAnchor(LEFT, row, LEFT, 155, 0)
+        rankLbl:SetAnchor(LEFT, row, LEFT, 210, 0)
+        rankLbl:SetDimensions(135, 22)
         rankLbl:SetFont("ZoFontGameSmall")
+        rankLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+        rankLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
         rankLbl:SetText("Member")
         row.rankLbl = rankLbl
 
         local daysLbl = wm:CreateControl("$(parent)_Days", row, CT_LABEL)
-        daysLbl:SetAnchor(LEFT, row, LEFT, 245, 0)
+        daysLbl:SetAnchor(LEFT, row, LEFT, 355, 0)
+        daysLbl:SetDimensions(80, 22)
         daysLbl:SetFont("ZoFontGameBold")
+        daysLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
         daysLbl:SetText("14d")
         row.daysLbl = daysLbl
 
         local salesLbl = wm:CreateControl("$(parent)_Sales", row, CT_LABEL)
-        salesLbl:SetAnchor(LEFT, row, LEFT, 325, 0)
+        salesLbl:SetAnchor(LEFT, row, LEFT, 445, 0)
+        salesLbl:SetDimensions(80, 22)
         salesLbl:SetFont("ZoFontGameSmall")
+        salesLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
         salesLbl:SetText("0")
         row.salesLbl = salesLbl
 
         local duesLbl = wm:CreateControl("$(parent)_Dues", row, CT_LABEL)
-        duesLbl:SetAnchor(LEFT, row, LEFT, 420, 0)
+        duesLbl:SetAnchor(LEFT, row, LEFT, 535, 0)
+        duesLbl:SetDimensions(75, 22)
         duesLbl:SetFont("ZoFontGameSmall")
+        duesLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
         duesLbl:SetText("0g")
         row.duesLbl = duesLbl
 
         local statusLbl = wm:CreateControl("$(parent)_Status", row, CT_LABEL)
-        statusLbl:SetAnchor(LEFT, row, LEFT, 510, 0)
+        statusLbl:SetAnchor(LEFT, row, LEFT, 620, 0)
+        statusLbl:SetDimensions(105, 22)
         statusLbl:SetFont("ZoFontGameSmall")
+        statusLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
         statusLbl:SetText("")
         row.statusLbl = statusLbl
 
-        local noteLbl = wm:CreateControl("$(parent)_Note", row, CT_LABEL)
-        noteLbl:SetAnchor(LEFT, row, LEFT, 595, 0)
-        noteLbl:SetAnchor(RIGHT, row, RIGHT, -96, 0)
-        noteLbl:SetFont("ZoFontGameSmall")
-        noteLbl:SetText("")
-        row.noteLbl = noteLbl
-
         local mailBtn = wm:CreateControl("$(parent)_MailBtn", row, CT_BUTTON)
-        mailBtn:SetAnchor(RIGHT, row, RIGHT, -8, 0)
-        mailBtn:SetDimensions(85, 22)
+        mailBtn:SetAnchor(RIGHT, row, RIGHT, -10, 0)
+        mailBtn:SetDimensions(88, 22)
         mailBtn:SetFont("ZoFontGameSmall")
         mailBtn:SetText("Warn Mail")
         self:StyleTactileButton(mailBtn, {
@@ -783,10 +785,11 @@ function FR:RenderAuditorRows()
                 row.nameLbl:SetHandler("OnMouseEnter", function(ctrl)
                     InitializeTooltip(InformationTooltip, ctrl, TOP, 0, -4)
                     local duesColor = m.duesMet and "59E08A" or "FF5555"
+                    local noteExtra = (m.note and m.note ~= "") and string.format("\n|cFFD700Member Note:|r |cFFFFFF%s|r", m.note) or ""
                     SetTooltipText(InformationTooltip, string.format(
-                        "|c00FFCC%s|r\n|c888888Rank: %s\nOffline: %d days|r\n|c59E08ASales Recorded: %d (%sg)|r\n|cFFD700Bank Deposits: %sg|r\n|c%sDues Status: %s (%s)|r",
+                        "|c00FFCC%s|r\n|c888888Rank: %s\nOffline: %d days|r\n|c59E08ASales Recorded: %d (%sg)|r\n|cFFD700Bank Deposits: %sg|r\n|c%sDues Status: %s (%s)|r%s",
                         m.name, m.rank, m.days, m.salesCount or 0, ZO_LocalizeDecimalNumber(m.salesGold or 0),
-                        ZO_LocalizeDecimalNumber(m.deposits or 0), duesColor, m.duesMet and "DUES MET" or "MISSING DUES", m.duesReason or "Unmet"))
+                        ZO_LocalizeDecimalNumber(m.deposits or 0), duesColor, m.duesMet and "DUES MET" or "MISSING DUES", m.duesReason or "Unmet", noteExtra))
                 end)
                 row.nameLbl:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
 
@@ -816,20 +819,13 @@ function FR:RenderAuditorRows()
                     row.statusLbl:SetText("|cFF5555[UNMET]|r")
                 end
 
-                -- Note
-                local cleanNote = string.gsub(m.note or "", "\n", " ")
-                if #cleanNote > 12 then
-                    cleanNote = string.sub(cleanNote, 1, 10) .. ".."
-                end
-                row.noteLbl:SetText(cleanNote)
-                row.noteLbl:SetMouseEnabled(true)
-                row.noteLbl:SetHandler("OnMouseEnter", function(ctrl)
-                    if m.note and m.note ~= "" then
-                        InitializeTooltip(InformationTooltip, ctrl, TOP, 0, -4)
-                        SetTooltipText(InformationTooltip, string.format("|cFF9900%s Member Note:|r\n|cFFFFFF%s|r", m.name, m.note))
+                if row.noteLbl then
+                    local cleanNote = string.gsub(m.note or "", "\n", " ")
+                    if #cleanNote > 12 then
+                        cleanNote = string.sub(cleanNote, 1, 10) .. ".."
                     end
-                end)
-                row.noteLbl:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
+                    row.noteLbl:SetText(cleanNote)
+                end
 
                 -- Warn Mail button handler
                 row.mailBtn:SetHandler("OnClicked", function()

@@ -149,7 +149,7 @@ function FR:GetRaffleWeeks(guildKey)
             weekKey = "live_" .. curLabel,
             weekStart = "live",
             isSynced = false,
-            syncBadge = "|cFFD700[LIVE ACTIVE]|r",
+            syncBadge = "|cFFD700[LIVE]|r",
             syncTooltip = "Live in-progress raffle cycle. Drawing scheduled for Sunday 7:00 PM ET.",
             pot = livePot,
             tickets = liveTickets,
@@ -177,7 +177,7 @@ function FR:GetRaffleWeeks(guildKey)
                 weekKey = offKey,
                 weekStart = off.weekStart,
                 isSynced = true,
-                syncBadge = "|c59E08A[SYNCED ✓ Discord]|r",
+                syncBadge = "|c59E08A[SYNCED ✓]|r",
                 syncTooltip = "Sealed and verified with #raffle-announcements on Discord.",
                 pot = off.pot or 0,
                 tickets = off.tickets or 0,
@@ -202,7 +202,7 @@ function FR:GetRaffleWeeks(guildKey)
                 weekKey = svKey,
                 weekStart = sv.weekStart,
                 isSynced = true,
-                syncBadge = "|c59E08A[SYNCED ✓ Discord]|r",
+                syncBadge = "|c59E08A[SYNCED ✓]|r",
                 syncTooltip = "Sealed draw synced from Discord relay.",
                 pot = sv.pot or 0,
                 tickets = sv.tickets or 0,
@@ -227,7 +227,7 @@ function FR:GetRaffleWeeks(guildKey)
                     weekKey = hKey,
                     weekStart = hist.weekStart,
                     isSynced = true,
-                    syncBadge = "|c00CCFF[SYNCED ✓ Archive]|r",
+                    syncBadge = "|c00CCFF[ARCHIVE]|r",
                     syncTooltip = "Historical archive stored in SavedVariables.",
                     pot = hist.pot or 0,
                     tickets = hist.tickets or 0,
@@ -252,7 +252,7 @@ function FR:GetRaffleWeeks(guildKey)
                 weekKey = defKey,
                 weekStart = def.weekStart,
                 isSynced = true,
-                syncBadge = "|c00CCFF[SYNCED ✓ Archive]|r",
+                syncBadge = "|c00CCFF[ARCHIVE]|r",
                 syncTooltip = "Archived draw preserved in Fissal Relay ledger.",
                 pot = def.pot or 0,
                 tickets = def.tickets or 0,
@@ -707,7 +707,7 @@ function FR:CreateRaffleMailUI()
 
     -- 1. Main TopLevelWindow
     local win = wm:CreateTopLevelWindow("FissalRelay_RaffleMailWindow")
-    win:SetDimensions(420, 490)
+    win:SetDimensions(520, 500)
     win:SetClampedToScreen(true)
     win:SetMouseEnabled(true)
     win:SetMovable(true)
@@ -778,7 +778,7 @@ function FR:CreateRaffleMailUI()
     -- 7. Guild Selector Tabs (Post vs Dealers)
     local tabPost = wm:CreateControl("$(parent)_TabPost", win, CT_BUTTON)
     tabPost:SetAnchor(TOPLEFT, win, TOPLEFT, 12, 44)
-    tabPost:SetDimensions(195, 26)
+    tabPost:SetDimensions(242, 26)
     tabPost:SetFont("ZoFontGameBold")
     tabPost:SetText("Trading Post")
 
@@ -790,7 +790,7 @@ function FR:CreateRaffleMailUI()
 
     local tabDealers = wm:CreateControl("$(parent)_TabDealers", win, CT_BUTTON)
     tabDealers:SetAnchor(TOPRIGHT, win, TOPRIGHT, -12, 44)
-    tabDealers:SetDimensions(195, 26)
+    tabDealers:SetDimensions(242, 26)
     tabDealers:SetFont("ZoFontGameBold")
     tabDealers:SetText("Dealers")
 
@@ -838,7 +838,7 @@ function FR:CreateRaffleMailUI()
     local summaryBanner = wm:CreateControl("$(parent)_Summary", win, CT_CONTROL)
     summaryBanner:SetAnchor(TOPLEFT, win, TOPLEFT, 12, 76)
     summaryBanner:SetAnchor(TOPRIGHT, win, TOPRIGHT, -12, 76)
-    summaryBanner:SetHeight(60)
+    summaryBanner:SetHeight(68)
 
     local sumBg = wm:CreateControl("$(parent)_Bg", summaryBanner, CT_BACKDROP)
     sumBg:SetAnchorFill()
@@ -848,7 +848,7 @@ function FR:CreateRaffleMailUI()
 
     -- Week navigation controls: < (older) and > (newer)
     local prevWeekBtn = wm:CreateControl("$(parent)_PrevWeek", summaryBanner, CT_BUTTON)
-    prevWeekBtn:SetAnchor(TOPLEFT, summaryBanner, TOPLEFT, 6, 6)
+    prevWeekBtn:SetAnchor(TOPLEFT, summaryBanner, TOPLEFT, 8, 8)
     prevWeekBtn:SetDimensions(20, 20)
     prevWeekBtn:SetFont("ZoFontGameBold")
     prevWeekBtn:SetText("<")
@@ -857,12 +857,12 @@ function FR:CreateRaffleMailUI()
     prevWeekBtn:SetDisabledFontColor(0.35, 0.35, 0.35, 1)
 
     local sumWeekLbl = wm:CreateControl("$(parent)_Week", summaryBanner, CT_LABEL)
-    sumWeekLbl:SetAnchor(LEFT, prevWeekBtn, RIGHT, 5, 0)
+    sumWeekLbl:SetAnchor(LEFT, prevWeekBtn, RIGHT, 6, 0)
     sumWeekLbl:SetFont("ZoFontGameBold")
     sumWeekLbl:SetText("|c00FFCCWeek:|r |cFFFFFF--|r")
 
     local nextWeekBtn = wm:CreateControl("$(parent)_NextWeek", summaryBanner, CT_BUTTON)
-    nextWeekBtn:SetAnchor(LEFT, sumWeekLbl, RIGHT, 5, 0)
+    nextWeekBtn:SetAnchor(LEFT, sumWeekLbl, RIGHT, 6, 0)
     nextWeekBtn:SetDimensions(20, 20)
     nextWeekBtn:SetFont("ZoFontGameBold")
     nextWeekBtn:SetText(">")
@@ -871,7 +871,7 @@ function FR:CreateRaffleMailUI()
     nextWeekBtn:SetDisabledFontColor(0.35, 0.35, 0.35, 1)
 
     local sumSyncLbl = wm:CreateControl("$(parent)_SyncBadge", summaryBanner, CT_LABEL)
-    sumSyncLbl:SetAnchor(LEFT, nextWeekBtn, RIGHT, 6, 0)
+    sumSyncLbl:SetAnchor(LEFT, nextWeekBtn, RIGHT, 8, 0)
     sumSyncLbl:SetFont("ZoFontGameSmall")
     sumSyncLbl:SetText("|c59E08A[SYNCED ✓]|r")
     sumSyncLbl:SetMouseEnabled(true)
@@ -900,8 +900,8 @@ function FR:CreateRaffleMailUI()
 
     -- Mode toggle button: Official Discord vs Local Addon Roll
     local sourceBtn = wm:CreateControl("$(parent)_SourceBtn", summaryBanner, CT_BUTTON)
-    sourceBtn:SetAnchor(TOPRIGHT, summaryBanner, TOPRIGHT, -8, 6)
-    sourceBtn:SetDimensions(116, 20)
+    sourceBtn:SetAnchor(TOPRIGHT, summaryBanner, TOPRIGHT, -8, 8)
+    sourceBtn:SetDimensions(116, 22)
     sourceBtn:SetFont("ZoFontGameSmall")
     sourceBtn:SetText("[Official Ledger]")
 
@@ -943,12 +943,12 @@ function FR:CreateRaffleMailUI()
 
     -- Row 2: Pot, Tickets, and 1-Click Update MotD Button
     local sumPotLbl = wm:CreateControl("$(parent)_Pot", summaryBanner, CT_LABEL)
-    sumPotLbl:SetAnchor(TOPLEFT, summaryBanner, TOPLEFT, 8, 34)
+    sumPotLbl:SetAnchor(TOPLEFT, summaryBanner, TOPLEFT, 8, 38)
     sumPotLbl:SetFont("ZoFontGameSmall")
     sumPotLbl:SetText("Pot: --")
 
     local updateMotdBtn = wm:CreateControl("$(parent)_UpdateMotdBtn", summaryBanner, CT_BUTTON)
-    updateMotdBtn:SetAnchor(TOPRIGHT, summaryBanner, TOPRIGHT, -8, 32)
+    updateMotdBtn:SetAnchor(TOPRIGHT, summaryBanner, TOPRIGHT, -8, 36)
     updateMotdBtn:SetDimensions(95, 22)
     updateMotdBtn:SetFont("ZoFontGameSmall")
     updateMotdBtn:SetText("|cFFD700Update MotD|r")
@@ -975,7 +975,7 @@ function FR:CreateRaffleMailUI()
     end)
 
     local sumTicketsLbl = wm:CreateControl("$(parent)_Tickets", summaryBanner, CT_LABEL)
-    sumTicketsLbl:SetAnchor(RIGHT, updateMotdBtn, LEFT, -10, 0)
+    sumTicketsLbl:SetAnchor(RIGHT, updateMotdBtn, LEFT, -14, 0)
     sumTicketsLbl:SetFont("ZoFontGameSmall")
     sumTicketsLbl:SetText("Tickets: --")
 
@@ -1003,9 +1003,9 @@ function FR:CreateRaffleMailUI()
 
     for i = 1, 3 do
         local card = wm:CreateControl("$(parent)_WinnerCard" .. i, win, CT_CONTROL)
-        card:SetAnchor(TOPLEFT, win, TOPLEFT, 12, 142 + (i - 1) * 88)
-        card:SetAnchor(TOPRIGHT, win, TOPRIGHT, -12, 142 + (i - 1) * 88)
-        card:SetHeight(82)
+        card:SetAnchor(TOPLEFT, win, TOPLEFT, 12, 150 + (i - 1) * 88)
+        card:SetAnchor(TOPRIGHT, win, TOPRIGHT, -12, 150 + (i - 1) * 88)
+        card:SetHeight(84)
 
         local cardBg = wm:CreateControl("$(parent)_Bg", card, CT_BACKDROP)
         cardBg:SetAnchorFill()
@@ -1014,30 +1014,26 @@ function FR:CreateRaffleMailUI()
         cardBg:SetEdgeTexture("", 1, 1, 0)
 
         local cardRank = wm:CreateControl("$(parent)_Rank", card, CT_LABEL)
-        cardRank:SetAnchor(TOPLEFT, card, TOPLEFT, 10, 8)
+        cardRank:SetAnchor(TOPLEFT, card, TOPLEFT, 12, 8)
         cardRank:SetFont("ZoFontGameBold")
         cardRank:SetText(rankTitles[i])
 
         local cardStatus = wm:CreateControl("$(parent)_Status", card, CT_BUTTON)
-        cardStatus:SetAnchor(TOPRIGHT, card, TOPRIGHT, -10, 8)
+        cardStatus:SetAnchor(TOPRIGHT, card, TOPRIGHT, -12, 8)
         cardStatus:SetDimensions(90, 20)
         cardStatus:SetFont("ZoFontGameBold")
         cardStatus:SetText("|cFF9900[PENDING]|r")
 
         local cardName = wm:CreateControl("$(parent)_Name", card, CT_LABEL)
         cardName:SetAnchor(TOPLEFT, cardRank, BOTTOMLEFT, 0, 3)
+        cardName:SetAnchor(RIGHT, card, RIGHT, -110, 0)
+        cardName:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
         cardName:SetFont("ZoFontGameBold")
         cardName:SetText("|cFFFFFF@username|r")
 
-        local cardDetails = wm:CreateControl("$(parent)_Details", card, CT_LABEL)
-        cardDetails:SetAnchor(TOPLEFT, cardName, BOTTOMLEFT, 0, 2)
-        cardDetails:SetFont("ZoFontGameSmall")
-        cardDetails:SetColor(0.75, 0.75, 0.75, 1)
-        cardDetails:SetText("Ticket #-- | Wins --g")
-
         local fillBtn = wm:CreateControl("$(parent)_FillBtn", card, CT_BUTTON)
-        fillBtn:SetAnchor(BOTTOMRIGHT, card, BOTTOMRIGHT, -10, -8)
-        fillBtn:SetDimensions(116, 24)
+        fillBtn:SetAnchor(BOTTOMRIGHT, card, BOTTOMRIGHT, -12, -8)
+        fillBtn:SetDimensions(110, 24)
         fillBtn:SetFont("ZoFontGame")
         fillBtn:SetText("Auto-Fill Mail")
 
@@ -1055,6 +1051,14 @@ function FR:CreateRaffleMailUI()
             FR:RefreshRaffleMailUI()
         end)
 
+        local cardDetails = wm:CreateControl("$(parent)_Details", card, CT_LABEL)
+        cardDetails:SetAnchor(TOPLEFT, cardName, BOTTOMLEFT, 0, 3)
+        cardDetails:SetAnchor(RIGHT, fillBtn, LEFT, -12, 0)
+        cardDetails:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+        cardDetails:SetFont("ZoFontGameSmall")
+        cardDetails:SetColor(0.75, 0.75, 0.75, 1)
+        cardDetails:SetText("Ticket #-- | Wins --g")
+
         self.winnerControls[i] = {
             card = card,
             rank = cardRank,
@@ -1069,21 +1073,21 @@ function FR:CreateRaffleMailUI()
 
     -- 10. Footer Status & Controls
     local footerDiv = wm:CreateControl("$(parent)_FooterDiv", win, CT_TEXTURE)
-    footerDiv:SetAnchor(BOTTOMLEFT, win, BOTTOMLEFT, 8, -44)
-    footerDiv:SetAnchor(BOTTOMRIGHT, win, BOTTOMRIGHT, -8, -44)
+    footerDiv:SetAnchor(BOTTOMLEFT, win, BOTTOMLEFT, 8, -42)
+    footerDiv:SetAnchor(BOTTOMRIGHT, win, BOTTOMRIGHT, -8, -42)
     footerDiv:SetHeight(1)
     footerDiv:SetColor(0.8, 0.5, 0.1, 0.3)
 
     local statusLbl = wm:CreateControl("$(parent)_StatusText", win, CT_LABEL)
-    statusLbl:SetAnchor(BOTTOMLEFT, win, BOTTOMLEFT, 12, -20)
-    statusLbl:SetAnchor(BOTTOMRIGHT, win, BOTTOMRIGHT, -90, -20)
+    statusLbl:SetAnchor(BOTTOMLEFT, win, BOTTOMLEFT, 12, -18)
+    statusLbl:SetAnchor(BOTTOMRIGHT, win, BOTTOMRIGHT, -90, -18)
     statusLbl:SetFont("ZoFontGameSmall")
     statusLbl:SetColor(0.8, 0.8, 0.8, 1)
     statusLbl:SetText("|c00FF00[ON]|r Ready | Auto-Attaches Gold | /fr")
     self.raffleMailStatusLabel = statusLbl
 
     local clearBtn = wm:CreateControl("$(parent)_ClearBtn", win, CT_BUTTON)
-    clearBtn:SetAnchor(BOTTOMRIGHT, win, BOTTOMRIGHT, -12, -18)
+    clearBtn:SetAnchor(BOTTOMRIGHT, win, BOTTOMRIGHT, -12, -16)
     clearBtn:SetDimensions(74, 20)
     clearBtn:SetFont("ZoFontGameSmall")
     clearBtn:SetNormalFontColor(0.8, 0.3, 0.3, 1)

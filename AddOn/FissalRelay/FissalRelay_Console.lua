@@ -20,8 +20,8 @@
 FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
-local CONSOLE_WIDTH = 720
-local CONSOLE_HEIGHT = 580
+local CONSOLE_WIDTH = 880
+local CONSOLE_HEIGHT = 620
 
 FR.selectedGuildIndex = 1
 FR.activeConsoleTab = 1
@@ -195,7 +195,7 @@ function FR:CreateConsoleUI()
     title:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     title:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
     title:SetFont("ZoFontGameBold")
-    title:SetText("|cFF9900FISSAL RELAY PRIME|r  |c00FFCCCOMMAND CONSOLE|r  |c888888v1.5.1|r")
+    title:SetText(string.format("|cFF9900FISSAL RELAY PRIME|r  |c00FFCCCOMMAND CONSOLE|r  |c888888v%s|r", self.version or "1.6.0"))
 
     -- 7. Top Divider Line
     local topDiv = wm:CreateControl("$(parent)_DivTop", console, CT_TEXTURE)
@@ -388,9 +388,10 @@ function FR:BuildOverviewTab(parent)
     self.consoleTabs[1] = panel
 
     -- Card 1: Guild Identity & Trader Kiosk
+    local cardWidth = math.floor((CONSOLE_WIDTH - 36) / 2)
     local card1 = wm:CreateControl("$(parent)_Card1", panel, CT_BACKDROP)
     card1:SetAnchor(TOPLEFT, panel, TOPLEFT, 0, 0)
-    card1:SetDimensions(342, 185)
+    card1:SetDimensions(cardWidth, 185)
     card1:SetCenterColor(0.06, 0.06, 0.08, 0.85)
     card1:SetEdgeColor(0.30, 0.25, 0.18, 0.70)
     card1:SetEdgeTexture("", 8, 1, 0)
@@ -476,7 +477,7 @@ function FR:BuildOverviewTab(parent)
     -- Card 2: LibHistoire & Relay Synchronization
     local card2 = wm:CreateControl("$(parent)_Card2", panel, CT_BACKDROP)
     card2:SetAnchor(TOPRIGHT, panel, TOPRIGHT, 0, 0)
-    card2:SetDimensions(342, 185)
+    card2:SetDimensions(cardWidth, 185)
     card2:SetCenterColor(0.06, 0.06, 0.08, 0.85)
     card2:SetEdgeColor(0.30, 0.25, 0.18, 0.70)
     card2:SetEdgeTexture("", 8, 1, 0)
