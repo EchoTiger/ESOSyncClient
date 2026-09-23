@@ -443,6 +443,10 @@ namespace RedfurSync
                 Show();
                 TraceLog("NavigateToTab: Show() returned");
             }
+            if (tabId == "sync" && _lastRenderedJobVersion != _watcher.CurrentJobVersion)
+            {
+                RefreshSyncView();
+            }
             if (WindowState == FormWindowState.Minimized)
             {
                 WindowState = FormWindowState.Normal;
@@ -4187,14 +4191,14 @@ namespace RedfurSync
 
         private void OnSyncCoalesceTick(object? state)
         {
-            if (IsDisposed || !IsHandleCreated) return;
+            if (IsDisposed || !IsHandleCreated || !Visible) return;
             long currentVer = _watcher.CurrentJobVersion;
             if (currentVer != _lastRenderedJobVersion)
             {
                 _lastRenderedJobVersion = currentVer;
                 _syncContext?.Post(_ =>
                 {
-                    if (!IsDisposed && IsHandleCreated)
+                    if (!IsDisposed && IsHandleCreated && Visible)
                     {
                         RefreshSyncView();
                     }

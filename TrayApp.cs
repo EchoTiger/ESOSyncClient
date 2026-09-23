@@ -197,12 +197,25 @@ namespace RedfurSync
         
         private void OnJobsChanged()
         {
+            if (_uiContext != null)
+            {
+                _uiContext.Post(_ => HandleJobsChangedOnUI(), null);
+            }
+            else if (_menu != null && !_menu.IsDisposed && _menu.InvokeRequired)
+            {
+                _menu.BeginInvoke(new Action(HandleJobsChangedOnUI));
+            }
+            else
+            {
+                HandleJobsChangedOnUI();
+            }
+        }
+
+        private void HandleJobsChangedOnUI()
+        {
             if (_progressForm != null && !_progressForm.IsDisposed)
             {
-                if (_progressForm.InvokeRequired)
-                    _progressForm.BeginInvoke(_progressForm.Invalidate);
-                else
-                    _progressForm.Invalidate();
+                _progressForm.Invalidate();
             }
 
             // [Req 1 & Req 5] Delay slightly to group alerts together and prevent spam
@@ -212,8 +225,7 @@ namespace RedfurSync
                 _batchAlertTimer.Tick += (_, _) => 
                 { 
                     _batchAlertTimer.Stop(); 
-                    if (_menu.InvokeRequired) _menu.BeginInvoke(CheckBatchCompletion);
-                    else CheckBatchCompletion();
+                    CheckBatchCompletion();
                 };
             }
             _batchAlertTimer.Stop();

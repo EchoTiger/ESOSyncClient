@@ -124,6 +124,7 @@ namespace RedfurSync
         private readonly System.Timers.Timer _updateTimer = new();
         private readonly SemaphoreSlim _updateCheckLock = new SemaphoreSlim(1, 1);
         private readonly SemaphoreSlim _uploadThrottle = new SemaphoreSlim(3, 3); // Max 3 concurrent uploads
+        private readonly SemaphoreSlim _diskScanThrottle = new SemaphoreSlim(1, 1); // Max 1 concurrent file scan/snapshot on HDD
         private readonly SemaphoreSlim _startLock = new SemaphoreSlim(1, 1);
         private bool _disposed;
 
@@ -425,10 +426,10 @@ namespace RedfurSync
         {
             Directory.CreateDirectory(_spoolDirectory);
             var snapshotPath = Path.Combine(_spoolDirectory, $"{Guid.NewGuid():N}-{Path.GetFileName(sourcePath)}");
-            using var source = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.Read);
+            using var source = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
             using var destination = new FileStream(snapshotPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
             source.CopyTo(destination);
-            destination.Flush(true);
+            destination.Flush();
             return snapshotPath;
         }
 
@@ -485,17 +486,26 @@ namespace RedfurSync
             }
 
             string snapshotPath;
+            string currentHash;
             try
             {
-                snapshotPath = CreateSnapshot(filePath);
+                await _diskScanThrottle.WaitAsync(lockWaitCts.Token);
+                try
+                {
+                    snapshotPath = CreateSnapshot(filePath);
+                    currentHash = GetFileHash(snapshotPath);
+                }
+                finally
+                {
+                    _diskScanThrottle.Release();
+                }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[RedfurSync] Could not snapshot {Path.GetFileName(filePath)}: {ex.Message}");
+                Console.WriteLine($"[RedfurSync] Could not snapshot/hash {Path.GetFileName(filePath)}: {ex.Message}");
                 return;
             }
 
-            string currentHash = GetFileHash(snapshotPath);
             lock (_hashLock)
             {
                 if (!string.IsNullOrEmpty(currentHash))
@@ -570,9 +580,24 @@ namespace RedfurSync
             {
                 try
                 {
-                    var saleIds = isFissal
-                        ? FissalRelayScanner.ReadSaleIds(job.FilePath)
-                        : MasterMerchantSaleScanner.ReadSaleIds(job.FilePath);
+                    await _diskScanThrottle.WaitAsync(job.Cts.Token);
+                    IReadOnlyList<string> saleIds;
+                    IReadOnlyList<KioskObservation>? kiosks = null;
+                    try
+                    {
+                        saleIds = isFissal
+                            ? FissalRelayScanner.ReadSaleIds(job.FilePath)
+                            : MasterMerchantSaleScanner.ReadSaleIds(job.FilePath);
+
+                        if (isFissal)
+                        {
+                            kiosks = KioskReconScanner.ReadKiosks(job.FilePath);
+                        }
+                    }
+                    finally
+                    {
+                        _diskScanThrottle.Release();
+                    }
 
                     if (saleIds.Count > 0)
                     {
@@ -599,14 +624,10 @@ namespace RedfurSync
                         }
                     }
 
-                    if (isFissal)
+                    if (isFissal && kiosks != null && kiosks.Count > 0)
                     {
-                        var kiosks = KioskReconScanner.ReadKiosks(job.FilePath);
-                        if (kiosks.Count > 0)
-                        {
-                            _onStatus($"Syncing {kiosks.Count} ground recon kiosk(s)...");
-                            await _uploader.UploadKioskObservationsAsync(kiosks, job.Cts.Token);
-                        }
+                        _onStatus($"Syncing {kiosks.Count} ground recon kiosk(s)...");
+                        await _uploader.UploadKioskObservationsAsync(kiosks, job.Cts.Token);
                     }
                 }
                 catch (Exception ex)
@@ -702,7 +723,7 @@ namespace RedfurSync
         {
             try
             {
-                using FileStream stream = new FileInfo(filePath).Open(FileMode.Open, FileAccess.Read, FileShare.None);
+                using FileStream stream = new FileInfo(filePath).Open(FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
                 stream.Close();
             }
             catch (IOException) { return true; }

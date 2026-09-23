@@ -347,7 +347,7 @@ namespace RedfurSync
 
         public async Task<HashSet<string>?> GetMissingSaleIdsAsync(IReadOnlyList<string> saleIds, CancellationToken cancellationToken)
         {
-            if (string.IsNullOrWhiteSpace(_config.DeviceToken)) return null;
+            if (string.IsNullOrWhiteSpace(_config.DeviceToken) && string.IsNullOrWhiteSpace(_config.ApiKey)) return null;
             var missing = new HashSet<string>(StringComparer.Ordinal);
             try
             {
@@ -380,7 +380,7 @@ namespace RedfurSync
 
         public async Task<bool> UploadKioskObservationsAsync(IReadOnlyList<KioskObservation> kiosks, CancellationToken cancellationToken)
         {
-            if (string.IsNullOrWhiteSpace(_config.DeviceToken) || kiosks == null || kiosks.Count == 0) return false;
+            if ((string.IsNullOrWhiteSpace(_config.DeviceToken) && string.IsNullOrWhiteSpace(_config.ApiKey)) || kiosks == null || kiosks.Count == 0) return false;
             try
             {
                 var payload = JsonSerializer.Serialize(new { kiosks });
