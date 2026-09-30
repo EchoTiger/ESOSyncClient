@@ -104,6 +104,8 @@ namespace RedfurSync
 
         [DllImport("user32.dll")] private static extern bool ReleaseCapture();
         [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr hWnd, int msg, int wParam, int lParam);
+        private const int WM_VSCROLL = 0x0115;
+        private const int SB_BOTTOM = 7;
         [DllImport("user32.dll")] private static extern bool SetForegroundWindow(IntPtr hWnd);
 
         private readonly FileWatcherService _watcher;
@@ -157,7 +159,9 @@ namespace RedfurSync
         private Button _btnClearCompleted = null!;
         private RichTextBox _syncLogBox = null!;
         private DoubleBufferedPanel? _oscilloscopePanel;
-        private readonly Dictionary<string, UploadStatus> _loggedJobStates = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<UploadJob, UploadStatus> _loggedJobStates = new();
+        private bool _isRefreshingSyncView = false;
+        private bool _isResizingSyncCards = false;
         private readonly Dictionary<UploadJob, JobCardControls> _jobCards = new();
         private readonly HashSet<string> _userCollapsedSessions = new(StringComparer.OrdinalIgnoreCase);
         private readonly HashSet<string> _userExpandedSessions = new(StringComparer.OrdinalIgnoreCase);
@@ -316,7 +320,7 @@ namespace RedfurSync
             _watcher = watcher;
             _applyUpdateAction = applyUpdateAction;
             _syncContext = SynchronizationContext.Current;
-            _syncCoalesceTimer = new System.Threading.Timer(OnSyncCoalesceTick, null, 150, 150);
+            _syncCoalesceTimer = new System.Threading.Timer(OnSyncCoalesceTick, null, 200, 200);
 
             SetStyle(ControlStyles.AllPaintingInWmPaint |
                      ControlStyles.UserPaint |
@@ -1466,7 +1470,7 @@ namespace RedfurSync
 
         private void OnAnimTimerTick()
         {
-            if (IsDisposed) return;
+            if (IsDisposed || !Visible || WindowState == FormWindowState.Minimized) return;
             _animFrame++;
 
             _scanPhase = (_scanPhase + 0.35f) % 4f;
@@ -1519,7 +1523,6 @@ namespace RedfurSync
             _titlePlatePanel?.Invalidate();
             _microDisplayPanel?.Invalidate();
             _oscilloscopePanel?.Invalidate();
-            _syncJobsList?.Invalidate();
 
             var activeJob = jobsSnapshot.FirstOrDefault(j => j.Status == UploadStatus.Uploading);
             if (activeJob == null)
@@ -1576,10 +1579,15 @@ namespace RedfurSync
             if (_syncLogBox == null || _syncLogBox.IsDisposed) return;
 
             string ts = DateTime.Now.ToString("HH:mm:ss");
-            if (_syncLogBox.Lines.Length > 300)
+            int lineCount = _syncLogBox.GetLineFromCharIndex(_syncLogBox.TextLength);
+            if (lineCount > 300)
             {
-                _syncLogBox.Select(0, _syncLogBox.GetFirstCharIndexFromLine(50));
-                _syncLogBox.SelectedText = "";
+                int charIdx = _syncLogBox.GetFirstCharIndexFromLine(50);
+                if (charIdx > 0)
+                {
+                    _syncLogBox.Select(0, charIdx);
+                    _syncLogBox.SelectedText = "";
+                }
             }
 
             string tagPrefix = tag switch
@@ -1613,7 +1621,14 @@ namespace RedfurSync
             _syncLogBox.AppendText($"{message}\n");
 
             _syncLogBox.SelectionStart = _syncLogBox.TextLength;
-            _syncLogBox.ScrollToCaret();
+            if (_syncLogBox.IsHandleCreated)
+            {
+                SendMessage(_syncLogBox.Handle, WM_VSCROLL, SB_BOTTOM, 0);
+            }
+            else
+            {
+                _syncLogBox.ScrollToCaret();
+            }
         }
 
         private bool IsSessionExpanded(SyncSessionModel session)
@@ -1631,221 +1646,249 @@ namespace RedfurSync
                 return;
             }
 
-            _lastRenderedJobVersion = _watcher.CurrentJobVersion;
-            var jobs = _watcher.GetJobsSnapshot();
-            int queued = jobs.Count(j => j.Status == UploadStatus.Queued);
-            int uploading = jobs.Count(j => j.Status == UploadStatus.Uploading);
-            int done = jobs.Count(j => j.Status == UploadStatus.Done);
-            int failed = jobs.Count(j => j.Status is UploadStatus.Failed or UploadStatus.Cancelled);
+            if (IsDisposed || !IsHandleCreated || !Visible || WindowState == FormWindowState.Minimized) return;
+            if (_isRefreshingSyncView) return;
+            _isRefreshingSyncView = true;
 
-            if (uploading > 0)
+            try
             {
-                _syncStateBadge.Text = "⚡ TRANSMITTING...";
-                _syncStateBadge.ForeColor = CGoldBrt;
-                _messageBoardText = $"Transmitting {uploading} active file{(uploading == 1 ? "" : "s")} ({queued} queued)...";
-                _messageBoardColor = CGoldBrt;
-                _titleStatusLabel.Text = "⚡ TRANSMITTING TELEMETRY";
-                _titleStatusLabel.ForeColor = CGoldBrt;
+                _lastRenderedJobVersion = _watcher.CurrentJobVersion;
+                var jobs = _watcher.GetJobsSnapshot();
+                int queued = jobs.Count(j => j.Status == UploadStatus.Queued);
+                int uploading = jobs.Count(j => j.Status == UploadStatus.Uploading);
+                int done = jobs.Count(j => j.Status == UploadStatus.Done);
+                int failed = jobs.Count(j => j.Status is UploadStatus.Failed or UploadStatus.Cancelled);
 
-                if (_animTimer != null && !_animTimer.Enabled)
+                if (uploading > 0)
                 {
-                    _animTimer.Start();
-                }
-            }
-            else if (queued > 0)
-            {
-                _syncStateBadge.Text = "⏳ QUEUED";
-                _syncStateBadge.ForeColor = CWarn;
-                _messageBoardText = $"Sync Queued: {queued} file{(queued == 1 ? "" : "s")} ready to upload";
-                _messageBoardColor = CWarn;
-                _titleStatusLabel.Text = "⏳ QUEUED FOR TRANSMISSION";
-                _titleStatusLabel.ForeColor = CWarn;
-            }
-            else
-            {
-                _syncStateBadge.Text = "● SYNC IDLE";
-                _syncStateBadge.ForeColor = CGreen;
-                _messageBoardText = failed > 0 ? $"Notice: {failed} file{(failed == 1 ? "" : "s")} failed to upload" : "All guild data synchronized • Watching for ESO updates";
-                _messageBoardColor = failed > 0 ? CBarFail : CGreen;
-                _titleStatusLabel.Text = failed > 0 ? "⚠ ATTENTION NEEDED" : "● CONNECTED TO REDFUR RELAY";
-                _titleStatusLabel.ForeColor = failed > 0 ? CBarFail : CGreen;
-            }
+                    _syncStateBadge.Text = "⚡ TRANSMITTING...";
+                    _syncStateBadge.ForeColor = CGoldBrt;
+                    _messageBoardText = $"Transmitting {uploading} active file{(uploading == 1 ? "" : "s")} ({queued} queued)...";
+                    _messageBoardColor = CGoldBrt;
+                    _titleStatusLabel.Text = "⚡ TRANSMITTING TELEMETRY";
+                    _titleStatusLabel.ForeColor = CGoldBrt;
 
-            if (_messageBoardLabel != null)
-            {
-                _messageBoardLabel.Text = _messageBoardText;
-                _messageBoardLabel.ForeColor = _messageBoardColor;
-            }
-
-            // Stream batch logging boundary markers
-            if (uploading > 0 && !_batchInProgress)
-            {
-                _batchInProgress = true;
-                LogTelemetry("BATCH", $"┌─── ⚙ INGESTION STREAM ENGAGED: {uploading + queued} file(s) queued for transmission ───", CGoldBrt);
-            }
-            else if (uploading == 0 && queued == 0 && _batchInProgress)
-            {
-                _batchInProgress = false;
-                LogTelemetry("BATCH", $"└─── ✓ BATCH COMPLETE: All telemetry cassettes synchronized to Redfur Relay ───", CGreen);
-            }
-
-            // Telemetry tracking for individual state transitions
-            foreach (var job in jobs)
-            {
-                if (!_loggedJobStates.TryGetValue(job.FileName, out var lastStatus) || lastStatus != job.Status)
-                {
-                    _loggedJobStates[job.FileName] = job.Status;
-                    if (job.Status == UploadStatus.Done)
-                        LogTelemetry("VERIFIED", $"{job.FileName} synchronized to Redfur Relay ({job.FileSizeDisplay})", CGreen);
-                    else if (job.Status == UploadStatus.Failed)
-                        LogTelemetry("ALERT", $"{job.FileName} failed: {job.ErrorMessage}", CBarFail);
-                    else if (job.Status == UploadStatus.UpdateReady)
-                        LogTelemetry("UPGRADE", $"{job.FileName} ready for deployment ({job.FileSizeDisplay})", Color.FromArgb(196, 137, 255));
-                    else if (job.Status == UploadStatus.Uploading)
-                        LogTelemetry("TRANSMIT", $"{job.FileName} uploading ({job.FileSizeDisplay})...", CGoldBrt);
-                }
-            }
-
-            // Separate standalone update jobs and cluster regular files into sessions
-            var updateJobs = jobs.Where(j => j.IsUpdate).ToList();
-            var normalJobs = jobs.Where(j => !j.IsUpdate).OrderByDescending(j => j.QueuedAt).ToList();
-
-            var sessions = new List<SyncSessionModel>();
-            SyncSessionModel? currentSession = null;
-            foreach (var job in normalJobs)
-            {
-                if (currentSession == null || Math.Abs((currentSession.Timestamp - job.QueuedAt).TotalSeconds) > 60)
-                {
-                    string sessionId = $"session_{job.QueuedAt:yyyyMMdd_HHmmss}";
-                    currentSession = new SyncSessionModel
+                    if (_animTimer != null && !_animTimer.Enabled)
                     {
-                        Id = sessionId,
-                        Timestamp = job.QueuedAt,
-                        Title = $"ESO DATA BATCH • {job.QueuedAt:HH:mm:ss}",
-                    };
-                    sessions.Add(currentSession);
-                }
-                currentSession.Jobs.Add(job);
-            }
-
-            _syncSummaryLabel.Text = $"Sessions: {sessions.Count}  |  Active: {uploading}  |  Queued: {queued}  |  Synced: {done}  |  Errors: {failed}  |  Total: {jobs.Length}";
-
-            _syncJobsList.SuspendLayout();
-
-            // 1. Remove empty placeholder if we have content
-            if (jobs.Length > 0)
-            {
-                for (int i = _syncJobsList.Controls.Count - 1; i >= 0; i--)
-                {
-                    if (Equals(_syncJobsList.Controls[i].Tag, "empty-card"))
-                    {
-                        var c = _syncJobsList.Controls[i];
-                        _syncJobsList.Controls.RemoveAt(i);
-                        c.Dispose();
+                        _animTimer.Start();
                     }
                 }
-            }
-
-            // 2. Reconcile standalone update cards
-            var existingUpdateJobs = _jobCards.Keys.ToList();
-            foreach (var ej in existingUpdateJobs)
-            {
-                if (!updateJobs.Contains(ej))
+                else if (queued > 0)
                 {
-                    var card = _jobCards[ej];
-                    _syncJobsList.Controls.Remove(card.Card);
-                    card.Card.Dispose();
-                    _jobCards.Remove(ej);
-                }
-            }
-
-            foreach (var uj in updateJobs)
-            {
-                if (_jobCards.TryGetValue(uj, out var cardControls))
-                {
-                    UpdateJobCard(uj, cardControls);
+                    _syncStateBadge.Text = "⏳ QUEUED";
+                    _syncStateBadge.ForeColor = CWarn;
+                    _messageBoardText = $"Sync Queued: {queued} file{(queued == 1 ? "" : "s")} ready to upload";
+                    _messageBoardColor = CWarn;
+                    _titleStatusLabel.Text = "⏳ QUEUED FOR TRANSMISSION";
+                    _titleStatusLabel.ForeColor = CWarn;
                 }
                 else
                 {
-                    var newControls = BuildJobCard(uj);
-                    _jobCards.Add(uj, newControls);
-                    _syncJobsList.Controls.Add(newControls.Card);
+                    _syncStateBadge.Text = "● SYNC IDLE";
+                    _syncStateBadge.ForeColor = CGreen;
+                    _messageBoardText = failed > 0 ? $"Notice: {failed} file{(failed == 1 ? "" : "s")} failed to upload" : "All guild data synchronized • Watching for ESO updates";
+                    _messageBoardColor = failed > 0 ? CBarFail : CGreen;
+                    _titleStatusLabel.Text = failed > 0 ? "⚠ ATTENTION NEEDED" : "● CONNECTED TO REDFUR RELAY";
+                    _titleStatusLabel.ForeColor = failed > 0 ? CBarFail : CGreen;
                 }
-            }
 
-            // 3. Reconcile session cards
-            var currentSessionIds = sessions.Select(s => s.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var existingSessionIds = _sessionCards.Keys.ToList();
-            foreach (var oldId in existingSessionIds)
-            {
-                if (!currentSessionIds.Contains(oldId))
+                if (_messageBoardLabel != null)
                 {
-                    var sc = _sessionCards[oldId];
-                    _syncJobsList.Controls.Remove(sc.Card);
-                    sc.Card.Dispose();
-                    _sessionCards.Remove(oldId);
+                    _messageBoardLabel.Text = _messageBoardText;
+                    _messageBoardLabel.ForeColor = _messageBoardColor;
                 }
-            }
 
-            foreach (var session in sessions)
-            {
-                if (_sessionCards.TryGetValue(session.Id, out var cardControls))
+                // Stream batch logging boundary markers
+                if (uploading > 0 && !_batchInProgress)
                 {
-                    UpdateSessionCard(session, cardControls);
+                    _batchInProgress = true;
+                    LogTelemetry("BATCH", $"┌─── ⚙ INGESTION STREAM ENGAGED: {uploading + queued} file(s) queued for transmission ───", CGoldBrt);
                 }
-                else
+                else if (uploading == 0 && queued == 0 && _batchInProgress)
                 {
-                    var newControls = BuildSessionCard(session);
-                    _sessionCards.Add(session.Id, newControls);
-                    _syncJobsList.Controls.Add(newControls.Card);
+                    _batchInProgress = false;
+                    LogTelemetry("BATCH", $"└─── ✓ BATCH COMPLETE: All telemetry cassettes synchronized to Redfur Relay ───", CGreen);
                 }
-            }
 
-            // 4. Ensure correct visual ordering: update cards first, then sessions
-            int controlIndex = 0;
-            foreach (var uj in updateJobs)
-            {
-                if (_jobCards.TryGetValue(uj, out var uc))
-                    _syncJobsList.Controls.SetChildIndex(uc.Card, controlIndex++);
-            }
-            foreach (var s in sessions)
-            {
-                if (_sessionCards.TryGetValue(s.Id, out var sc))
-                    _syncJobsList.Controls.SetChildIndex(sc.Card, controlIndex++);
-            }
+                // Telemetry tracking for individual state transitions
+                foreach (var job in jobs)
+                {
+                    if (!_loggedJobStates.TryGetValue(job, out var lastStatus) || lastStatus != job.Status)
+                    {
+                        _loggedJobStates[job] = job.Status;
+                        if (job.Status == UploadStatus.Done)
+                            LogTelemetry("VERIFIED", $"{job.FileName} synchronized to Redfur Relay ({job.FileSizeDisplay})", CGreen);
+                        else if (job.Status == UploadStatus.Failed)
+                            LogTelemetry("ALERT", $"{job.FileName} failed: {job.ErrorMessage}", CBarFail);
+                        else if (job.Status == UploadStatus.UpdateReady)
+                            LogTelemetry("UPGRADE", $"{job.FileName} ready for deployment ({job.FileSizeDisplay})", Color.FromArgb(196, 137, 255));
+                        else if (job.Status == UploadStatus.Uploading)
+                            LogTelemetry("TRANSMIT", $"{job.FileName} uploading ({job.FileSizeDisplay})...", CGoldBrt);
+                    }
+                }
 
-            // 5. Empty placeholder when no jobs exist
-            if (jobs.Length == 0 && _syncJobsList.Controls.Count == 0)
-            {
-                var emptyCard = new DoubleBufferedPanel
+                if (_loggedJobStates.Count > jobs.Length + 64)
                 {
-                    Width = Math.Max(300, _syncJobsList.ClientSize.Width - 16),
-                    Height = (int)(44 * _scale),
-                    BackColor = Color.FromArgb(14, 12, 10),
-                    Margin = new Padding(0, 4, 0, 4),
-                    Padding = new Padding((int)(12 * _scale), 0, (int)(12 * _scale), 0),
-                    Tag = "empty-card",
-                };
-                emptyCard.Paint += (s, e) =>
-                {
-                    var g = e.Graphics;
-                    using var pen = new Pen(Color.FromArgb(40, CBorderSub), 1f);
-                    g.DrawRectangle(pen, 0, 0, emptyCard.Width - 1, emptyCard.Height - 1);
-                };
-                var emptyLabel = new Label
-                {
-                    Text = "✓ All guild data synchronized with Redfur Relay. Monitoring for changes.",
-                    ForeColor = CTextSub,
-                    Font = Body(8.5f, _scale, FontStyle.Italic),
-                    Dock = DockStyle.Fill,
-                    TextAlign = ContentAlignment.MiddleLeft,
-                };
-                emptyCard.Controls.Add(emptyLabel);
-                _syncJobsList.Controls.Add(emptyCard);
-            }
+                    var activeSet = new HashSet<UploadJob>(jobs);
+                    var staleJobs = _loggedJobStates.Keys.Where(k => !activeSet.Contains(k)).ToList();
+                    foreach (var stale in staleJobs)
+                        _loggedJobStates.Remove(stale);
+                }
 
-            ResizeSyncJobCards();
-            _syncJobsList.ResumeLayout(true);
+                // Separate standalone update jobs and cluster regular files into sessions
+                var updateJobs = jobs.Where(j => j.IsUpdate).ToList();
+                var normalJobs = jobs.Where(j => !j.IsUpdate).OrderBy(j => j.QueuedAt).ToList();
+
+                var sessions = new List<SyncSessionModel>();
+                SyncSessionModel? currentSession = null;
+                foreach (var job in normalJobs)
+                {
+                    if (currentSession == null || Math.Abs((currentSession.Timestamp - job.QueuedAt).TotalSeconds) > 60)
+                    {
+                        string sessionId = $"session_{job.QueuedAt:yyyyMMdd_HHmmss}";
+                        currentSession = new SyncSessionModel
+                        {
+                            Id = sessionId,
+                            Timestamp = job.QueuedAt,
+                            Title = $"ESO DATA BATCH • {job.QueuedAt:HH:mm:ss}",
+                        };
+                        sessions.Add(currentSession);
+                    }
+                    currentSession.Jobs.Add(job);
+                }
+                sessions.Reverse();
+
+                _syncSummaryLabel.Text = $"Sessions: {sessions.Count}  |  Active: {uploading}  |  Queued: {queued}  |  Synced: {done}  |  Errors: {failed}  |  Total: {jobs.Length}";
+
+                _syncJobsList.SuspendLayout();
+
+                // 1. Remove empty placeholder if we have content
+                if (jobs.Length > 0)
+                {
+                    for (int i = _syncJobsList.Controls.Count - 1; i >= 0; i--)
+                    {
+                        if (Equals(_syncJobsList.Controls[i].Tag, "empty-card"))
+                        {
+                            var c = _syncJobsList.Controls[i];
+                            _syncJobsList.Controls.RemoveAt(i);
+                            c.Dispose();
+                        }
+                    }
+                }
+
+                // 2. Reconcile standalone update cards
+                var existingUpdateJobs = _jobCards.Keys.ToList();
+                foreach (var ej in existingUpdateJobs)
+                {
+                    if (!updateJobs.Contains(ej))
+                    {
+                        var card = _jobCards[ej];
+                        _syncJobsList.Controls.Remove(card.Card);
+                        card.Card.Dispose();
+                        _jobCards.Remove(ej);
+                    }
+                }
+
+                foreach (var uj in updateJobs)
+                {
+                    if (_jobCards.TryGetValue(uj, out var cardControls))
+                    {
+                        UpdateJobCard(uj, cardControls);
+                    }
+                    else
+                    {
+                        var newControls = BuildJobCard(uj);
+                        _jobCards.Add(uj, newControls);
+                        _syncJobsList.Controls.Add(newControls.Card);
+                    }
+                }
+
+                // 3. Reconcile session cards
+                var currentSessionIds = sessions.Select(s => s.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var existingSessionIds = _sessionCards.Keys.ToList();
+                foreach (var oldId in existingSessionIds)
+                {
+                    if (!currentSessionIds.Contains(oldId))
+                    {
+                        var sc = _sessionCards[oldId];
+                        _syncJobsList.Controls.Remove(sc.Card);
+                        sc.Card.Dispose();
+                        _sessionCards.Remove(oldId);
+                    }
+                }
+
+                foreach (var session in sessions)
+                {
+                    if (_sessionCards.TryGetValue(session.Id, out var cardControls))
+                    {
+                        UpdateSessionCard(session, cardControls);
+                    }
+                    else
+                    {
+                        var newControls = BuildSessionCard(session);
+                        _sessionCards.Add(session.Id, newControls);
+                        _syncJobsList.Controls.Add(newControls.Card);
+                    }
+                }
+
+                // 4. Ensure correct visual ordering: update cards first, then sessions
+                int controlIndex = 0;
+                foreach (var uj in updateJobs)
+                {
+                    if (_jobCards.TryGetValue(uj, out var uc))
+                    {
+                        if (_syncJobsList.Controls.GetChildIndex(uc.Card) != controlIndex)
+                            _syncJobsList.Controls.SetChildIndex(uc.Card, controlIndex);
+                        controlIndex++;
+                    }
+                }
+                foreach (var s in sessions)
+                {
+                    if (_sessionCards.TryGetValue(s.Id, out var sc))
+                    {
+                        if (_syncJobsList.Controls.GetChildIndex(sc.Card) != controlIndex)
+                            _syncJobsList.Controls.SetChildIndex(sc.Card, controlIndex);
+                        controlIndex++;
+                    }
+                }
+
+                // 5. Empty placeholder when no jobs exist
+                if (jobs.Length == 0 && _syncJobsList.Controls.Count == 0)
+                {
+                    var emptyCard = new DoubleBufferedPanel
+                    {
+                        Width = Math.Max(300, _syncJobsList.ClientSize.Width - 16),
+                        Height = (int)(44 * _scale),
+                        BackColor = Color.FromArgb(14, 12, 10),
+                        Margin = new Padding(0, 4, 0, 4),
+                        Padding = new Padding((int)(12 * _scale), 0, (int)(12 * _scale), 0),
+                        Tag = "empty-card",
+                    };
+                    emptyCard.Paint += (s, e) =>
+                    {
+                        var g = e.Graphics;
+                        using var pen = new Pen(Color.FromArgb(40, CBorderSub), 1f);
+                        g.DrawRectangle(pen, 0, 0, emptyCard.Width - 1, emptyCard.Height - 1);
+                    };
+                    var emptyLabel = new Label
+                    {
+                        Text = "✓ All guild data synchronized with Redfur Relay. Monitoring for changes.",
+                        ForeColor = CTextSub,
+                        Font = Body(8.5f, _scale, FontStyle.Italic),
+                        Dock = DockStyle.Fill,
+                        TextAlign = ContentAlignment.MiddleLeft,
+                    };
+                    emptyCard.Controls.Add(emptyLabel);
+                    _syncJobsList.Controls.Add(emptyCard);
+                }
+
+                ResizeSyncJobCards();
+                _syncJobsList.ResumeLayout(true);
+            }
+            finally
+            {
+                _isRefreshingSyncView = false;
+            }
         }
 
         private SessionCardControls BuildSessionCard(SyncSessionModel session)
@@ -2118,19 +2161,24 @@ namespace RedfurSync
             };
 
             // Action buttons
-            controls.ActionFlow.SuspendLayout();
-            controls.ActionFlow.Controls.Clear();
-            if (session.FailedCount > 0)
+            bool hasRetryBtn = controls.ActionFlow.Controls.Count > 0;
+            bool needsRetryBtn = session.FailedCount > 0;
+            if (hasRetryBtn != needsRetryBtn)
             {
-                var btnRetryAll = MakeStyledButton("Retry Failed", CGoldBrt);
-                btnRetryAll.Click += (_, _) =>
+                controls.ActionFlow.SuspendLayout();
+                controls.ActionFlow.Controls.Clear();
+                if (needsRetryBtn)
                 {
-                    foreach (var f in session.Jobs.Where(j => j.Status == UploadStatus.Failed))
-                        _watcher.RetryJob(f);
-                };
-                controls.ActionFlow.Controls.Add(btnRetryAll);
+                    var btnRetryAll = MakeStyledButton("Retry Failed", CGoldBrt);
+                    btnRetryAll.Click += (_, _) =>
+                    {
+                        foreach (var f in session.Jobs.Where(j => j.Status == UploadStatus.Failed))
+                            _watcher.RetryJob(f);
+                    };
+                    controls.ActionFlow.Controls.Add(btnRetryAll);
+                }
+                controls.ActionFlow.ResumeLayout(true);
             }
-            controls.ActionFlow.ResumeLayout(true);
 
             // Reconcile nested file rows if expanded
             int headerH = (int)(48 * _scale);
@@ -2156,7 +2204,7 @@ namespace RedfurSync
                 int rowGap = (int)(3 * _scale);
                 int containerInnerPad = (int)(14 * _scale);
 
-                foreach (var job in currentJobs.OrderByDescending(j => j.QueuedAt))
+                foreach (var job in currentJobs)
                 {
                     if (controls.FileRows.TryGetValue(job, out var rowControls))
                     {
@@ -2171,19 +2219,24 @@ namespace RedfurSync
                 }
 
                 int totalFileH = currentJobs.Count * (rowH + rowGap) + containerInnerPad;
-                controls.FilesContainer.Height = totalFileH;
-                controls.FilesContainer.Visible = true;
+                if (controls.FilesContainer.Height != totalFileH)
+                    controls.FilesContainer.Height = totalFileH;
+                if (!controls.FilesContainer.Visible)
+                    controls.FilesContainer.Visible = true;
                 controls.FilesContainer.ResumeLayout(true);
 
-                controls.Card.Height = headerH + totalFileH;
+                if (controls.Card.Height != headerH + totalFileH)
+                    controls.Card.Height = headerH + totalFileH;
             }
             else
             {
-                controls.FilesContainer.Visible = false;
-                controls.Card.Height = headerH;
+                if (controls.FilesContainer.Visible)
+                    controls.FilesContainer.Visible = false;
+                if (controls.Card.Height != headerH)
+                    controls.Card.Height = headerH;
             }
 
-            controls.Card.Invalidate(true);
+            controls.Card.Invalidate();
         }
 
         private CompactFileRowControls BuildCompactFileRow(UploadJob job)
@@ -2323,25 +2376,32 @@ namespace RedfurSync
                 _ => CTextSub
             };
 
-            controls.ActionFlow.SuspendLayout();
-            controls.ActionFlow.Controls.Clear();
-            if (job.Status == UploadStatus.Failed)
+            string neededAction = job.Status == UploadStatus.Failed ? "retry"
+                : (job.Status is UploadStatus.Uploading or UploadStatus.Queued ? "cancel" : "none");
+            string currentAction = controls.ActionFlow.Tag as string ?? "none";
+            if (neededAction != currentAction)
             {
-                var btnRetry = MakeStyledButton("Retry", CGoldBrt);
-                btnRetry.Height = (int)(22 * _scale);
-                btnRetry.Font = Mono(7f, _scale);
-                btnRetry.Click += (_, _) => _watcher.RetryJob(job);
-                controls.ActionFlow.Controls.Add(btnRetry);
+                controls.ActionFlow.Tag = neededAction;
+                controls.ActionFlow.SuspendLayout();
+                controls.ActionFlow.Controls.Clear();
+                if (neededAction == "retry")
+                {
+                    var btnRetry = MakeStyledButton("Retry", CGoldBrt);
+                    btnRetry.Height = (int)(22 * _scale);
+                    btnRetry.Font = Mono(7f, _scale);
+                    btnRetry.Click += (_, _) => _watcher.RetryJob(job);
+                    controls.ActionFlow.Controls.Add(btnRetry);
+                }
+                else if (neededAction == "cancel")
+                {
+                    var btnCancel = MakeStyledButton("Cancel", CBarFail);
+                    btnCancel.Height = (int)(22 * _scale);
+                    btnCancel.Font = Mono(7f, _scale);
+                    btnCancel.Click += (_, _) => _watcher.CancelJob(job);
+                    controls.ActionFlow.Controls.Add(btnCancel);
+                }
+                controls.ActionFlow.ResumeLayout(true);
             }
-            else if (job.Status is UploadStatus.Uploading or UploadStatus.Queued)
-            {
-                var btnCancel = MakeStyledButton("Cancel", CBarFail);
-                btnCancel.Height = (int)(22 * _scale);
-                btnCancel.Font = Mono(7f, _scale);
-                btnCancel.Click += (_, _) => _watcher.CancelJob(job);
-                controls.ActionFlow.Controls.Add(btnCancel);
-            }
-            controls.ActionFlow.ResumeLayout(true);
 
             controls.Row.Invalidate();
         }
@@ -2526,66 +2586,90 @@ namespace RedfurSync
             controls.DetailLabel.ForeColor = string.IsNullOrWhiteSpace(job.ErrorMessage) ? CTextSub : CBarFail;
 
             // Reconcile action buttons dynamically
-            controls.ActionFlow.SuspendLayout();
-            controls.ActionFlow.Controls.Clear();
-            if (job.Status == UploadStatus.UpdateReady)
+            string neededJobAction = job.Status == UploadStatus.UpdateReady ? "upgrade"
+                : (job.Status == UploadStatus.Failed ? "retry"
+                : (job.Status is UploadStatus.Uploading or UploadStatus.Queued ? "cancel" : "none"));
+            string currentJobAction = controls.ActionFlow.Tag as string ?? "none";
+            if (neededJobAction != currentJobAction)
             {
-                var btnApply = MakeStyledButton("Apply Upgrade", Color.FromArgb(196, 137, 255));
-                btnApply.Click += (_, _) => _applyUpdateAction(job);
-                controls.ActionFlow.Controls.Add(btnApply);
+                controls.ActionFlow.Tag = neededJobAction;
+                controls.ActionFlow.SuspendLayout();
+                controls.ActionFlow.Controls.Clear();
+                if (neededJobAction == "upgrade")
+                {
+                    var btnApply = MakeStyledButton("Apply Upgrade", Color.FromArgb(196, 137, 255));
+                    btnApply.Click += (_, _) => _applyUpdateAction(job);
+                    controls.ActionFlow.Controls.Add(btnApply);
+                }
+                else if (neededJobAction == "retry")
+                {
+                    var btnRetry = MakeStyledButton("Retry", CGoldBrt);
+                    btnRetry.Click += (_, _) => _watcher.RetryJob(job);
+                    controls.ActionFlow.Controls.Add(btnRetry);
+                }
+                else if (neededJobAction == "cancel")
+                {
+                    var btnCancel = MakeStyledButton("Cancel", CBarFail);
+                    btnCancel.Click += (_, _) => _watcher.CancelJob(job);
+                    controls.ActionFlow.Controls.Add(btnCancel);
+                }
+                controls.ActionFlow.ResumeLayout(true);
             }
-            else if (job.Status == UploadStatus.Failed)
-            {
-                var btnRetry = MakeStyledButton("Retry", CGoldBrt);
-                btnRetry.Click += (_, _) => _watcher.RetryJob(job);
-                controls.ActionFlow.Controls.Add(btnRetry);
-            }
-            else if (job.Status is UploadStatus.Uploading or UploadStatus.Queued)
-            {
-                var btnCancel = MakeStyledButton("Cancel", CBarFail);
-                btnCancel.Click += (_, _) => _watcher.CancelJob(job);
-                controls.ActionFlow.Controls.Add(btnCancel);
-            }
-            controls.ActionFlow.ResumeLayout(true);
 
             controls.Card.Invalidate();
         }
 
         private void ResizeSyncJobCards()
         {
-            int targetWidth = Math.Max(200, _syncJobsList.ClientSize.Width - (int)(20 * _scale));
-            foreach (Control ctrl in _syncJobsList.Controls)
+            if (_isResizingSyncCards) return;
+            _isResizingSyncCards = true;
+            try
             {
-                if (Equals(ctrl.Tag, "session-card") || Equals(ctrl.Tag, "sync-card") || Equals(ctrl.Tag, "empty-card"))
+                int targetWidth = Math.Max(200, _syncJobsList.ClientSize.Width - (int)(20 * _scale));
+                foreach (Control ctrl in _syncJobsList.Controls)
                 {
-                    ctrl.Width = targetWidth;
+                    if (Equals(ctrl.Tag, "session-card") || Equals(ctrl.Tag, "sync-card") || Equals(ctrl.Tag, "empty-card"))
+                    {
+                        if (ctrl.Width != targetWidth)
+                            ctrl.Width = targetWidth;
+                    }
+                }
+
+                foreach (var sc in _sessionCards.Values)
+                {
+                    int rowWidth = Math.Max(180, sc.Card.ClientSize.Width - (int)(24 * _scale));
+                    if (sc.FilesContainer.Width != sc.Card.ClientSize.Width)
+                        sc.FilesContainer.Width = sc.Card.ClientSize.Width;
+
+                    foreach (var rowCtrl in sc.FileRows.Values)
+                    {
+                        if (rowCtrl.Row.Width != rowWidth)
+                            rowCtrl.Row.Width = rowWidth;
+                    }
+
+                    // Refresh explicit card height
+                    int headerH = (int)(48 * _scale);
+                    if (IsSessionExpanded(sc.Session))
+                    {
+                        int rowH = (int)(32 * _scale);
+                        int rowGap = (int)(3 * _scale);
+                        int containerInnerPad = (int)(14 * _scale);
+                        int totalFileH = sc.Session.Jobs.Count * (rowH + rowGap) + containerInnerPad;
+                        if (sc.FilesContainer.Height != totalFileH)
+                            sc.FilesContainer.Height = totalFileH;
+                        if (sc.Card.Height != headerH + totalFileH)
+                            sc.Card.Height = headerH + totalFileH;
+                    }
+                    else
+                    {
+                        if (sc.Card.Height != headerH)
+                            sc.Card.Height = headerH;
+                    }
                 }
             }
-
-            foreach (var sc in _sessionCards.Values)
+            finally
             {
-                int rowWidth = Math.Max(180, sc.Card.ClientSize.Width - (int)(24 * _scale));
-                sc.FilesContainer.Width = sc.Card.ClientSize.Width;
-                foreach (var rowCtrl in sc.FileRows.Values)
-                {
-                    rowCtrl.Row.Width = rowWidth;
-                }
-
-                // Refresh explicit card height
-                int headerH = (int)(48 * _scale);
-                if (IsSessionExpanded(sc.Session))
-                {
-                    int rowH = (int)(32 * _scale);
-                    int rowGap = (int)(3 * _scale);
-                    int containerInnerPad = (int)(14 * _scale);
-                    int totalFileH = sc.Session.Jobs.Count * (rowH + rowGap) + containerInnerPad;
-                    sc.FilesContainer.Height = totalFileH;
-                    sc.Card.Height = headerH + totalFileH;
-                }
-                else
-                {
-                    sc.Card.Height = headerH;
-                }
+                _isResizingSyncCards = false;
             }
         }
 
@@ -4191,14 +4275,15 @@ namespace RedfurSync
 
         private void OnSyncCoalesceTick(object? state)
         {
-            if (IsDisposed || !IsHandleCreated || !Visible) return;
+            if (IsDisposed || !IsHandleCreated || !Visible || WindowState == FormWindowState.Minimized) return;
+            if (_isRefreshingSyncView) return;
             long currentVer = _watcher.CurrentJobVersion;
             if (currentVer != _lastRenderedJobVersion)
             {
                 _lastRenderedJobVersion = currentVer;
                 _syncContext?.Post(_ =>
                 {
-                    if (!IsDisposed && IsHandleCreated && Visible)
+                    if (!IsDisposed && IsHandleCreated && Visible && WindowState != FormWindowState.Minimized)
                     {
                         RefreshSyncView();
                     }
