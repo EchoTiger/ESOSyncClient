@@ -1561,6 +1561,49 @@ namespace RedfurSync
                 _tickerLabel.Text = $"{spin} [TRANSMITTING] {activeJob.FileName} • {pct}% {bar} {wave} REDFUR RELAY";
                 _tickerLabel.ForeColor = CGoldBrt;
             }
+
+            // Smooth live animation of active transmitting rows (plasma gauge & carrier waves)
+            if (isUploading)
+            {
+                int animCycle = (_animFrame / 2) % 4;
+                string waveGlyph = animCycle switch { 0 => "▪▫▫▫", 1 => "▫▪▫▫", 2 => "▫▫▪▫", _ => "▫▫▫▪" };
+
+                foreach (var sc in _sessionCards.Values)
+                {
+                    if (sc.Session.AggregateStatus == UploadStatus.Uploading)
+                    {
+                        sc.ChevronLabel?.Parent?.Invalidate(); // Refresh session header plasma gauge
+                        if (sc.StatusLabel != null && !sc.StatusLabel.IsDisposed)
+                        {
+                            sc.StatusLabel.Text = $"⚡ TRANSMITTING {waveGlyph} ({sc.Session.DoneCount}/{sc.Session.TotalCount})";
+                        }
+                    }
+
+                    foreach (var kvp in sc.FileRows)
+                    {
+                        if (kvp.Key.Status == UploadStatus.Uploading)
+                        {
+                            kvp.Value.Row.Invalidate();
+                            if (kvp.Value.StatusLabel != null && !kvp.Value.StatusLabel.IsDisposed)
+                            {
+                                kvp.Value.StatusLabel.Text = $"⚡ TRANSMITTING {waveGlyph} {(int)(kvp.Key.Progress * 100)}%";
+                            }
+                        }
+                    }
+                }
+
+                foreach (var kvp in _jobCards)
+                {
+                    if (kvp.Key.Status == UploadStatus.Uploading)
+                    {
+                        kvp.Value.Card.Invalidate();
+                        if (kvp.Value.StatusLabel != null && !kvp.Value.StatusLabel.IsDisposed)
+                        {
+                            kvp.Value.StatusLabel.Text = $"⚡ TRANSMITTING {waveGlyph} {(int)(kvp.Key.Progress * 100)}%";
+                        }
+                    }
+                }
+            }
         }
 
         private static string BuildAsciiBar(float progress, int width)
@@ -1932,7 +1975,7 @@ namespace RedfurSync
                 Color accentCol = session.AggregateStatus switch
                 {
                     UploadStatus.Done => CGreen,
-                    UploadStatus.Uploading => CGoldBrt,
+                    UploadStatus.Uploading => Color.FromArgb(60, 200, 240),
                     UploadStatus.Failed => CBarFail,
                     _ => CWarn
                 };
@@ -1941,7 +1984,8 @@ namespace RedfurSync
                 using (var pillarBrush = new SolidBrush(accentCol))
                     g.FillRectangle(pillarBrush, 1, 1, pillarW, card.Height - 2);
 
-                using (var flareBrush = new SolidBrush(Color.FromArgb(35, accentCol)))
+                int flareAlpha = session.AggregateStatus == UploadStatus.Uploading ? (int)(50 + 20 * Math.Sin(_animFrame * 0.3f)) : 30;
+                using (var flareBrush = new SolidBrush(Color.FromArgb(Math.Clamp(flareAlpha, 15, 80), accentCol)))
                     g.FillRectangle(flareBrush, 1 + pillarW, 1, (int)(8 * _scale), card.Height - 2);
 
                 // 4. Dwemer brass chassis corner rivets
@@ -1950,18 +1994,20 @@ namespace RedfurSync
                 DrawCornerRivets(g, card.Width, card.Height, rivetOffset, Color.FromArgb(90, CGoldMid));
             };
 
-            // Files container (nested compact rows for batch contents)
+            // Files container (nested scrollable cassette deck for batch contents)
             var filesContainer = new DoubleBufferedFlowLayoutPanel
             {
-                Dock = DockStyle.Top,
+                Dock = DockStyle.Fill,
                 AutoSize = false,
+                AutoScroll = true,
                 FlowDirection = FlowDirection.TopDown,
                 WrapContents = false,
                 BackColor = Color.FromArgb(10, 8, 7),
-                Padding = new Padding((int)(12 * _scale), (int)(6 * _scale), (int)(12 * _scale), (int)(8 * _scale)),
+                Padding = new Padding((int)(10 * _scale), (int)(4 * _scale), (int)(10 * _scale), (int)(6 * _scale)),
                 Margin = new Padding(0),
                 Visible = false,
             };
+            filesContainer.HandleCreated += (_, _) => FissalTheme.ApplyDarkScrollbars(filesContainer.Handle);
 
             filesContainer.Paint += (s, e) =>
             {
@@ -1970,7 +2016,7 @@ namespace RedfurSync
                 DrawTerminalMesh(g, new Rectangle(0, 0, filesContainer.Width, filesContainer.Height), _scale, 4);
             };
 
-            // Header panel (clickable top strip)
+            // Header panel (clickable top strip, always hovering at the top of the batch)
             var headerPanel = new DoubleBufferedPanel
             {
                 Dock = DockStyle.Top,
@@ -1983,24 +2029,46 @@ namespace RedfurSync
             headerPanel.Paint += (s, e) =>
             {
                 var g = e.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+
                 if (IsSessionExpanded(session))
                 {
-                    using var divPen = new Pen(Color.FromArgb(50, CGoldMid), 1f) { DashStyle = DashStyle.Dash };
-                    g.DrawLine(divPen, (int)(10 * _scale), headerPanel.Height - 1, headerPanel.Width - (int)(10 * _scale), headerPanel.Height - 1);
+                    using var divPen = new Pen(Color.FromArgb(70, CGoldMid), 1f);
+                    g.DrawLine(divPen, (int)(8 * _scale), headerPanel.Height - 1, headerPanel.Width - (int)(8 * _scale), headerPanel.Height - 1);
                 }
 
                 if (session.AggregateStatus == UploadStatus.Uploading)
                 {
-                    int barH = Math.Max(2, (int)(3 * _scale));
-                    int barY = headerPanel.Height - barH;
-                    float prog = Math.Clamp(session.AggregateProgress, 0.05f, 1f);
-                    int fillW = (int)(headerPanel.Width * prog);
+                    int barH = Math.Max(3, (int)(3 * _scale));
+                    int barPadX = (int)(14 * _scale);
+                    int barY = headerPanel.Height - barH - (int)(2 * _scale);
+                    int barW = headerPanel.Width - barPadX * 2;
 
-                    using var barBg = new SolidBrush(Color.FromArgb(40, CGoldMid));
-                    g.FillRectangle(barBg, 0, barY, headerPanel.Width, barH);
+                    if (barW > 20)
+                    {
+                        using var grooveBrush = new SolidBrush(Color.FromArgb(10, 8, 6));
+                        g.FillRectangle(grooveBrush, barPadX, barY, barW, barH);
+                        using var groovePen = new Pen(Color.FromArgb(40, CGoldMid), 1f);
+                        g.DrawRectangle(groovePen, barPadX, barY, barW, barH);
 
-                    using var barBrush = new SolidBrush(CGoldBrt);
-                    g.FillRectangle(barBrush, 0, barY, fillW, barH);
+                        float prog = Math.Clamp(session.AggregateProgress, 0.05f, 1f);
+                        int fillW = (int)(barW * prog);
+
+                        if (fillW > 0)
+                        {
+                            var fillRect = new Rectangle(barPadX, barY, fillW, barH);
+                            using var plasmaBrush = new LinearGradientBrush(
+                                fillRect,
+                                Color.FromArgb(40, 180, 240),
+                                CGoldBrt,
+                                LinearGradientMode.Horizontal);
+                            g.FillRectangle(plasmaBrush, fillRect);
+
+                            int sparkW = Math.Min(fillW, (int)(6 * _scale));
+                            using var sparkBrush = new SolidBrush(Color.FromArgb(255, 255, 230));
+                            g.FillRectangle(sparkBrush, barPadX + fillW - sparkW, barY, sparkW, barH);
+                        }
+                    }
                 }
             };
 
@@ -2108,11 +2176,11 @@ namespace RedfurSync
             statusLabel.Click += (_, _) => ToggleSession();
             detailLabel.Click += (_, _) => ToggleSession();
 
-            // Order: filesContainer below headerPanel
+            // Docking order: headerPanel docked Top at y=0, filesContainer docked Fill below it
             card.Controls.Add(filesContainer);
             card.Controls.Add(headerPanel);
-            card.Controls.SetChildIndex(headerPanel, 0);
-            card.Controls.SetChildIndex(filesContainer, 1);
+            card.Controls.SetChildIndex(headerPanel, 1);
+            card.Controls.SetChildIndex(filesContainer, 0);
 
             var controls = new SessionCardControls
             {
@@ -2143,9 +2211,12 @@ namespace RedfurSync
             controls.SubtitleLabel.Text = $"{session.TotalCount} files • {session.TotalSizeDisplay}";
             controls.SubtitleLabel.ForeColor = isExpanded ? CTextSub : Color.FromArgb(100, CTextSub);  // D4: ghost when collapsed
 
+            int animCycle = (_animFrame / 2) % 4;
+            string wave = animCycle switch { 0 => "▪▫▫▫", 1 => "▫▪▫▫", 2 => "▫▫▪▫", _ => "▫▫▫▪" };
+
             controls.StatusLabel.Text = session.AggregateStatus switch
             {
-                UploadStatus.Uploading => $"⚡ TRANSMITTING ({session.DoneCount}/{session.TotalCount})",
+                UploadStatus.Uploading => $"⚡ TRANSMITTING {wave} ({session.DoneCount}/{session.TotalCount})",
                 UploadStatus.Queued => $"⏳ QUEUED ({session.TotalCount} files)",
                 UploadStatus.Done => $"✓ ALL SYNCHRONIZED ({session.TotalCount} files)",
                 UploadStatus.Failed => $"⚠ {session.FailedCount} FAILED",
@@ -2154,7 +2225,7 @@ namespace RedfurSync
             controls.StatusLabel.ForeColor = session.AggregateStatus switch
             {
                 UploadStatus.Done => CGreen,
-                UploadStatus.Uploading => CGoldBrt,
+                UploadStatus.Uploading => Color.FromArgb(60, 200, 240),
                 UploadStatus.Queued => CWarn,
                 UploadStatus.Failed => CBarFail,
                 _ => CTextSub
@@ -2219,14 +2290,18 @@ namespace RedfurSync
                 }
 
                 int totalFileH = currentJobs.Count * (rowH + rowGap) + containerInnerPad;
-                if (controls.FilesContainer.Height != totalFileH)
-                    controls.FilesContainer.Height = totalFileH;
+                int maxDeckH = (int)(250 * _scale);
+                int deckH = Math.Min(totalFileH, maxDeckH);
+                bool needsScroll = totalFileH > maxDeckH;
+                if (controls.FilesContainer.AutoScroll != needsScroll)
+                    controls.FilesContainer.AutoScroll = needsScroll;
+
                 if (!controls.FilesContainer.Visible)
                     controls.FilesContainer.Visible = true;
                 controls.FilesContainer.ResumeLayout(true);
 
-                if (controls.Card.Height != headerH + totalFileH)
-                    controls.Card.Height = headerH + totalFileH;
+                if (controls.Card.Height != headerH + deckH)
+                    controls.Card.Height = headerH + deckH;
             }
             else
             {
@@ -2243,8 +2318,8 @@ namespace RedfurSync
         {
             var row = new DoubleBufferedPanel
             {
-                BackColor = Color.FromArgb(18, 15, 12),
-                Margin = new Padding(0, 1, 0, (int)(2 * _scale)),
+                BackColor = Color.FromArgb(16, 14, 12),
+                Margin = new Padding(0, 1, 0, (int)(3 * _scale)),
                 Tag = "file-row",
             };
 
@@ -2253,34 +2328,85 @@ namespace RedfurSync
                 var g = e.Graphics;
                 g.SmoothingMode = SmoothingMode.AntiAlias;
 
-                using (var bg = new SolidBrush(Color.FromArgb(18, 15, 12)))
-                    g.FillRectangle(bg, row.ClientRectangle);
+                var bounds = new Rectangle(0, 0, row.Width - 1, row.Height - 1);
 
-                using var pen = new Pen(Color.FromArgb(35, CBorderSub), 1f);
-                g.DrawRectangle(pen, 0, 0, row.Width - 1, row.Height - 1);
+                // 1. Dark Dwemer cassette chassis background
+                Color rowBg = job.Status switch
+                {
+                    UploadStatus.Uploading => Color.FromArgb(22, 18, 14),
+                    UploadStatus.Failed => Color.FromArgb(24, 14, 14),
+                    _ => Color.FromArgb(16, 14, 12)
+                };
+                using (var bgBrush = new SolidBrush(rowBg))
+                    g.FillRectangle(bgBrush, bounds);
 
+                // 2. Subtle status rim border
+                Color borderCol = job.Status switch
+                {
+                    UploadStatus.Uploading => Color.FromArgb(90, CGoldMid),
+                    UploadStatus.Done => Color.FromArgb(40, CGreen),
+                    UploadStatus.Failed => Color.FromArgb(100, CBarFail),
+                    UploadStatus.Queued => Color.FromArgb(40, CWarn),
+                    _ => Color.FromArgb(30, CBorderSub)
+                };
+                using (var borderPen = new Pen(borderCol, 1f))
+                    g.DrawRectangle(borderPen, bounds);
+
+                // 3. Left indicator capsule (Dwemer soul gem pillar)
+                Color pillarCol = job.Status switch
+                {
+                    UploadStatus.Uploading => Color.FromArgb(60, 200, 240), // Cyan tonal frequency
+                    UploadStatus.Done => CGreen,                             // Emerald verified
+                    UploadStatus.Failed => CBarFail,                         // Crimson hazard
+                    UploadStatus.Queued => CWarn,                            // Amber queued
+                    _ => CTextSub
+                };
+
+                int pillarW = (int)(4 * _scale);
+                using (var pillarBrush = new SolidBrush(pillarCol))
+                    g.FillRectangle(pillarBrush, 1, 1, pillarW, row.Height - 2);
+
+                // Glowing aura next to pillar
+                int flareAlpha = job.Status == UploadStatus.Uploading ? (int)(50 + 25 * Math.Sin(_animFrame * 0.3f)) : 25;
+                using (var flareBrush = new SolidBrush(Color.FromArgb(Math.Clamp(flareAlpha, 15, 80), pillarCol)))
+                    g.FillRectangle(flareBrush, 1 + pillarW, 1, (int)(6 * _scale), row.Height - 2);
+
+                // 4. Progress Gauge: Illuminated Dwemer Tonal Plasma Bar
                 if (job.Status == UploadStatus.Uploading)
                 {
-                    int barH = Math.Max(2, (int)(2 * _scale));
-                    int barY = row.Height - barH;
-                    float prog = Math.Clamp(job.Progress, 0.05f, 1f);
-                    int fillW = (int)(row.Width * prog);
+                    int barH = Math.Max(3, (int)(3 * _scale));
+                    int barPadX = (int)(12 * _scale);
+                    int barY = row.Height - barH - (int)(2 * _scale);
+                    int barW = row.Width - barPadX * 2;
 
-                    using var barBg = new SolidBrush(Color.FromArgb(30, CGoldMid));
-                    g.FillRectangle(barBg, 0, barY, row.Width, barH);
+                    if (barW > 20)
+                    {
+                        // Recessed dark groove
+                        using var grooveBrush = new SolidBrush(Color.FromArgb(10, 8, 6));
+                        g.FillRectangle(grooveBrush, barPadX, barY, barW, barH);
+                        using var groovePen = new Pen(Color.FromArgb(40, CGoldMid), 1f);
+                        g.DrawRectangle(groovePen, barPadX, barY, barW, barH);
 
-                    using var barBrush = new SolidBrush(CGoldBrt);
-                    g.FillRectangle(barBrush, 0, barY, fillW, barH);
-                }
-                else if (job.Status == UploadStatus.Done)
-                {
-                    using var dot = new SolidBrush(CGreen);
-                    g.FillRectangle(dot, 1, 1, (int)(2 * _scale), row.Height - 2);
-                }
-                else if (job.Status is UploadStatus.Failed or UploadStatus.Cancelled)
-                {
-                    using var dot = new SolidBrush(CBarFail);
-                    g.FillRectangle(dot, 1, 1, (int)(2 * _scale), row.Height - 2);
+                        // Dual gradient fluid fill (cyan -> bright amber)
+                        float prog = Math.Clamp(job.Progress, 0.05f, 1f);
+                        int fillW = (int)(barW * prog);
+
+                        if (fillW > 0)
+                        {
+                            var fillRect = new Rectangle(barPadX, barY, fillW, barH);
+                            using var plasmaBrush = new LinearGradientBrush(
+                                fillRect,
+                                Color.FromArgb(40, 180, 240),
+                                CGoldBrt,
+                                LinearGradientMode.Horizontal);
+                            g.FillRectangle(plasmaBrush, fillRect);
+
+                            // Leading energetic spark / head beacon
+                            int sparkW = Math.Min(fillW, (int)(6 * _scale));
+                            using var sparkBrush = new SolidBrush(Color.FromArgb(255, 255, 230));
+                            g.FillRectangle(sparkBrush, barPadX + fillW - sparkW, barY, sparkW, barH);
+                        }
+                    }
                 }
             };
 
@@ -2358,11 +2484,14 @@ namespace RedfurSync
             controls.NameLabel.Text = "📄 " + job.FileName;
             controls.MetaLabel.Text = $"{job.QueuedAt:HH:mm:ss} • {job.FileSizeDisplay}";
 
+            int animCycle = (_animFrame / 2) % 4;
+            string wave = animCycle switch { 0 => "▪▫▫▫", 1 => "▫▪▫▫", 2 => "▫▫▪▫", _ => "▫▫▫▪" };
+
             controls.StatusLabel.Text = job.Status switch
             {
                 UploadStatus.Queued => "⏳ QUEUED",
-                UploadStatus.Uploading => $"⚡ UPLOADING {(int)(job.Progress * 100)}%",
-                UploadStatus.Done => "✓ SYNCHRONIZED",
+                UploadStatus.Uploading => $"⚡ TRANSMITTING {wave} {(int)(job.Progress * 100)}%",
+                UploadStatus.Done => "✦ SYNCHRONIZED",
                 UploadStatus.Failed => string.IsNullOrWhiteSpace(job.ErrorMessage) ? "⚠ FAILED" : $"⚠ {job.ErrorMessage}",
                 UploadStatus.Cancelled => "CANCELLED",
                 _ => job.Status.ToString().ToUpperInvariant()
@@ -2370,7 +2499,7 @@ namespace RedfurSync
             controls.StatusLabel.ForeColor = job.Status switch
             {
                 UploadStatus.Done => CGreen,
-                UploadStatus.Uploading => CGoldBrt,
+                UploadStatus.Uploading => Color.FromArgb(60, 200, 240),
                 UploadStatus.Queued => CWarn,
                 UploadStatus.Failed => CBarFail,
                 _ => CTextSub
@@ -2446,7 +2575,7 @@ namespace RedfurSync
                 Color accentCol = job.Status switch
                 {
                     UploadStatus.Done => CGreen,
-                    UploadStatus.Uploading => CGoldBrt,
+                    UploadStatus.Uploading => Color.FromArgb(60, 200, 240),
                     UploadStatus.UpdateReady => Color.FromArgb(180, 137, 255),
                     UploadStatus.Failed => CBarFail,
                     _ => CWarn
@@ -2457,23 +2586,44 @@ namespace RedfurSync
                 {
                     g.FillRectangle(dotBrush, 1, 1, pillarW, card.Height - 2);
                 }
-                using (var flareBrush = new SolidBrush(Color.FromArgb(30, accentCol)))
+                int flareAlpha = job.Status == UploadStatus.Uploading ? (int)(50 + 25 * Math.Sin(_animFrame * 0.3f)) : 30;
+                using (var flareBrush = new SolidBrush(Color.FromArgb(Math.Clamp(flareAlpha, 15, 80), accentCol)))
                 {
                     g.FillRectangle(flareBrush, 1 + pillarW, 1, (int)(6 * _scale), card.Height - 2);
                 }
 
                 if (job.Status == UploadStatus.Uploading)
                 {
-                    int barH = Math.Max(2, (int)(3 * _scale));
-                    int barY = card.Height - barH;
-                    float prog = Math.Clamp(job.Progress, 0.05f, 1f);
-                    int fillW = (int)(card.Width * prog);
+                    int barH = Math.Max(3, (int)(3 * _scale));
+                    int barPadX = (int)(14 * _scale);
+                    int barY = card.Height - barH - (int)(3 * _scale);
+                    int barW = card.Width - barPadX * 2;
 
-                    using var barBg = new SolidBrush(Color.FromArgb(40, CGoldMid));
-                    g.FillRectangle(barBg, 0, barY, card.Width, barH);
+                    if (barW > 20)
+                    {
+                        using var grooveBrush = new SolidBrush(Color.FromArgb(10, 8, 6));
+                        g.FillRectangle(grooveBrush, barPadX, barY, barW, barH);
+                        using var groovePen = new Pen(Color.FromArgb(40, CGoldMid), 1f);
+                        g.DrawRectangle(groovePen, barPadX, barY, barW, barH);
 
-                    using var barBrush = new SolidBrush(CGoldBrt);
-                    g.FillRectangle(barBrush, 0, barY, fillW, barH);
+                        float prog = Math.Clamp(job.Progress, 0.05f, 1f);
+                        int fillW = (int)(barW * prog);
+
+                        if (fillW > 0)
+                        {
+                            var fillRect = new Rectangle(barPadX, barY, fillW, barH);
+                            using var plasmaBrush = new LinearGradientBrush(
+                                fillRect,
+                                Color.FromArgb(40, 180, 240),
+                                CGoldBrt,
+                                LinearGradientMode.Horizontal);
+                            g.FillRectangle(plasmaBrush, fillRect);
+
+                            int sparkW = Math.Min(fillW, (int)(6 * _scale));
+                            using var sparkBrush = new SolidBrush(Color.FromArgb(255, 255, 230));
+                            g.FillRectangle(sparkBrush, barPadX + fillW - sparkW, barY, sparkW, barH);
+                        }
+                    }
                 }
 
                 int rivetOffset = (int)(5 * _scale);
@@ -2637,10 +2787,7 @@ namespace RedfurSync
 
                 foreach (var sc in _sessionCards.Values)
                 {
-                    int rowWidth = Math.Max(180, sc.Card.ClientSize.Width - (int)(24 * _scale));
-                    if (sc.FilesContainer.Width != sc.Card.ClientSize.Width)
-                        sc.FilesContainer.Width = sc.Card.ClientSize.Width;
-
+                    int rowWidth = Math.Max(180, sc.FilesContainer.ClientSize.Width - (int)(16 * _scale));
                     foreach (var rowCtrl in sc.FileRows.Values)
                     {
                         if (rowCtrl.Row.Width != rowWidth)
@@ -2655,10 +2802,14 @@ namespace RedfurSync
                         int rowGap = (int)(3 * _scale);
                         int containerInnerPad = (int)(14 * _scale);
                         int totalFileH = sc.Session.Jobs.Count * (rowH + rowGap) + containerInnerPad;
-                        if (sc.FilesContainer.Height != totalFileH)
-                            sc.FilesContainer.Height = totalFileH;
-                        if (sc.Card.Height != headerH + totalFileH)
-                            sc.Card.Height = headerH + totalFileH;
+                        int maxDeckH = (int)(250 * _scale);
+                        int deckH = Math.Min(totalFileH, maxDeckH);
+                        bool needsScroll = totalFileH > maxDeckH;
+                        if (sc.FilesContainer.AutoScroll != needsScroll)
+                            sc.FilesContainer.AutoScroll = needsScroll;
+
+                        if (sc.Card.Height != headerH + deckH)
+                            sc.Card.Height = headerH + deckH;
                     }
                     else
                     {
