@@ -223,33 +223,32 @@ namespace RedfurSync
             }
         }
 
-        private Uri BuildHealthUri()
-        {
-            if (!string.IsNullOrWhiteSpace(_config.DeviceToken)) return BuildRelayUri("/health");
-            if (!Uri.TryCreate(_config.ServerUrl, UriKind.Absolute, out var endpoint))
-                throw new InvalidOperationException("The configured server URL is invalid.");
-
-            var builder = new UriBuilder(endpoint)
-            {
-                Path = endpoint.AbsolutePath.TrimEnd('/') + "/health"
-            };
-
-            return builder.Uri;
-        }
+        private Uri BuildHealthUri() => (!string.IsNullOrWhiteSpace(_config.DeviceToken) || !string.IsNullOrWhiteSpace(_config.ApiKey))
+            ? BuildRelayUri("/health")
+            : new Uri(_config.ServerUrl, UriKind.Absolute);
 
         // Pairing uses Environment.MachineName as initial label; post-pair renames flow via PATCH /api/relay/v1/devices/{id} (UpdateDeviceLabelAsync).
         public async Task<(bool ok, string message)> PairAsync()
         {
             if (!string.IsNullOrWhiteSpace(_config.DeviceToken)) return (true, "Already paired");
-            if (!string.IsNullOrWhiteSpace(_config.ApiKey)) return (true, "Legacy API key mode");
-            if (string.IsNullOrWhiteSpace(_config.PairingCode)) return (false, "A pairing code is required.");
+            if (string.IsNullOrWhiteSpace(_config.PairingCode))
+            {
+                if (!string.IsNullOrWhiteSpace(_config.ApiKey)) return (true, "API key mode active");
+                return (false, "A pairing code is required.");
+            }
+
             try
             {
-                var payload = JsonSerializer.Serialize(new { code = _config.PairingCode, deviceName = Environment.MachineName });
+                var payload = JsonSerializer.Serialize(new { code = _config.PairingCode.Trim(), deviceName = Environment.MachineName });
                 using var request = new HttpRequestMessage(HttpMethod.Post, BuildRelayUri("/pair"))
                 {
                     Content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json"),
                 };
+                if (!string.IsNullOrWhiteSpace(_config.ApiKey))
+                {
+                    request.Headers.Add("X-Api-Key", _config.ApiKey.Trim());
+                }
+
                 using var response = await _syncHttp.SendAsync(request);
                 if (!response.IsSuccessStatusCode) return (false, "Pairing code was rejected or expired.");
                 using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
@@ -258,7 +257,7 @@ namespace RedfurSync
                 _config.DeviceToken = token.GetString()!;
                 _config.PairingCode = string.Empty;
                 _config.Save();
-                return (true, "Device paired");
+                return (true, "Device paired successfully with the Redfur Lattice");
             }
             catch (Exception ex)
             {
@@ -268,7 +267,7 @@ namespace RedfurSync
 
         public async Task<(bool ok, string message, string model)> AskFissalAsync(string prompt)
         {
-            if (string.IsNullOrWhiteSpace(_config.DeviceToken))
+            if (string.IsNullOrWhiteSpace(_config.DeviceToken) && string.IsNullOrWhiteSpace(_config.ApiKey))
                 return (false, "Pair Fissal Relay before using the assistant.", string.Empty);
             if (string.IsNullOrWhiteSpace(prompt) || prompt.Trim().Length > 12000)
                 return (false, "The assistant request is too large. Clear the chat and try a shorter question.", string.Empty);

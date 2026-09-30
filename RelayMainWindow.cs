@@ -3119,7 +3119,9 @@ namespace RedfurSync
                 }
 
                 AddAssistantMessage(false, reply, !result.ok);
-                _assistantModelLabel.Text = result.ok ? "● CONNECTED" : "● ERROR";
+                _assistantModelLabel.Text = result.ok
+                    ? (!string.IsNullOrWhiteSpace(result.model) ? $"● {result.model.ToUpperInvariant()}" : "● CONNECTED")
+                    : "● ERROR";
                 _assistantModelLabel.ForeColor = result.ok ? CGreen : CBarFail;
                 _assistantStatus.Text = result.ok ? "Response received." : "Communication interrupted.";
             }
@@ -4024,10 +4026,18 @@ namespace RedfurSync
         private async Task RunDevicePairingAsync()
         {
             string code = _txtPairingCode.Text.Trim();
+            var cfg = AppConfig.Instance;
             if (string.IsNullOrWhiteSpace(code))
             {
-                FissalBox.Show("Please enter a pairing code from the Redfur web interface.", "Pairing Code Missing");
-                return;
+                if (!string.IsNullOrWhiteSpace(cfg.ApiKey))
+                {
+                    code = cfg.ApiKey.Trim();
+                }
+                else
+                {
+                    FissalBox.Show("Please enter a pairing code from the Redfur web interface, or configure an API key.", "Pairing Code Missing");
+                    return;
+                }
             }
 
             _btnPairDevice.Enabled = false;
@@ -4035,7 +4045,6 @@ namespace RedfurSync
 
             try
             {
-                var cfg = AppConfig.Instance;
                 cfg.PairingCode = code;
                 cfg.DisplayName = _txtDisplayName.Text.Trim();
                 cfg.Save();
@@ -4045,7 +4054,7 @@ namespace RedfurSync
                 if (paired)
                 {
                     RefreshSetupView();
-                    FissalBox.Show("Device successfully paired with the Redfur Lattice!", "Pairing Complete");
+                    FissalBox.Show(message, "Pairing Complete");
                     _ = _watcher.StartAsync();
                 }
                 else
@@ -4072,11 +4081,27 @@ namespace RedfurSync
             _txtPairingCode.Text = cfg.PairingCode;
             _txtServerUrl.Text = cfg.ServerUrl;
 
-            bool paired = !string.IsNullOrWhiteSpace(cfg.DeviceToken) || !string.IsNullOrWhiteSpace(cfg.ApiKey);
-            _lblPairingStatus.Text = paired ? "✔ PAIRED WITH LATTICE" : "✖ UNPAIRED / CODE REQUIRED";
-            _lblPairingStatus.ForeColor = paired ? CGreen : CBarFail;
+            bool hasToken = !string.IsNullOrWhiteSpace(cfg.DeviceToken);
+            bool hasKey = !string.IsNullOrWhiteSpace(cfg.ApiKey);
 
-            _lblDeviceInfo.Text = $"Token Storage: DPAPI Encrypted (CurrentUser)\nUpdate Endpoint: {cfg.UpdateUrl}";
+            if (hasToken)
+            {
+                _lblPairingStatus.Text = "✔ PAIRED WITH LATTICE (Device Token Active)";
+                _lblPairingStatus.ForeColor = CGreen;
+            }
+            else if (hasKey)
+            {
+                _lblPairingStatus.Text = "◆ MASTER / DEDICATED API KEY (Owner Mode Active)";
+                _lblPairingStatus.ForeColor = CWarn;
+            }
+            else
+            {
+                _lblPairingStatus.Text = "✖ UNPAIRED / CODE REQUIRED";
+                _lblPairingStatus.ForeColor = CBarFail;
+            }
+
+            string authMode = hasToken ? "Device Token (rfr_... / DPAPI Encrypted)" : hasKey ? "Master API Key (Direct Owner Access)" : "Unlinked";
+            _lblDeviceInfo.Text = $"Auth Mode: {authMode}\nToken Storage: DPAPI Encrypted (CurrentUser)\nUpdate Endpoint: {cfg.UpdateUrl}";
             UpdateSilentSyncButton();
             UpdateSyncMmButton();
         }
