@@ -119,16 +119,16 @@ namespace RedfurSync
         {
             var config = AppConfig.Instance;
 
-            bool needsName = string.IsNullOrWhiteSpace(config.DisplayName) || config.DisplayName == "Redfur Trader";
-            bool needsPairing = string.IsNullOrWhiteSpace(config.DeviceToken) && string.IsNullOrWhiteSpace(config.ApiKey);
+            bool isPaired = !string.IsNullOrWhiteSpace(config.DeviceToken) || !string.IsNullOrWhiteSpace(config.ApiKey);
+            bool needsPairing = !isPaired;
 
-            if (needsName || needsPairing)
+            if (needsPairing)
             {
                 using var form = new DisplayNameForm(config.DisplayName);
-                form.ShowDialog();
+                var dr = form.ShowDialog();
                 
-                // If they still didn't pair or enter a pairing code, we log it
-                if (string.IsNullOrWhiteSpace(config.DeviceToken) && string.IsNullOrWhiteSpace(config.ApiKey) && string.IsNullOrWhiteSpace(config.PairingCode))
+                // If they canceled or still haven't paired, stand by quietly without raising alarming error popups
+                if (dr != DialogResult.OK || (string.IsNullOrWhiteSpace(config.DeviceToken) && string.IsNullOrWhiteSpace(config.ApiKey) && string.IsNullOrWhiteSpace(config.PairingCode)))
                 {
                     UpdateStatus("Waiting for a Relay pairing code");
                     return;

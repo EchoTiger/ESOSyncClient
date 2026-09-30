@@ -139,12 +139,16 @@ namespace RedfurSync
         IncludeFields = true 
     };
 
-        // TODO(security): ACL config.json to current user only (icacls /inheritance:r /grant:r "%USERNAME%:(OI)(CI)F")
         public static string ConfigDirectory { get; } = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "FissalCogworkCourier");
 
-        public static string ConfigPath { get; } = Path.Combine(ConfigDirectory, "config.json");
+        public static string? OverrideConfigPath { get; set; }
+
+        public static string ConfigPath => OverrideConfigPath ?? Path.Combine(ConfigDirectory, "config.json");
+
+        [JsonIgnore]
+        public string? StoragePath { get; set; }
         
         private static AppConfig? _instance;
         private static readonly object _fileLock = new object();
@@ -177,22 +181,24 @@ namespace RedfurSync
 
         private static AppConfig LoadLocked()
         {
-            Directory.CreateDirectory(ConfigDirectory);
-            if (!File.Exists(ConfigPath)) 
+            var path = ConfigPath;
+            var dir = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+            if (!File.Exists(path)) 
             { 
                 var d = new AppConfig(); 
-                SaveInternal(d); 
+                SaveInternal(d, path); 
                 return d; 
             }
             
             try 
             { 
-                string json = File.ReadAllText(ConfigPath);
+                string json = File.ReadAllText(path);
                 if (string.IsNullOrWhiteSpace(json) || json.Trim() == "{}")
                 {
                     var d = new AppConfig();
-                    SaveInternal(d);
-                    return d;
+                    SaveInternal(d, path);
+                    return d; 
                 }
                 var config = JsonSerializer.Deserialize<AppConfig>(json, _opts) ?? new AppConfig();
                 if (string.IsNullOrWhiteSpace(config.ServerUrl))
@@ -201,7 +207,7 @@ namespace RedfurSync
                     config.UpdateUrl = "https://redfur.ech-o.net/api/relay/v1/update-manifest";
                 
                 // Immediately re-save so defaults are stamped
-                SaveInternal(config);
+                SaveInternal(config, path);
                 
                 return config;
             }
@@ -211,39 +217,42 @@ namespace RedfurSync
                 
                 try 
                 {
-                    if (File.Exists(ConfigPath))
+                    if (File.Exists(path))
                     {
-                        File.Copy(ConfigPath, ConfigPath + ".corrupted.bak", true);
+                        File.Copy(path, path + ".corrupted.bak", true);
                     }
                 } 
                 catch { } 
 
                 var d = new AppConfig();
-                SaveInternal(d);
+                SaveInternal(d, path);
                 return d; 
             }
         }
 
         public void Save()
         {
+            string? targetPath = StoragePath ?? OverrideConfigPath ?? (this == _instance ? ConfigPath : null);
+            if (string.IsNullOrWhiteSpace(targetPath)) return; // safe no-op for detached/unit test instances!
             lock (_fileLock)
             {
-                SaveInternal(this);
+                SaveInternal(this, targetPath);
             }
         }
 
-        private static void SaveInternal(AppConfig cfg)
+        private static void SaveInternal(AppConfig cfg, string targetPath)
         {
             try 
             {
-                Directory.CreateDirectory(ConfigDirectory);
+                var dir = Path.GetDirectoryName(targetPath);
+                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
                 string json = JsonSerializer.Serialize(cfg, _opts);
-                string tempPath = ConfigPath + ".tmp";
+                string tempPath = targetPath + ".tmp";
                 File.WriteAllText(tempPath, json);
-                File.Move(tempPath, ConfigPath, true);
+                File.Move(tempPath, targetPath, true);
             }
             catch (Exception ex)
-            {
+            { 
                 ReportFault("Save Error", $"Fissal's claws slipped while writing memory:\n\n{ex.Message}\n\n{ex.StackTrace}");
             }
         }

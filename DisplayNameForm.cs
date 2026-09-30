@@ -19,9 +19,9 @@ namespace RedfurSync
         [DllImport("user32.dll")]
         private static extern bool ReleaseCapture();
 
-        private const int BaseW       = 360;
+        private const int BaseW       = 430;
         private const int BaseHeaderH = 69;
-        private const int BasePad     = 10;
+        private const int BasePad     = 14;
 
         private readonly float _scale;
         private readonly int   _pad;
@@ -32,6 +32,12 @@ namespace RedfurSync
         private readonly Button  _saveBtn;
         private readonly Button  _cancelBtn;
         private readonly Button  _checkBtn;
+        private readonly Button  _checkNameBtn;
+
+        private readonly PointF  _explanationPoint;
+        private readonly PointF  _nameLabelPoint;
+        private readonly PointF  _codeLabelPoint;
+        private readonly int     _dividerY;
 
         // ── Pulse & Tuning Variables ──
         private readonly System.Windows.Forms.Timer _pulseTimer;
@@ -87,42 +93,64 @@ namespace RedfurSync
             // Seed the initial terminal thought 
             _consoleLines.Add(("# [FIS-DBG] Tuning frequency: ", Color.GreenYellow));
 
-            // ── The Mechanical Housing (Clipping Mask) ──
+            // Sequential layout calculation
+            int curY = _headerH + S(12);
+            _explanationPoint = new PointF(_pad, curY);
+
+            // Explanation height measured
+            string explanation = "Set a name to be credited for sync data on Discord & the Web.\nTo link an identity, include your ESO @Tag or Discord @Tag.\n(Please specify which one, e.g. 'Discord @User' or 'ESO @User')";
+            using (var sf = Body(8.5f, _scale, FontStyle.Regular))
+            {
+                var measured = TextRenderer.MeasureText(explanation, sf, new Size(Width - (_pad * 2), 300), TextFormatFlags.WordBreak);
+                curY += Math.Max(measured.Height, S(46)) + S(14);
+            }
+
+            // ── Section 1: Identity / @Tag ──
+            _nameLabelPoint = new PointF(_pad, curY);
+            curY += S(18);
+
+            int checkBtnW = S(110);
+            int inputH    = S(32);
+            int inputW    = Width - (_pad * 2) - checkBtnW - S(10);
+
             var inputHousing = new Panel
             {
-                Location  = new Point(_pad, _headerH + S(55)), 
-                Width     = S(210),
-                Height    = S(28), 
-                BackColor = CGoldDark, 
+                Location  = new Point(_pad, curY),
+                Size      = new Size(inputW, inputH),
+                BackColor = Color.FromArgb(14, 10, 8),
             };
 
-            inputHousing.Paint += (s, e) => 
+            inputHousing.Paint += (s, e) =>
             {
-                using var p = new Pen(CGoldDim, S(3));
-                e.Graphics.DrawRectangle(p, 5, 5, inputHousing.Width - 1, inputHousing.Height - 1);
+                var g = e.Graphics;
+                using var p = new Pen(CGoldDim, 1);
+                g.DrawRectangle(p, 0, 0, inputHousing.Width - 1, inputHousing.Height - 1);
+                using var ap = new Pen(CGoldMid, 1);
+                g.DrawLine(ap, 0, 0, S(4), 0);
+                g.DrawLine(ap, 0, 0, 0, S(4));
+                g.DrawLine(ap, inputHousing.Width - 1, inputHousing.Height - 1, inputHousing.Width - 1 - S(4), inputHousing.Height - 1);
+                g.DrawLine(ap, inputHousing.Width - 1, inputHousing.Height - 1, inputHousing.Width - 1, inputHousing.Height - 1 - S(4));
             };
 
-            // ── The Trapped Text ──
             _input = new TextBox
             {
                 Text            = currentName is "Redfur Trader" or "Unknown" or "" ? "" : currentName,
-                PlaceholderText = "e.g. @YourDiscordTag or @YourESOTag",
-                BackColor       = inputHousing.BackColor, 
+                PlaceholderText = "e.g. Discord @User or ESO @User",
+                BackColor       = inputHousing.BackColor,
                 ForeColor       = CText,
                 BorderStyle     = BorderStyle.None,
                 AutoSize        = false,
-                Font            = Body(12.5f, _scale),
+                Font            = Body(11.5f, _scale),
                 MaxLength       = 32,
-                Location        = new Point(S(5), -S(3)), 
-                Width           = inputHousing.Width - S(8),
-                Height          = S(40), 
+                Location        = new Point(S(6), S(6)),
+                Width           = inputHousing.Width - S(12),
+                Height          = S(20),
             };
-
             inputHousing.Controls.Add(_input);
-            
-            var _checkNameBtn = MakeBtn("Check Format", Color.FromArgb(60, 180, 220), new Point(inputHousing.Right + S(10), inputHousing.Top - S(2)));
-            _checkNameBtn.Width = S(100);
-            _checkNameBtn.Click += async (_, _) => 
+
+            _checkNameBtn = MakeBtn("Check Format", Color.FromArgb(60, 180, 220), new Point(inputHousing.Right + S(10), curY));
+            _checkNameBtn.Size = new Size(checkBtnW, inputH);
+            _checkNameBtn.Click += async (_, _) =>
             {
                 if (string.IsNullOrWhiteSpace(_input.Text))
                 {
@@ -138,7 +166,7 @@ namespace RedfurSync
                     _checkNameBtn.FlatAppearance.BorderColor = CGreen;
                     AddConsoleLine($"# [FIS-DBG] Name format looks valid locally: {_input.Text.Trim()}", CGreen);
                 }
-                
+
                 await System.Threading.Tasks.Task.Delay(2000);
                 if (!IsDisposed)
                 {
@@ -147,62 +175,100 @@ namespace RedfurSync
                     _checkNameBtn.FlatAppearance.BorderColor = Color.FromArgb(60, 180, 220);
                 }
             };
+
             _input.KeyDown += (_, e) =>
             {
                 if (e.KeyCode == Keys.Enter)  { e.SuppressKeyPress = true; TrySave(); }
                 if (e.KeyCode == Keys.Escape) { DialogResult = DialogResult.Cancel; Close(); }
             };
-            
-            // ── The Pairing Code Housing ──
+
+            curY += inputH + S(16);
+
+            // ── Section 2: Pairing Code ──
+            _codeLabelPoint = new PointF(_pad, curY);
+            curY += S(18);
+
+            int codeW = S(140);
             var codeHousing = new Panel
             {
-                Location  = new Point(_pad, inputHousing.Bottom + S(22)), 
-                Width     = S(120),
-                Height    = S(28), 
-                BackColor = CGoldDark, 
+                Location  = new Point(_pad, curY),
+                Size      = new Size(codeW, inputH),
+                BackColor = Color.FromArgb(14, 10, 8),
             };
 
-            codeHousing.Paint += (s, e) => 
+            codeHousing.Paint += (s, e) =>
             {
-                using var p = new Pen(CGoldDim, S(3));
-                e.Graphics.DrawRectangle(p, 5, 5, codeHousing.Width - 1, codeHousing.Height - 1);
+                var g = e.Graphics;
+                using var p = new Pen(CGoldDim, 1);
+                g.DrawRectangle(p, 0, 0, codeHousing.Width - 1, codeHousing.Height - 1);
+                using var ap = new Pen(CGoldMid, 1);
+                g.DrawLine(ap, 0, 0, S(4), 0);
+                g.DrawLine(ap, 0, 0, 0, S(4));
+                g.DrawLine(ap, codeHousing.Width - 1, codeHousing.Height - 1, codeHousing.Width - 1 - S(4), codeHousing.Height - 1);
+                g.DrawLine(ap, codeHousing.Width - 1, codeHousing.Height - 1, codeHousing.Width - 1, codeHousing.Height - 1 - S(4));
             };
+
+            bool isAlreadyPaired = !string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken) || !string.IsNullOrWhiteSpace(AppConfig.Instance.ApiKey);
 
             _codeInput = new TextBox
             {
                 Text            = AppConfig.Instance.PairingCode,
-                PlaceholderText = "6 digits",
-                BackColor       = codeHousing.BackColor, 
+                PlaceholderText = isAlreadyPaired ? (!string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken) ? "Paired (Token)" : "Paired (Master Key)") : "6 digits",
+                BackColor       = codeHousing.BackColor,
                 ForeColor       = CGoldBrt,
                 BorderStyle     = BorderStyle.None,
                 AutoSize        = false,
-                Font            = Title(14f, _scale, FontStyle.Bold),
+                Font            = Title(13f, _scale, FontStyle.Bold),
                 MaxLength       = 6,
-                Location        = new Point(S(5), -S(2)), 
-                Width           = codeHousing.Width - S(8),
-                Height          = S(40), 
-                TextAlign       = HorizontalAlignment.Center
+                Location        = new Point(S(6), S(5)),
+                Width           = codeHousing.Width - S(12),
+                Height          = S(22),
+                TextAlign       = HorizontalAlignment.Center,
             };
-            
+
             _codeInput.KeyPress += (_, e) =>
             {
                 if (!char.IsControl(e.KeyChar) && !char.IsDigit(e.KeyChar)) e.Handled = true;
             };
 
             codeHousing.Controls.Add(_codeInput);
-            
-            _checkBtn = MakeBtn("Check Sync", Color.FromArgb(60, 180, 220), new Point(codeHousing.Right + S(10), codeHousing.Top - S(2)));
-            _checkBtn.Width = S(100);
-            _checkBtn.Click += async (_, _) => 
+
+            _checkBtn = MakeBtn(isAlreadyPaired && string.IsNullOrWhiteSpace(_codeInput.Text) ? "Linked ✔" : "Check Sync",
+                isAlreadyPaired && string.IsNullOrWhiteSpace(_codeInput.Text) ? CGreen : Color.FromArgb(60, 180, 220),
+                new Point(codeHousing.Right + S(10), curY));
+            _checkBtn.Size = new Size(checkBtnW, inputH);
+
+            _codeInput.TextChanged += (_, _) =>
             {
-                if (_codeInput.Text.Trim().Length != 6) return;
+                if (_checkBtn.Text == "Linked ✔" && _codeInput.Text.Trim().Length > 0)
+                {
+                    _checkBtn.Text = "Check Sync";
+                    _checkBtn.ForeColor = Color.FromArgb(60, 180, 220);
+                    _checkBtn.FlatAppearance.BorderColor = Color.FromArgb(60, 180, 220);
+                }
+            };
+
+            _checkBtn.Click += async (_, _) =>
+            {
+                var code = _codeInput.Text.Trim();
+                if (code.Length != 6)
+                {
+                    if (isAlreadyPaired && string.IsNullOrEmpty(code))
+                    {
+                        AddConsoleLine("# [FIS-DBG] Device is already authenticated with Lattice.", CGreen);
+                        return;
+                    }
+                    AddConsoleLine("# [FIS-DBG] Pairing code must be exactly 6 digits.", Color.IndianRed);
+                    return;
+                }
+
                 _checkBtn.Text = "Syncing...";
                 _checkBtn.Enabled = false;
-                
-                AppConfig.Instance.PairingCode = _codeInput.Text.Trim();
+
+                AppConfig.Instance.PairingCode = code;
                 using var svc = new UploadService(AppConfig.Instance);
                 var (ok, msg) = await svc.PairAsync();
-                
+
                 if (ok)
                 {
                     _checkBtn.Text = "Synced!";
@@ -217,24 +283,36 @@ namespace RedfurSync
                     _checkBtn.FlatAppearance.BorderColor = Color.IndianRed;
                     AddConsoleLine("# [FIS-DBG] " + msg, Color.IndianRed);
                 }
-                
+
                 await System.Threading.Tasks.Task.Delay(2000);
                 if (!IsDisposed)
                 {
-                    _checkBtn.Text = "Check Sync";
+                    _checkBtn.Text = ok ? "Linked ✔" : "Check Sync";
                     _checkBtn.Enabled = true;
-                    _checkBtn.ForeColor = Color.FromArgb(60, 180, 220);
-                    _checkBtn.FlatAppearance.BorderColor = Color.FromArgb(60, 180, 220);
+                    _checkBtn.ForeColor = ok ? CGreen : Color.FromArgb(60, 180, 220);
+                    _checkBtn.FlatAppearance.BorderColor = ok ? CGreen : Color.FromArgb(60, 180, 220);
                 }
             };
 
-            int btnY = codeHousing.Bottom + S(20);
-            _saveBtn   = MakeBtn("Transmit",  CGreen,                     new Point(_pad,                       btnY));
-            _cancelBtn = MakeBtn("Not now",  Color.FromArgb(90, 72, 44), new Point(S(BaseW) - _pad - S(130),  btnY));
+            curY += inputH + S(20);
+
+            // ── Section 3: Divider & Action Buttons ──
+            _dividerY = curY;
+            curY += S(14);
+
+            int actionBtnW = S(135);
+            int actionBtnH = S(34);
+            _saveBtn   = MakeBtn("Transmit", CGreen, new Point(_pad, curY));
+            _saveBtn.Size = new Size(actionBtnW, actionBtnH);
+
+            _cancelBtn = MakeBtn("Not now", Color.FromArgb(90, 72, 44), new Point(Width - _pad - actionBtnW, curY));
+            _cancelBtn.Size = new Size(actionBtnW, actionBtnH);
+
             _saveBtn.Click   += (_, _) => TrySave();
             _cancelBtn.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
 
-            Height = _saveBtn.Bottom + _pad;
+            curY += actionBtnH + _pad;
+            Height = curY;
 
             Controls.AddRange(new Control[] { inputHousing, _checkNameBtn, codeHousing, _checkBtn, _saveBtn, _cancelBtn });
             Shown += (_, _) => { _input.Focus(); _input.SelectAll(); };
@@ -352,23 +430,28 @@ namespace RedfurSync
 
         private void TrySave()
         {
-            if (string.IsNullOrWhiteSpace(_input.Text))
+            var name = _input.Text.Trim();
+            if (string.IsNullOrWhiteSpace(name))
             {
                 _input.BackColor = Color.FromArgb(55, 18, 12);
                 var t = new System.Windows.Forms.Timer { Interval = 500 };
-                t.Tick += (_, _) => { _input.BackColor = Color.FromArgb(10, 8, 5); t.Stop(); t.Dispose(); }; 
+                t.Tick += (_, _) => { if (!_input.IsDisposed) _input.BackColor = Color.FromArgb(14, 10, 8); t.Stop(); t.Dispose(); }; 
                 t.Start();
                 return;
             }
             
-            AppConfig.Instance.DisplayName = _input.Text.Trim();
-            AppConfig.Instance.PairingCode = _codeInput.Text.Trim();
+            AppConfig.Instance.DisplayName = name;
+            var code = _codeInput.Text.Trim();
+            if (!string.IsNullOrWhiteSpace(code))
+            {
+                AppConfig.Instance.PairingCode = code;
+            }
             AppConfig.Instance.Save();
 
             // Track D: propagate DisplayName to server device label when paired (fire-and-forget, best-effort)
             try
             {
-                if (!string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken))
+                if (!string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken) || !string.IsNullOrWhiteSpace(AppConfig.Instance.ApiKey))
                 {
                     var label = AppConfig.Instance.DisplayName;
                     using var svc = new UploadService(AppConfig.Instance);
@@ -526,24 +609,15 @@ namespace RedfurSync
             using var sf3 = Body(8.5f, _scale, FontStyle.Regular);
             using var subBrush3 = new SolidBrush(CText);
             string explanation = "Set a name to be credited for sync data on Discord & the Web.\nTo link an identity, include your ESO @Tag or Discord @Tag.\n(Please specify which one, e.g. 'Discord @User' or 'ESO @User')";
-            g.DrawString(explanation, sf3, subBrush3, new PointF(S(8), _headerH + S(2))); 
+            g.DrawString(explanation, sf3, subBrush3, _explanationPoint); 
 
-            using var lf = Body(10f, _scale, FontStyle.Regular);
-            using var labelBrush = new SolidBrush(Color.Silver);
-            g.DrawString("Identity / @Tag", lf, labelBrush, new PointF(_pad-5, _headerH + S(35))); 
+            using var lf = Body(9.5f, _scale, FontStyle.Bold);
+            using var labelBrush = new SolidBrush(CGoldBrt);
+            g.DrawString("Identity / @Tag", lf, labelBrush, _nameLabelPoint); 
             
-            g.DrawString("Pairing Code", lf, labelBrush, new PointF(_pad-5, _headerH + S(90)));
-        
-            using var inputBgBrush = new SolidBrush(Color.FromArgb(10, 5, 5));
-            using var inputBorderPen = new Pen(CGoldDim, S(1));
-            
-            var inputRect = new Rectangle(_pad, _headerH + S(55), Width - _pad * 2, S(32)); 
-            g.FillRectangle(inputBgBrush, inputRect);
-            g.DrawRectangle(inputBorderPen, inputRect.X, inputRect.Y, inputRect.Width, inputRect.Height);
-            
-            var codeRect = new Rectangle(_pad, _headerH + S(109), S(120), S(32));
-            g.FillRectangle(inputBgBrush, codeRect);
-            g.DrawRectangle(inputBorderPen, codeRect.X, codeRect.Y, codeRect.Width, codeRect.Height);
+            g.DrawString("Pairing Code (6 Digits)", lf, labelBrush, _codeLabelPoint);
+
+            DrawDivider(g, _pad, Width - _pad, _dividerY, CGoldDim, CGoldMid);
         }
 
         private Button MakeBtn(string label, Color accent, Point loc)

@@ -111,4 +111,16 @@ public sealed class PairingAndAssistantTests
         Assert.Contains("Pair Fissal Relay", reply);
         Assert.Empty(handler.Requests);
     }
+
+    [Fact]
+    public void AppConfigSave_WhenStandaloneInstanceWithoutStoragePath_DoesNotTouchProductionConfig()
+    {
+        var standalone = new AppConfig
+        {
+            ServerUrl = "https://isolated.test/upload",
+            ApiKey = "isolated-key",
+        };
+        standalone.Save();
+        Assert.NotEqual("isolated-key", AppConfig.Instance.ApiKey);
+    }
 }
