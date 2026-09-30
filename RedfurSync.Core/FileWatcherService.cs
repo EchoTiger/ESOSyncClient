@@ -25,6 +25,13 @@ namespace RedfurSync
             "PriceTableNA.lua", "ItemLookUpTable_EN.lua", "FissalRelay.lua"
         };
 
+        public static bool IsGsFile(string? fileName)
+        {
+            if (string.IsNullOrWhiteSpace(fileName)) return false;
+            return fileName.StartsWith("GS", StringComparison.OrdinalIgnoreCase) &&
+                   fileName.EndsWith("Data.lua", StringComparison.OrdinalIgnoreCase);
+        }
+
         private readonly AppConfig      _config;
         private readonly UploadService  _uploader;
         private readonly Action<string> _onStatus;
@@ -89,7 +96,13 @@ namespace RedfurSync
             };
             var discovered = folders.Where(Directory.Exists).ToArray();
             var files = discovered
-                .SelectMany(folder => WatchedFiles.Select(name => Path.Combine(folder, name)))
+                .SelectMany(folder =>
+                {
+                    bool hasFissalRelay = File.Exists(Path.Combine(folder, "FissalRelay.lua"));
+                    return WatchedFiles
+                        .Where(name => !(hasFissalRelay && !_config.SyncMasterMerchantFiles && IsGsFile(name)))
+                        .Select(name => Path.Combine(folder, name));
+                })
                 .Where(File.Exists)
                 .Select(path => new FileInfo(path))
                 .OrderByDescending(file => file.LastWriteTimeUtc)
@@ -332,7 +345,7 @@ namespace RedfurSync
             _onStatus(count == 0 ? "Cannot find target directories!" : $"Monitoring {count} folder(s)");
         }
 
-        private async Task ReconcileExistingFilesAsync()
+        internal async Task ReconcileExistingFilesAsync()
         {
             var esoBase = WatchRootProvider();
             var folders = new[]
@@ -342,12 +355,20 @@ namespace RedfurSync
                 Path.Combine(esoBase, "AddOns", "LibEsoHubPrices"),
             };
 
-            foreach (var filePath in folders
-                .Where(Directory.Exists)
-                .SelectMany(folder => WatchedFiles.Select(name => Path.Combine(folder, name)))
-                .Where(File.Exists))
+            foreach (var folder in folders.Where(Directory.Exists))
             {
-                await EnqueueUploadAsync(filePath);
+                bool hasFissalRelay = File.Exists(Path.Combine(folder, "FissalRelay.lua"));
+                foreach (var fileName in WatchedFiles)
+                {
+                    if (hasFissalRelay && !_config.SyncMasterMerchantFiles && IsGsFile(fileName))
+                        continue;
+
+                    var filePath = Path.Combine(folder, fileName);
+                    if (File.Exists(filePath))
+                    {
+                        await EnqueueUploadAsync(filePath);
+                    }
+                }
             }
         }
 
@@ -372,6 +393,13 @@ namespace RedfurSync
         {
             var fileName = Path.GetFileName(e.FullPath);
             if (!WatchedFiles.Contains(fileName)) return;
+
+            var dir = Path.GetDirectoryName(e.FullPath);
+            if (IsGsFile(fileName) && !_config.SyncMasterMerchantFiles &&
+                !string.IsNullOrEmpty(dir) && File.Exists(Path.Combine(dir, "FissalRelay.lua")))
+            {
+                return;
+            }
 
             lock (_timerLock)
             {

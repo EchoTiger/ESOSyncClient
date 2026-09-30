@@ -89,6 +89,9 @@ namespace RedfurSync
         [JsonPropertyName("SilentSync")]
         public bool   SilentSync   { get; set; } = true;
 
+        [JsonPropertyName("SyncMasterMerchantFiles")]
+        public bool   SyncMasterMerchantFiles { get; set; } = false;
+
         [JsonPropertyName("FissalHarnessEnabled")]
         public bool FissalHarnessEnabled { get; set; } = false;
 

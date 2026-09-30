@@ -296,6 +296,7 @@ namespace RedfurSync
         private Label _lblPairingStatus = null!;
         private Label _lblDeviceInfo = null!;
         private Button _btnSilentSync = null!;
+        private Button _btnSyncMm = null!;
         private Button _btnPairDevice = null!;
         private Button _btnSaveSetup = null!;
         private Button _btnTestConnection = null!;
@@ -1799,7 +1800,12 @@ namespace RedfurSync
                     }
                     currentSession.Jobs.Add(job);
                 }
-                sessions.Reverse();
+
+                // Prioritize sessions: batches with errors first, then in-progress/uploading, then queued, then done (newest first within each tier)
+                var orderedSessions = sessions
+                    .OrderBy(s => GetJobStatusPriority(s.AggregateStatus))
+                    .ThenByDescending(s => s.Timestamp)
+                    .ToList();
 
                 _syncSummaryLabel.Text = $"Sessions: {sessions.Count}  |  Active: {uploading}  |  Queued: {queued}  |  Synced: {done}  |  Errors: {failed}  |  Total: {jobs.Length}";
 
@@ -1847,7 +1853,7 @@ namespace RedfurSync
                 }
 
                 // 3. Reconcile session cards
-                var currentSessionIds = sessions.Select(s => s.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                var currentSessionIds = orderedSessions.Select(s => s.Id).ToHashSet(StringComparer.OrdinalIgnoreCase);
                 var existingSessionIds = _sessionCards.Keys.ToList();
                 foreach (var oldId in existingSessionIds)
                 {
@@ -1860,7 +1866,7 @@ namespace RedfurSync
                     }
                 }
 
-                foreach (var session in sessions)
+                foreach (var session in orderedSessions)
                 {
                     if (_sessionCards.TryGetValue(session.Id, out var cardControls))
                     {
@@ -1885,7 +1891,7 @@ namespace RedfurSync
                         controlIndex++;
                     }
                 }
-                foreach (var s in sessions)
+                foreach (var s in orderedSessions)
                 {
                     if (_sessionCards.TryGetValue(s.Id, out var sc))
                     {
@@ -2199,6 +2205,21 @@ namespace RedfurSync
             return controls;
         }
 
+        private static int GetJobStatusPriority(UploadStatus status) => status switch
+        {
+            UploadStatus.Failed => 0,
+            UploadStatus.Uploading => 1,
+            UploadStatus.Queued or UploadStatus.Cancelled => 2,
+            UploadStatus.Done => 3,
+            _ => 4
+        };
+
+        private static bool IsGsFile(string? fileName)
+        {
+            if (string.IsNullOrWhiteSpace(fileName)) return false;
+            return fileName.StartsWith("GS", StringComparison.OrdinalIgnoreCase);
+        }
+
         private void UpdateSessionCard(SyncSessionModel session, SessionCardControls controls)
         {
             controls.Session = session;
@@ -2257,7 +2278,11 @@ namespace RedfurSync
             {
                 controls.FilesContainer.SuspendLayout();
 
-                var currentJobs = session.Jobs;
+                var currentJobs = session.Jobs
+                    .OrderBy(j => GetJobStatusPriority(j.Status))
+                    .ThenBy(j => IsGsFile(j.FileName) ? 1 : 0)
+                    .ThenBy(j => j.FileName, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
                 var existingJobKeys = controls.FileRows.Keys.ToList();
 
                 foreach (var oldJob in existingJobKeys)
@@ -2275,17 +2300,23 @@ namespace RedfurSync
                 int rowGap = (int)(3 * _scale);
                 int containerInnerPad = (int)(14 * _scale);
 
-                foreach (var job in currentJobs)
+                for (int i = 0; i < currentJobs.Count; i++)
                 {
+                    var job = currentJobs[i];
                     if (controls.FileRows.TryGetValue(job, out var rowControls))
                     {
                         UpdateCompactFileRow(job, rowControls);
+                        if (controls.FilesContainer.Controls.GetChildIndex(rowControls.Row) != i)
+                        {
+                            controls.FilesContainer.Controls.SetChildIndex(rowControls.Row, i);
+                        }
                     }
                     else
                     {
                         var newRow = BuildCompactFileRow(job);
                         controls.FileRows.Add(job, newRow);
                         controls.FilesContainer.Controls.Add(newRow.Row);
+                        controls.FilesContainer.Controls.SetChildIndex(newRow.Row, i);
                     }
                 }
 
@@ -3830,7 +3861,7 @@ namespace RedfurSync
             {
                 Dock = DockStyle.Top,
                 ColumnCount = 2,
-                RowCount = 9,
+                RowCount = 10,
                 BackColor = CPanelBg,
                 Padding = new Padding((int)(16 * _scale)),
                 AutoSize = true,
@@ -3936,6 +3967,20 @@ namespace RedfurSync
             addonSetupFlow.Controls.Add(btnGoToAddon);
             formPanel.Controls.Add(addonSetupFlow, 1, 7);
 
+            // MasterMerchant Sync Toggle (Legacy 18-file fallback)
+            formPanel.Controls.Add(MakeFieldLabel("MasterMerchant Sync:"), 0, 8);
+            _btnSyncMm = MakeStyledButton("", CGoldBrt);
+            _btnSyncMm.AutoSize = true;
+            _btnSyncMm.Click += (_, _) =>
+            {
+                var cfg = AppConfig.Instance;
+                cfg.SyncMasterMerchantFiles = !cfg.SyncMasterMerchantFiles;
+                cfg.Save();
+                UpdateSyncMmButton();
+            };
+            UpdateSyncMmButton();
+            formPanel.Controls.Add(_btnSyncMm, 1, 8);
+
             // Action Buttons
             var btnRow = new FlowLayoutPanel
             {
@@ -3970,7 +4015,7 @@ namespace RedfurSync
             };
             btnRow.Controls.Add(_btnTestConnection);
 
-            formPanel.Controls.Add(btnRow, 1, 8);
+            formPanel.Controls.Add(btnRow, 1, 9);
 
             layout.Controls.Add(formPanel, 0, 0);
             _setupView.Controls.Add(layout);
@@ -4033,6 +4078,7 @@ namespace RedfurSync
 
             _lblDeviceInfo.Text = $"Token Storage: DPAPI Encrypted (CurrentUser)\nUpdate Endpoint: {cfg.UpdateUrl}";
             UpdateSilentSyncButton();
+            UpdateSyncMmButton();
         }
 
         private void UpdateSilentSyncButton()
@@ -4041,6 +4087,16 @@ namespace RedfurSync
             bool silent = AppConfig.Instance.SilentSync;
             _btnSilentSync.Text = silent ? "◆  SILENT BACKGROUND SYNC (MUTED)" : "◇  SILENT BACKGROUND SYNC (ALERTS ACTIVE)";
             _btnSilentSync.ForeColor = silent ? CGreen : CWarn;
+        }
+
+        private void UpdateSyncMmButton()
+        {
+            if (_btnSyncMm == null || _btnSyncMm.IsDisposed) return;
+            bool syncMm = AppConfig.Instance.SyncMasterMerchantFiles;
+            _btnSyncMm.Text = syncMm
+                ? "◆  LEGACY MM SYNC ACTIVE (Uploading all 18 GSxx files)"
+                : "◇  AUTO-OPTIMIZED (Fissal Relay handles sales; GS files skipped)";
+            _btnSyncMm.ForeColor = syncMm ? CWarn : CGreen;
         }
 
         // ═════════════════════════════════════════════════════════════════════
