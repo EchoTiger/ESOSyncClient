@@ -128,10 +128,9 @@ namespace RedfurSync
                 var dr = form.ShowDialog();
                 
                 // If they canceled or still haven't paired, stand by quietly without raising alarming error popups
-                if (dr != DialogResult.OK || (string.IsNullOrWhiteSpace(config.DeviceToken) && string.IsNullOrWhiteSpace(config.ApiKey) && string.IsNullOrWhiteSpace(config.PairingCode)))
+                if (dr != DialogResult.OK && string.IsNullOrWhiteSpace(config.DeviceToken) && string.IsNullOrWhiteSpace(config.ApiKey) && string.IsNullOrWhiteSpace(config.PairingCode))
                 {
                     UpdateStatus("Waiting for a Relay pairing code");
-                    return;
                 }
             }
 

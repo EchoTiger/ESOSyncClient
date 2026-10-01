@@ -34,9 +34,6 @@ namespace RedfurSync
         private readonly Button  _checkBtn;
         private readonly Button  _checkNameBtn;
 
-        private readonly PointF  _explanationPoint;
-        private readonly PointF  _nameLabelPoint;
-        private readonly PointF  _codeLabelPoint;
         private readonly int     _dividerY;
 
         // ── Pulse & Tuning Variables ──
@@ -94,20 +91,36 @@ namespace RedfurSync
             _consoleLines.Add(("# [FIS-DBG] Tuning frequency: ", Color.GreenYellow));
 
             // Sequential layout calculation
-            int curY = _headerH + S(12);
-            _explanationPoint = new PointF(_pad, curY);
+            int curY = _headerH + S(14);
 
-            // Explanation height measured
-            string explanation = "Set a name to be credited for sync data on Discord & the Web.\nTo link an identity, include your ESO @Tag or Discord @Tag.\n(Please specify which one, e.g. 'Discord @User' or 'ESO @User')";
-            using (var sf = Body(8.5f, _scale, FontStyle.Regular))
+            var explanationLabel = new Label
             {
-                var measured = TextRenderer.MeasureText(explanation, sf, new Size(Width - (_pad * 2), 300), TextFormatFlags.WordBreak);
-                curY += Math.Max(measured.Height, S(46)) + S(14);
-            }
+                Text            = "Set a name to be credited for sync data on Discord & the Web.\nTo link an identity, include your ESO @Tag or Discord @Tag.\n(Please specify which one, e.g. 'Discord @User' or 'ESO @User')",
+                Location        = new Point(_pad, curY),
+                Width           = Width - (_pad * 2),
+                AutoSize        = true,
+                MaximumSize     = new Size(Width - (_pad * 2), 0),
+                BackColor       = Color.Transparent,
+                ForeColor       = CText,
+                Font            = Body(8.5f, _scale, FontStyle.Regular),
+            };
+            Controls.Add(explanationLabel);
+
+            curY = explanationLabel.Bottom + S(16);
 
             // ── Section 1: Identity / @Tag ──
-            _nameLabelPoint = new PointF(_pad, curY);
-            curY += S(18);
+            var nameLabel = new Label
+            {
+                Text      = "Identity / @Tag",
+                Location  = new Point(_pad, curY),
+                AutoSize  = true,
+                BackColor = Color.Transparent,
+                ForeColor = CGoldBrt,
+                Font      = Body(9.5f, _scale, FontStyle.Bold),
+            };
+            Controls.Add(nameLabel);
+
+            curY = nameLabel.Bottom + S(6);
 
             int checkBtnW = S(110);
             int inputH    = S(32);
@@ -182,11 +195,21 @@ namespace RedfurSync
                 if (e.KeyCode == Keys.Escape) { DialogResult = DialogResult.Cancel; Close(); }
             };
 
-            curY += inputH + S(16);
+            curY = inputHousing.Bottom + S(16);
 
             // ── Section 2: Pairing Code ──
-            _codeLabelPoint = new PointF(_pad, curY);
-            curY += S(18);
+            var codeLabel = new Label
+            {
+                Text      = "Pairing Code (6 Digits)",
+                Location  = new Point(_pad, curY),
+                AutoSize  = true,
+                BackColor = Color.Transparent,
+                ForeColor = CGoldBrt,
+                Font      = Body(9.5f, _scale, FontStyle.Bold),
+            };
+            Controls.Add(codeLabel);
+
+            curY = codeLabel.Bottom + S(6);
 
             int codeW = S(140);
             var codeHousing = new Panel
@@ -294,7 +317,7 @@ namespace RedfurSync
                 }
             };
 
-            curY += inputH + S(20);
+            curY = codeHousing.Bottom + S(20);
 
             // ── Section 3: Divider & Action Buttons ──
             _dividerY = curY;
@@ -428,7 +451,7 @@ namespace RedfurSync
 
         private int S(int v) => (int)Math.Round(v * _scale);
 
-        private void TrySave()
+        private async void TrySave()
         {
             var name = _input.Text.Trim();
             if (string.IsNullOrWhiteSpace(name))
@@ -445,6 +468,28 @@ namespace RedfurSync
             if (!string.IsNullOrWhiteSpace(code))
             {
                 AppConfig.Instance.PairingCode = code;
+
+                // Auto-pair on Transmit if user entered 6 digits and is not yet paired
+                if (code.Length == 6 && string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken))
+                {
+                    try
+                    {
+                        using var svc = new UploadService(AppConfig.Instance);
+                        var (ok, msg) = await svc.PairAsync();
+                        if (ok)
+                        {
+                            AddConsoleLine("# [FIS-DBG] " + msg, CGreen);
+                        }
+                        else
+                        {
+                            AddConsoleLine("# [FIS-DBG] Auto-pair failed: " + msg, Color.IndianRed);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        AddConsoleLine("# [FIS-DBG] Pair error: " + ex.Message, Color.IndianRed);
+                    }
+                }
             }
             AppConfig.Instance.Save();
 
@@ -604,18 +649,6 @@ namespace RedfurSync
 
             // Remove the mask so the rest of the form draws normally
             g.ResetClip();
-
-            // ── Smoothly Spaced Form Text ──
-            using var sf3 = Body(8.5f, _scale, FontStyle.Regular);
-            using var subBrush3 = new SolidBrush(CText);
-            string explanation = "Set a name to be credited for sync data on Discord & the Web.\nTo link an identity, include your ESO @Tag or Discord @Tag.\n(Please specify which one, e.g. 'Discord @User' or 'ESO @User')";
-            g.DrawString(explanation, sf3, subBrush3, _explanationPoint); 
-
-            using var lf = Body(9.5f, _scale, FontStyle.Bold);
-            using var labelBrush = new SolidBrush(CGoldBrt);
-            g.DrawString("Identity / @Tag", lf, labelBrush, _nameLabelPoint); 
-            
-            g.DrawString("Pairing Code (6 Digits)", lf, labelBrush, _codeLabelPoint);
 
             DrawDivider(g, _pad, Width - _pad, _dividerY, CGoldDim, CGoldMid);
         }

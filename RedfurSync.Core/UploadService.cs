@@ -6,6 +6,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Diagnostics;
 using System.Reflection;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -293,6 +294,112 @@ namespace RedfurSync
                 return string.IsNullOrWhiteSpace(text)
                     ? (false, "Fissal returned an empty response.", string.Empty)
                     : (true, text, model ?? string.Empty);
+            }
+            catch (TaskCanceledException)
+            {
+                return (false, "Fissal did not answer before the request timed out.", string.Empty);
+            }
+            catch (Exception ex)
+            {
+                return (false, $"Could not reach Fissal: {ex.Message}", string.Empty);
+            }
+        }
+
+        public async Task<(bool ok, string message, string model)> AskFissalStreamAsync(
+            string prompt,
+            Action<string>? onChunk = null,
+            CancellationToken cancellationToken = default)
+        {
+            if (string.IsNullOrWhiteSpace(_config.DeviceToken) && string.IsNullOrWhiteSpace(_config.ApiKey))
+                return (false, "Pair Fissal Relay before using the assistant.", string.Empty);
+            if (string.IsNullOrWhiteSpace(prompt) || prompt.Trim().Length > 12000)
+                return (false, "The assistant request is too large. Clear the chat and try a shorter question.", string.Empty);
+
+            try
+            {
+                var payload = JsonSerializer.Serialize(new { prompt = prompt.Trim(), stream = true });
+                using var request = CreateSyncRequest(HttpMethod.Post, BuildRelayUri("/assistant?stream=true"),
+                    new StringContent(payload, Encoding.UTF8, "application/json"));
+                request.Headers.Accept.Clear();
+                request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("text/event-stream"));
+
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                cts.CancelAfter(TimeSpan.FromSeconds(90));
+
+                using var response = await _syncHttp.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+
+                var contentType = response.Content.Headers.ContentType?.MediaType ?? string.Empty;
+                if (!contentType.Contains("event-stream", StringComparison.OrdinalIgnoreCase))
+                {
+                    var json = await response.Content.ReadAsStringAsync(cts.Token);
+                    using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json);
+                    if (!response.IsSuccessStatusCode)
+                    {
+                        var error = document.RootElement.TryGetProperty("error", out var errorValue) ? errorValue.GetString() : null;
+                        return (false, error ?? $"Fissal returned HTTP {(int)response.StatusCode}.", string.Empty);
+                    }
+                    var text = document.RootElement.TryGetProperty("text", out var textValue) ? textValue.GetString() : null;
+                    var model = document.RootElement.TryGetProperty("model", out var modelValue) ? modelValue.GetString() : null;
+                    if (!string.IsNullOrWhiteSpace(text)) onChunk?.Invoke(text);
+                    return string.IsNullOrWhiteSpace(text)
+                        ? (false, "Fissal returned an empty response.", string.Empty)
+                        : (true, text, model ?? string.Empty);
+                }
+
+                if (!response.IsSuccessStatusCode)
+                {
+                    return (false, $"Fissal returned HTTP {(int)response.StatusCode}.", string.Empty);
+                }
+
+                using var stream = await response.Content.ReadAsStreamAsync(cts.Token);
+                using var reader = new StreamReader(stream, Encoding.UTF8);
+
+                var accumulated = new StringBuilder();
+                string modelName = string.Empty;
+
+                while (!cts.Token.IsCancellationRequested)
+                {
+                    var line = await reader.ReadLineAsync(cts.Token);
+                    if (line == null) break;
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+                    if (line.StartsWith("data: "))
+                    {
+                        var json = line.Substring(6).Trim();
+                        try
+                        {
+                            using var doc = JsonDocument.Parse(json);
+                            if (doc.RootElement.TryGetProperty("error", out var errVal))
+                            {
+                                return (false, errVal.GetString() ?? "Communication interrupted.", modelName);
+                            }
+                            if (doc.RootElement.TryGetProperty("chunk", out var chunkVal))
+                            {
+                                var piece = chunkVal.GetString();
+                                if (!string.IsNullOrEmpty(piece))
+                                {
+                                    accumulated.Append(piece);
+                                    onChunk?.Invoke(piece);
+                                }
+                            }
+                            if (doc.RootElement.TryGetProperty("done", out var doneVal) && doneVal.GetBoolean())
+                            {
+                                if (doc.RootElement.TryGetProperty("model", out var mVal)) modelName = mVal.GetString() ?? modelName;
+                                if (doc.RootElement.TryGetProperty("text", out var fullVal))
+                                {
+                                    var full = fullVal.GetString();
+                                    if (!string.IsNullOrEmpty(full) && accumulated.Length == 0) accumulated.Append(full);
+                                }
+                                break;
+                            }
+                        }
+                        catch { }
+                    }
+                }
+
+                string finalMessage = accumulated.ToString().Trim();
+                return string.IsNullOrWhiteSpace(finalMessage)
+                    ? (false, "Fissal returned an empty response.", modelName)
+                    : (true, finalMessage, modelName);
             }
             catch (TaskCanceledException)
             {

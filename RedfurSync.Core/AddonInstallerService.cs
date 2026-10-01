@@ -40,8 +40,8 @@ namespace RedfurSync
         public const string AddonDirectoryName = "FissalRelay";
         public const string ClientDirectoryName = "Client";
         public const string TargetExeName = "RedfurSync.exe";
-        public const string LatestAddonVersion = "1.6.0";
-        public const int LatestAddonVersionCode = 10600;
+        public const string LatestAddonVersion = "1.6.1";
+        public const int LatestAddonVersionCode = 10601;
         public static readonly string[] AddonFiles = new[]
         {
             "FissalRelay.txt",

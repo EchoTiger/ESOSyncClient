@@ -3089,6 +3089,13 @@ namespace RedfurSync
             _send.Text = "TUNING...";
             _assistantStatus.Text = "Fissal is analyzing the tonal harmonics...";
 
+            var (fissalCard, rtb, copyLink, senderLabel) = CreateAssistantCard(false, false);
+            rtb.Text = "◈ Tuning harmonic frequencies...";
+            rtb.ForeColor = CGoldDim;
+            _transcript.Controls.Add(fissalCard);
+            UpdateCardHeight(fissalCard, rtb, copyLink);
+            _transcript.ScrollControlIntoView(fissalCard);
+
             try
             {
                 var sb = new StringBuilder("Continue this Relay support conversation. Reply to the latest user message.\n");
@@ -3109,7 +3116,31 @@ namespace RedfurSync
                     }
                 }
 
-                var result = await _watcher.AskFissalAsync(sb.ToString());
+                bool firstChunk = true;
+                var rawBuilder = new StringBuilder();
+
+                var result = await _watcher.AskFissalStreamAsync(sb.ToString(), onChunk: chunk =>
+                {
+                    if (IsDisposed || !IsHandleCreated) return;
+                    try
+                    {
+                        BeginInvoke(new Action(() =>
+                        {
+                            if (firstChunk)
+                            {
+                                firstChunk = false;
+                                rtb.Clear();
+                                rtb.ForeColor = CText;
+                            }
+                            rawBuilder.Append(chunk);
+                            rtb.AppendText(chunk);
+                            UpdateCardHeight(fissalCard, rtb, copyLink);
+                            _transcript.ScrollControlIntoView(fissalCard);
+                        }));
+                    }
+                    catch { }
+                });
+
                 string reply = result.message;
 
                 if (result.ok)
@@ -3117,8 +3148,36 @@ namespace RedfurSync
                     reply = ProcessHarnessActionInReply(reply);
                     _chatHistory.Add(("Fissal", reply));
                 }
+                else
+                {
+                    fissalCard.BackColor = CErrBg;
+                    senderLabel.Text = "⚠️ FISSAL // SIGNAL ANOMALY";
+                    senderLabel.ForeColor = CBarFail;
+                }
 
-                AddAssistantMessage(false, reply, !result.ok);
+                // Finalize formatted card
+                rtb.ForeColor = CText;
+                FormatAssistantRichText(rtb, reply);
+                if (copyLink != null && result.ok)
+                {
+                    copyLink.Visible = true;
+                    copyLink.LinkClicked += (_, _) =>
+                    {
+                        try
+                        {
+                            Clipboard.SetText(reply);
+                            copyLink.Text = "✓ Transmission copied!";
+                            copyLink.LinkColor = CGreen;
+                            _assistantStatus.Text = "Transmission copied to clipboard.";
+                        }
+                        catch { _assistantStatus.Text = "Failed to copy transmission."; }
+                    };
+                }
+
+                UpdateCardHeight(fissalCard, rtb, copyLink);
+                fissalCard.Invalidate();
+                _transcript.ScrollControlIntoView(fissalCard);
+
                 _assistantModelLabel.Text = result.ok
                     ? (!string.IsNullOrWhiteSpace(result.model) ? $"● {result.model.ToUpperInvariant()}" : "● CONNECTED")
                     : "● ERROR";
@@ -3127,7 +3186,11 @@ namespace RedfurSync
             }
             catch (Exception ex)
             {
-                AddAssistantMessage(false, $"Request failed: `{ex.Message}`", true);
+                fissalCard.BackColor = CErrBg;
+                senderLabel.Text = "⚠️ FISSAL // SIGNAL ANOMALY";
+                senderLabel.ForeColor = CBarFail;
+                FormatAssistantRichText(rtb, $"Request failed: `{ex.Message}`");
+                UpdateCardHeight(fissalCard, rtb, copyLink);
                 _assistantStatus.Text = "Error during assistant transmission.";
             }
             finally
@@ -3159,7 +3222,7 @@ namespace RedfurSync
             return visibleResponse + $"\n\n**Local action {(execution.ok ? "complete" : "failed")}:** {execution.message}";
         }
 
-        private void AddAssistantMessage(bool fromUser, string text, bool isError = false)
+        private (Panel card, RichTextBox rtb, LinkLabel copyLink, Label senderLabel) CreateAssistantCard(bool fromUser, bool isError)
         {
             int availW = _transcript.ClientSize.Width > 100 ? _transcript.ClientSize.Width : (int)(680 * _scale);
             int indent = (int)(40 * _scale);
@@ -3259,15 +3322,23 @@ namespace RedfurSync
                 Width = textW,
                 Tag = "card-rtb",
             };
-            FormatAssistantRichText(rtb, text);
-            int textH = CalculateRichTextHeight(rtb, textW);
-            rtb.Height = textH;
 
             rtb.LinkClicked += (_, e) =>
             {
                 if (!string.IsNullOrWhiteSpace(e.LinkText))
                     try { Process.Start(new ProcessStartInfo(e.LinkText) { UseShellExecute = true }); } catch { }
             };
+
+            rtb.MouseWheel += (s, e) =>
+            {
+                if (_transcript.VerticalScroll.Visible)
+                {
+                    int newPos = _transcript.VerticalScroll.Value - (e.Delta / 2);
+                    newPos = Math.Max(_transcript.VerticalScroll.Minimum, Math.Min(_transcript.VerticalScroll.Maximum, newPos));
+                    _transcript.AutoScrollPosition = new Point(0, newPos);
+                }
+            };
+
             card.Controls.Add(rtb);
 
             // 3. Optional Copy Link
@@ -3285,7 +3356,38 @@ namespace RedfurSync
                     Height = (int)(20 * _scale),
                     TextAlign = ContentAlignment.MiddleLeft,
                     Tag = "card-copy",
+                    Visible = false,
                 };
+                card.Controls.Add(copyLink);
+            }
+
+            return (card, rtb, copyLink!, senderLabel);
+        }
+
+        private void UpdateCardHeight(Panel card, RichTextBox rtb, LinkLabel? copyLink)
+        {
+            int textW = card.Width - card.Padding.Horizontal - (int)(4 * _scale);
+            rtb.Width = Math.Max(100, textW);
+            int textH = CalculateRichTextHeight(rtb, rtb.Width);
+            rtb.Height = textH;
+
+            if (copyLink != null)
+            {
+                copyLink.Width = card.Width - card.Padding.Horizontal;
+                copyLink.Location = new Point(card.Padding.Left, rtb.Bottom + (int)(6 * _scale));
+            }
+
+            int cardH = (copyLink != null && copyLink.Visible ? copyLink.Bottom : rtb.Bottom) + card.Padding.Bottom + (int)(6 * _scale);
+            card.Height = cardH;
+        }
+
+        private void AddAssistantMessage(bool fromUser, string text, bool isError = false)
+        {
+            var (card, rtb, copyLink, _) = CreateAssistantCard(fromUser, isError);
+            FormatAssistantRichText(rtb, text);
+            if (copyLink != null && !fromUser && !isError)
+            {
+                copyLink.Visible = true;
                 copyLink.LinkClicked += (_, _) =>
                 {
                     try
@@ -3297,13 +3399,10 @@ namespace RedfurSync
                     }
                     catch { _assistantStatus.Text = "Failed to copy transmission."; }
                 };
-                card.Controls.Add(copyLink);
             }
 
-            int cardH = (copyLink != null ? copyLink.Bottom : rtb.Bottom) + card.Padding.Bottom + (int)(4 * _scale);
-            card.Height = cardH;
-
             _transcript.Controls.Add(card);
+            UpdateCardHeight(card, rtb, copyLink);
             ResizeAssistantCards();
             _transcript.ScrollControlIntoView(card);
         }
@@ -3346,7 +3445,7 @@ namespace RedfurSync
                 if (rtb != null)
                 {
                     int textW = innerW - (int)(4 * _scale);
-                    rtb.Width = textW;
+                    rtb.Width = Math.Max(100, textW);
                     int newH = CalculateRichTextHeight(rtb, textW);
                     rtb.Height = newH;
                     rtb.Location = new Point(card.Padding.Left, (header != null ? header.Bottom : card.Padding.Top) + (int)(5 * _scale));
@@ -3357,7 +3456,7 @@ namespace RedfurSync
                         copy.Location = new Point(card.Padding.Left, rtb.Bottom + (int)(6 * _scale));
                     }
 
-                    card.Height = (copy != null ? copy.Bottom : rtb.Bottom) + card.Padding.Bottom + (int)(4 * _scale);
+                    card.Height = (copy != null && copy.Visible ? copy.Bottom : rtb.Bottom) + card.Padding.Bottom + (int)(6 * _scale);
                 }
             }
 
@@ -3366,26 +3465,28 @@ namespace RedfurSync
 
         private int CalculateRichTextHeight(RichTextBox rtb, int width)
         {
-            if (string.IsNullOrEmpty(rtb.Text)) return (int)(24 * _scale);
+            if (string.IsNullOrEmpty(rtb.Text)) return (int)(26 * _scale);
 
-            // 1. GDI text measurement with ample line headroom
+            // 1. GDI text measurement using Bold style for maximum line wrap headroom
+            using var measureFont = new Font(rtb.Font.FontFamily, rtb.Font.SizeInPoints, FontStyle.Bold);
             var size = TextRenderer.MeasureText(
-                rtb.Text + "\n\n ",
-                rtb.Font,
-                new Size(Math.Max(100, width - (int)(12 * _scale)), int.MaxValue),
+                rtb.Text + "\n\n  ",
+                measureFont,
+                new Size(Math.Max(100, width - (int)(16 * _scale)), int.MaxValue),
                 TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl);
 
-            int gdiH = size.Height + (int)(18 * _scale);
+            int gdiH = size.Height + (int)(24 * _scale);
 
             // 2. RichEdit native position check if handle is created
             int rtbH = 0;
             if (rtb.IsHandleCreated && rtb.TextLength > 0)
             {
                 var pt = rtb.GetPositionFromCharIndex(rtb.TextLength - 1);
-                rtbH = (int)(pt.Y + rtb.Font.GetHeight() * 1.8f + (14 * _scale));
+                int lineH = (int)(rtb.Font.GetHeight() * 1.8f);
+                rtbH = pt.Y + lineH + (int)(22 * _scale);
             }
 
-            return Math.Max(Math.Max((int)(24 * _scale), gdiH), rtbH);
+            return Math.Max(Math.Max((int)(26 * _scale), gdiH), rtbH);
         }
 
         private void FormatAssistantRichText(RichTextBox box, string raw)

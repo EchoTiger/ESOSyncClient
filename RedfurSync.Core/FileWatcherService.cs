@@ -85,6 +85,12 @@ namespace RedfurSync
         public Task<(bool ok, string message, string model)> AskFissalAsync(string prompt)
             => _uploader.AskFissalAsync(prompt);
 
+        public Task<(bool ok, string message, string model)> AskFissalStreamAsync(
+            string prompt,
+            Action<string>? onChunk = null,
+            CancellationToken ct = default)
+            => _uploader.AskFissalStreamAsync(prompt, onChunk, ct);
+
         public string GetAssistantContext()
         {
             var esoBase = WatchRootProvider();

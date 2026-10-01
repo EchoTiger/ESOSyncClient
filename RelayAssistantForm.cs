@@ -565,9 +565,26 @@ namespace RedfurSync
 
         private int MeasureRichTextHeight(RichTextBox rich, int width)
         {
-            if (rich.TextLength == 0) return 28;
-            var pt = rich.GetPositionFromCharIndex(rich.TextLength - 1);
-            return Math.Max(28, pt.Y + (rich.SelectionFont?.Height ?? rich.Font.Height) + 8);
+            if (rich.TextLength == 0) return (int)(28 * _scale);
+
+            using var measureFont = new Font(rich.Font.FontFamily, rich.Font.SizeInPoints, FontStyle.Bold);
+            var size = TextRenderer.MeasureText(
+                rich.Text + "\n\n  ",
+                measureFont,
+                new Size(Math.Max(100, width - (int)(16 * _scale)), int.MaxValue),
+                TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl);
+
+            int gdiH = size.Height + (int)(24 * _scale);
+
+            int rtbH = 0;
+            if (rich.IsHandleCreated && rich.TextLength > 0)
+            {
+                var pt = rich.GetPositionFromCharIndex(rich.TextLength - 1);
+                int lineH = (int)(rich.Font.GetHeight() * 1.8f);
+                rtbH = pt.Y + lineH + (int)(22 * _scale);
+            }
+
+            return Math.Max(Math.Max((int)(28 * _scale), gdiH), rtbH);
         }
 
         private void ApplyMarkdown(RichTextBox box, string raw)
