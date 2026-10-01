@@ -286,6 +286,7 @@ namespace RedfurSync
         private Button _btnOpenSavedVars = null!;
         private Button _btnUpdateTtcPriceTable = null!;
         private Label _lblSetupAddonStatus = null!;
+        private Button _btnSetupCheckAddon = null!;
         private TableLayoutPanel? _addonLayout;
         private TableLayoutPanel? _setupLayout;
 
@@ -3988,7 +3989,7 @@ namespace RedfurSync
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 2,
+                RowCount = 4,
                 AutoScroll = true,
                 Padding = new Padding((int)(16 * _scale)),
             };
@@ -4003,41 +4004,47 @@ namespace RedfurSync
             _setupLayout = layout;
 
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-            var formPanel = new TableLayoutPanel
+            int labelColWidth = (int)(175 * _scale);
+
+            // ── Card 1: Device Authentication & Pairing ──
+            var authPanel = new TableLayoutPanel
             {
                 Dock = DockStyle.Top,
                 ColumnCount = 2,
-                RowCount = 10,
+                RowCount = 5,
                 BackColor = CPanelBg,
                 Padding = new Padding((int)(16 * _scale)),
                 AutoSize = true,
+                Margin = new Padding(0, 0, 0, (int)(12 * _scale)),
             };
-            formPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(160 * _scale)));
-            formPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            authPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, labelColWidth));
+            authPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
-            // Section Header
-            var sectionLabel = new Label
+            var authHeader = new Label
             {
-                Text = "RELAY CONFIGURATION & DEVICE PAIRING",
+                Text = "DEVICE AUTHENTICATION & PAIRING",
                 UseMnemonic = false,
                 ForeColor = CGoldBrt,
                 Font = Title(11f, _scale, FontStyle.Bold),
                 AutoSize = true,
                 Margin = new Padding(0, 0, 0, (int)(14 * _scale)),
             };
-            formPanel.Controls.Add(sectionLabel, 0, 0);
-            formPanel.SetColumnSpan(sectionLabel, 2);
+            authPanel.Controls.Add(authHeader, 0, 0);
+            authPanel.SetColumnSpan(authHeader, 2);
 
             // Display Name
-            formPanel.Controls.Add(MakeFieldLabel("Trader Display Name:"), 0, 1);
+            authPanel.Controls.Add(MakeFieldLabel("Trader Display Name:"), 0, 1);
             _txtDisplayName = MakeStyledTextBox(AppConfig.Instance.DisplayName);
-            formPanel.Controls.Add(_txtDisplayName, 1, 1);
+            _txtDisplayName.Margin = new Padding(0, (int)(3 * _scale), 0, (int)(6 * _scale));
+            authPanel.Controls.Add(_txtDisplayName, 1, 1);
 
             // Pairing Code
-            formPanel.Controls.Add(MakeFieldLabel("Relay Pairing Code:"), 0, 2);
-            var pairLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true, Margin = new Padding(0) };
+            authPanel.Controls.Add(MakeFieldLabel("Relay Pairing Code:"), 0, 2);
+            var pairLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true, Margin = new Padding(0, (int)(3 * _scale), 0, (int)(6 * _scale)) };
             pairLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             pairLayout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
@@ -4045,17 +4052,13 @@ namespace RedfurSync
             pairLayout.Controls.Add(_txtPairingCode, 0, 0);
 
             _btnPairDevice = MakeStyledButton("Pair Device Now", CGreen);
+            _btnPairDevice.Margin = new Padding((int)(8 * _scale), 0, 0, 0);
             _btnPairDevice.Click += async (_, _) => await RunDevicePairingAsync();
             pairLayout.Controls.Add(_btnPairDevice, 1, 0);
-            formPanel.Controls.Add(pairLayout, 1, 2);
-
-            // Server URL
-            formPanel.Controls.Add(MakeFieldLabel("Sync Server URL:"), 0, 3);
-            _txtServerUrl = MakeStyledTextBox(AppConfig.Instance.ServerUrl);
-            formPanel.Controls.Add(_txtServerUrl, 1, 3);
+            authPanel.Controls.Add(pairLayout, 1, 2);
 
             // Pairing Status
-            formPanel.Controls.Add(MakeFieldLabel("Pairing Status:"), 0, 4);
+            authPanel.Controls.Add(MakeFieldLabel("Pairing Status:"), 0, 3);
             _lblPairingStatus = new Label
             {
                 Text = "Inspecting...",
@@ -4063,11 +4066,12 @@ namespace RedfurSync
                 Font = Mono(9f, _scale, FontStyle.Bold),
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
+                Margin = new Padding(0, (int)(4 * _scale), 0, (int)(6 * _scale)),
             };
-            formPanel.Controls.Add(_lblPairingStatus, 1, 4);
+            authPanel.Controls.Add(_lblPairingStatus, 1, 3);
 
             // Device Info
-            formPanel.Controls.Add(MakeFieldLabel("Device Details:"), 0, 5);
+            authPanel.Controls.Add(MakeFieldLabel("Device Details:"), 0, 4);
             _lblDeviceInfo = new Label
             {
                 Text = "Loading...",
@@ -4075,13 +4079,120 @@ namespace RedfurSync
                 Font = Mono(8f, _scale),
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
+                Margin = new Padding(0, (int)(3 * _scale), 0, 0),
             };
-            formPanel.Controls.Add(_lblDeviceInfo, 1, 5);
+            authPanel.Controls.Add(_lblDeviceInfo, 1, 4);
+
+            layout.Controls.Add(authPanel, 0, 0);
+
+            // ── Card 2: ESO Addon Integration & Status ──
+            var addonPanel = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                ColumnCount = 2,
+                RowCount = 3,
+                BackColor = CPanelBg,
+                Padding = new Padding((int)(16 * _scale)),
+                AutoSize = true,
+                Margin = new Padding(0, 0, 0, (int)(12 * _scale)),
+            };
+            addonPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, labelColWidth));
+            addonPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+            var addonHeader = new Label
+            {
+                Text = "ESO ADDON INTEGRATION & SYNC STATUS",
+                UseMnemonic = false,
+                ForeColor = CGoldBrt,
+                Font = Title(11f, _scale, FontStyle.Bold),
+                AutoSize = true,
+                Margin = new Padding(0, 0, 0, (int)(14 * _scale)),
+            };
+            addonPanel.Controls.Add(addonHeader, 0, 0);
+            addonPanel.SetColumnSpan(addonHeader, 2);
+
+            addonPanel.Controls.Add(MakeFieldLabel("Addon State:"), 0, 1);
+            _lblSetupAddonStatus = new Label
+            {
+                Text = "Checking addon...",
+                ForeColor = CGoldBrt,
+                Font = Mono(9f, _scale, FontStyle.Bold),
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Margin = new Padding(0, (int)(4 * _scale), 0, (int)(6 * _scale)),
+            };
+            addonPanel.Controls.Add(_lblSetupAddonStatus, 1, 1);
+
+            addonPanel.Controls.Add(MakeFieldLabel("Addon Actions:"), 0, 2);
+            var addonActionFlow = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = true,
+                AutoSize = true,
+                Margin = new Padding(0, (int)(4 * _scale), 0, 0),
+            };
+
+            _btnSetupCheckAddon = MakeStyledButton("Check Addon Status", CGoldBrt);
+            _btnSetupCheckAddon.Margin = new Padding(0, 0, (int)(8 * _scale), (int)(4 * _scale));
+            _btnSetupCheckAddon.Click += async (_, _) =>
+            {
+                _btnSetupCheckAddon.Enabled = false;
+                _btnSetupCheckAddon.Text = "Checking...";
+                await AddonInstallerService.CheckRemoteAddonVersionAsync(AppConfig.Instance.ServerUrl);
+                RefreshSetupView();
+                RefreshAddonView();
+                _btnSetupCheckAddon.Enabled = true;
+                _btnSetupCheckAddon.Text = "Check Addon Status";
+                FissalBox.Show("Addon installation status refreshed from server & disk.", "Status Refreshed");
+            };
+            addonActionFlow.Controls.Add(_btnSetupCheckAddon);
+
+            var btnGoToAddon = MakeStyledButton("Inspect / Full Addon Manager →", CText);
+            btnGoToAddon.Margin = new Padding(0, 0, (int)(8 * _scale), (int)(4 * _scale));
+            btnGoToAddon.Click += (_, _) => SwitchTab("addon");
+            addonActionFlow.Controls.Add(btnGoToAddon);
+
+            addonPanel.Controls.Add(addonActionFlow, 1, 2);
+            layout.Controls.Add(addonPanel, 0, 1);
+
+            // ── Card 3: Relay Preferences & Network Endpoints ──
+            var prefsPanel = new TableLayoutPanel
+            {
+                Dock = DockStyle.Top,
+                ColumnCount = 2,
+                RowCount = 5,
+                BackColor = CPanelBg,
+                Padding = new Padding((int)(16 * _scale)),
+                AutoSize = true,
+                Margin = new Padding(0, 0, 0, (int)(12 * _scale)),
+            };
+            prefsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, labelColWidth));
+            prefsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+            var prefsHeader = new Label
+            {
+                Text = "RELAY PREFERENCES & ENDPOINTS",
+                UseMnemonic = false,
+                ForeColor = CGoldBrt,
+                Font = Title(11f, _scale, FontStyle.Bold),
+                AutoSize = true,
+                Margin = new Padding(0, 0, 0, (int)(14 * _scale)),
+            };
+            prefsPanel.Controls.Add(prefsHeader, 0, 0);
+            prefsPanel.SetColumnSpan(prefsHeader, 2);
+
+            // Server URL
+            prefsPanel.Controls.Add(MakeFieldLabel("Sync Server URL:"), 0, 1);
+            _txtServerUrl = MakeStyledTextBox(AppConfig.Instance.ServerUrl);
+            _txtServerUrl.Margin = new Padding(0, (int)(3 * _scale), 0, (int)(6 * _scale));
+            prefsPanel.Controls.Add(_txtServerUrl, 1, 1);
 
             // Silent Background Sync
-            formPanel.Controls.Add(MakeFieldLabel("Background Alerts:"), 0, 6);
+            prefsPanel.Controls.Add(MakeFieldLabel("Background Alerts:"), 0, 2);
             _btnSilentSync = MakeStyledButton("", CGreen);
             _btnSilentSync.AutoSize = true;
+            _btnSilentSync.Margin = new Padding(0, (int)(3 * _scale), 0, (int)(6 * _scale));
             _btnSilentSync.Click += (_, _) =>
             {
                 var cfg = AppConfig.Instance;
@@ -4090,35 +4201,13 @@ namespace RedfurSync
                 UpdateSilentSyncButton();
             };
             UpdateSilentSyncButton();
-            formPanel.Controls.Add(_btnSilentSync, 1, 6);
+            prefsPanel.Controls.Add(_btnSilentSync, 1, 2);
 
-            // ESO Addon Status
-            formPanel.Controls.Add(MakeFieldLabel("ESO Addon Status:"), 0, 7);
-            var addonSetupFlow = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                AutoSize = true,
-                Margin = new Padding(0),
-            };
-            _lblSetupAddonStatus = new Label
-            {
-                Text = "Checking addon...",
-                ForeColor = CGoldBrt,
-                Font = Mono(8.5f, _scale, FontStyle.Bold),
-                AutoSize = true,
-                Margin = new Padding(0, 4, 8, 0),
-            };
-            var btnGoToAddon = MakeStyledButton("Inspect / Update Addon →", CGoldBrt);
-            btnGoToAddon.AutoSize = true;
-            btnGoToAddon.Click += (_, _) => SwitchTab("addon");
-            addonSetupFlow.Controls.Add(_lblSetupAddonStatus);
-            addonSetupFlow.Controls.Add(btnGoToAddon);
-            formPanel.Controls.Add(addonSetupFlow, 1, 7);
-
-            // MasterMerchant Sync Toggle (Legacy 18-file fallback)
-            formPanel.Controls.Add(MakeFieldLabel("MasterMerchant Sync:"), 0, 8);
+            // MasterMerchant Sync Toggle
+            prefsPanel.Controls.Add(MakeFieldLabel("MasterMerchant Sync:"), 0, 3);
             _btnSyncMm = MakeStyledButton("", CGoldBrt);
             _btnSyncMm.AutoSize = true;
+            _btnSyncMm.Margin = new Padding(0, (int)(3 * _scale), 0, (int)(6 * _scale));
             _btnSyncMm.Click += (_, _) =>
             {
                 var cfg = AppConfig.Instance;
@@ -4127,18 +4216,20 @@ namespace RedfurSync
                 UpdateSyncMmButton();
             };
             UpdateSyncMmButton();
-            formPanel.Controls.Add(_btnSyncMm, 1, 8);
+            prefsPanel.Controls.Add(_btnSyncMm, 1, 3);
 
             // Action Buttons
+            prefsPanel.Controls.Add(MakeFieldLabel("Preferences Actions:"), 0, 4);
             var btnRow = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 FlowDirection = FlowDirection.LeftToRight,
                 AutoSize = true,
-                Margin = new Padding(0, 12, 0, 0),
+                Margin = new Padding(0, (int)(4 * _scale), 0, 0),
             };
 
             _btnSaveSetup = MakeStyledButton("Save Settings", CGoldBrt);
+            _btnSaveSetup.Margin = new Padding(0, 0, (int)(8 * _scale), (int)(4 * _scale));
             _btnSaveSetup.Click += (_, _) =>
             {
                 var cfg = AppConfig.Instance;
@@ -4152,6 +4243,7 @@ namespace RedfurSync
             btnRow.Controls.Add(_btnSaveSetup);
 
             _btnTestConnection = MakeStyledButton("Test Server Ping", CText);
+            _btnTestConnection.Margin = new Padding(0, 0, (int)(8 * _scale), (int)(4 * _scale));
             _btnTestConnection.Click += async (_, _) =>
             {
                 _btnTestConnection.Enabled = false;
@@ -4163,9 +4255,10 @@ namespace RedfurSync
             };
             btnRow.Controls.Add(_btnTestConnection);
 
-            formPanel.Controls.Add(btnRow, 1, 9);
+            prefsPanel.Controls.Add(btnRow, 1, 4);
 
-            layout.Controls.Add(formPanel, 0, 0);
+            layout.Controls.Add(prefsPanel, 0, 2);
+
             _setupView.Controls.Add(layout);
         }
 
@@ -4257,11 +4350,11 @@ namespace RedfurSync
                 switch (addonStatus.State)
                 {
                     case AddonInstallState.UpToDate:
-                        _lblSetupAddonStatus.Text = $"✔ Addon v{addonStatus.InstalledVersion} Active";
+                        _lblSetupAddonStatus.Text = $"● Addon v{addonStatus.InstalledVersion} is Installed & Up to Date";
                         _lblSetupAddonStatus.ForeColor = CGreen;
                         break;
                     case AddonInstallState.UpdateAvailable:
-                        _lblSetupAddonStatus.Text = $"▲ Update Available (v{addonStatus.InstalledVersion ?? "?"} → v{addonStatus.LatestVersion})";
+                        _lblSetupAddonStatus.Text = $"▲ Update Available: v{addonStatus.InstalledVersion ?? "?"} installed → v{addonStatus.LatestVersion} available";
                         _lblSetupAddonStatus.ForeColor = CWarn;
                         break;
                     case AddonInstallState.NotInstalled:
