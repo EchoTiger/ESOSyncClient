@@ -82,14 +82,16 @@ function FR:StyleTactileButton(btn, opts)
             bg:SetCenterColor(unpack(hoverBg))
             bg:SetEdgeColor(unpack(hoverEdge))
         end
-        if opts.tooltipTitle or opts.tooltipText then
+        local titleVal = type(opts.tooltipTitle) == "function" and opts.tooltipTitle(control) or opts.tooltipTitle
+        local textVal = type(opts.tooltipText) == "function" and opts.tooltipText(control) or opts.tooltipText
+        if titleVal or textVal then
             InitializeTooltip(InformationTooltip, control, TOP, 0, -4)
             local tip = ""
-            if opts.tooltipTitle then
-                tip = string.format("|cFF9900%s|r\n", opts.tooltipTitle)
+            if titleVal and titleVal ~= "" then
+                tip = string.format("|cFF9900%s|r\n", titleVal)
             end
-            if opts.tooltipText then
-                tip = tip .. string.format("|cCCCCCC%s|r", opts.tooltipText)
+            if textVal and textVal ~= "" then
+                tip = tip .. string.format("|cCCCCCC%s|r", textVal)
             end
             SetTooltipText(InformationTooltip, tip)
         end
@@ -195,7 +197,7 @@ function FR:CreateConsoleUI()
     title:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     title:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
     title:SetFont("ZoFontGameBold")
-    title:SetText(string.format("|cFF9900FISSAL RELAY PRIME|r  |c00FFCCCOMMAND CONSOLE|r  |c888888v%s|r", FR.version or "1.6.1"))
+    title:SetText(string.format("|cFF9900FISSAL RELAY PRIME|r  |c00FFCCCOMMAND CONSOLE|r  |c888888v%s|r", self.version or "1.6.0"))
 
     -- 7. Top Divider Line
     local topDiv = wm:CreateControl("$(parent)_DivTop", console, CT_TEXTURE)
@@ -445,7 +447,21 @@ function FR:BuildOverviewTab(parent)
         normalTextColor = { 0, 1, 0.8, 1 },
         hoverTextColor = { 0.4, 1, 0.9, 1 },
         tooltipTitle = "Snapshot Member Roster",
-        tooltipText = "Capture an instantaneous record of all member handles, ranks, and notes across all your guilds for auditing.",
+        tooltipText = function()
+            local gIdx = self.selectedGuildIndex or 1
+            local gId = GetGuildId(gIdx)
+            local lastSnap = self.GetLastSnapshotTime and self:GetLastSnapshotTime(gId) or 0
+            local agoStr = "Never taken"
+            if lastSnap > 0 then
+                local ago = GetTimeStamp() - lastSnap
+                if ago < 60 then agoStr = "just now"
+                elseif ago < 3600 then agoStr = string.format("%dm ago", math.floor(ago / 60))
+                elseif ago < 86400 then agoStr = string.format("%dh ago", math.floor(ago / 3600))
+                else agoStr = string.format("%dd ago", math.floor(ago / 86400))
+                end
+            end
+            return string.format("Capture an instantaneous record of all member handles, ranks, and notes across all your guilds for auditing.\n\n|c00FFCC✦ Last Snapshot Taken:|r %s", agoStr)
+        end,
     })
     snapBtn:SetHandler("OnClicked", function()
         local count = self:TakeRosterSnapshot()
@@ -466,7 +482,19 @@ function FR:BuildOverviewTab(parent)
         normalTextColor = { 1, 0.85, 0.2, 1 },
         hoverTextColor = { 1, 0.95, 0.5, 1 },
         tooltipTitle = "Scan Owned Kiosks",
-        tooltipText = "Query Tamriel's trading kiosk registry to identify current trader locations and hired merchants.",
+        tooltipText = function()
+            local lastScan = self.savedVars and self.savedVars.kiosksLastScanned or 0
+            local agoStr = "Ready to scan"
+            if lastScan > 0 then
+                local ago = GetTimeStamp() - lastScan
+                if ago < 60 then agoStr = "just now"
+                elseif ago < 3600 then agoStr = string.format("%dm ago", math.floor(ago / 60))
+                elseif ago < 86400 then agoStr = string.format("%dh ago", math.floor(ago / 3600))
+                else agoStr = string.format("%dd ago", math.floor(ago / 86400))
+                end
+            end
+            return string.format("Query Tamriel's trading kiosk registry to identify current trader locations and hired merchants.\n\n|c00FFCC✦ Last Registry Scan:|r %s", agoStr)
+        end,
     })
     scanKioskBtn:SetHandler("OnClicked", function()
         local found = self:ScanOwnedKiosks()
@@ -913,26 +941,26 @@ function FR:UpdateOverviewTab()
 
     -- Guild Card
     if self.overviewGuildNameLbl then
-        self.overviewGuildNameLbl:SetText(string.format("Guild: %s (ID: %d)", ColorText(guildName, "00FFCC"), guildId))
+        self.overviewGuildNameLbl:SetText(string.format("• Guild: |c00FFCC%s|r |c888888(#%d)|r", guildName, guildId))
     end
     if self.overviewMembersLbl then
-        self.overviewMembersLbl:SetText(string.format("Members: %s total | %s online",
-            ColorText(tostring(memberCount), "FFFFFF"), ColorText(tostring(onlineCount), "59E08A")))
+        self.overviewMembersLbl:SetText(string.format("• Roster: |cFFFFFF%s|r |c888888members|r • |c59E08A● %s online|r",
+            ZO_LocalizeDecimalNumber(memberCount), ZO_LocalizeDecimalNumber(onlineCount)))
     end
 
     -- Kiosk detection
-    local kioskInfo = "None (No Trader Hired)"
+    local kioskInfo = "|c888888○ None (No Trader Hired)|r"
     if self.savedVars and self.savedVars.kiosks then
         for trader, data in pairs(self.savedVars.kiosks) do
             if data.guildName == guildName then
                 local loc = (data.city and data.city ~= "") and data.city or (data.zone or "Tamriel")
-                kioskInfo = string.format("%s in %s", ColorText(trader, "59E08A"), loc)
+                kioskInfo = string.format("|c59E08A%s|r |c888888in|r |cE6C387%s|r", trader, loc)
                 break
             end
         end
     end
     if self.overviewKioskLbl then
-        self.overviewKioskLbl:SetText("Kiosk: " .. kioskInfo)
+        self.overviewKioskLbl:SetText("• Trader Stall: " .. kioskInfo)
     end
 
     -- Staff Permissions
@@ -940,18 +968,18 @@ function FR:UpdateOverviewTab()
     local hasBank = DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_BANK_VIEW_DEPOSIT_HISTORY)
     local hasClaim = DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_CLAIM_KIOSK)
     if self.overviewPermsLbl then
-        self.overviewPermsLbl:SetText(string.format("Staff: MotD %s | Bank %s | Kiosks %s",
-            hasMotD and ColorText("[YES]", "59E08A") or ColorText("[NO]", "888888"),
-            hasBank and ColorText("[YES]", "59E08A") or ColorText("[NO]", "888888"),
-            hasClaim and ColorText("[YES]", "59E08A") or ColorText("[NO]", "888888")))
+        self.overviewPermsLbl:SetText(string.format("• Authority: %s  %s  %s",
+            hasMotD and "|c59E08A✦ MotD|r" or "|c666666✧ MotD|r",
+            hasBank and "|c59E08A✦ Bank|r" or "|c666666✧ Bank|r",
+            hasClaim and "|c59E08A✦ Kiosk|r" or "|c666666✧ Kiosk|r"))
     end
 
     -- LibHistoire Status (O(1) lookup)
     local saleCount = self:GetCount("sales")
     local depositCount = self:GetCount("deposits")
     if self.overviewRecordsLbl then
-        self.overviewRecordsLbl:SetText(string.format("Stored Sales: %s | Bank Deposits: %s",
-            ColorText(FormatGold(saleCount), "00FFCC"), ColorText(FormatGold(depositCount), "FFAA00")))
+        self.overviewRecordsLbl:SetText(string.format("• Staged Cache: |c00FFCC%s|r |c888888sales|r • |cFFAA00%s|r |c888888bank deps|r",
+            ZO_LocalizeDecimalNumber(saleCount), ZO_LocalizeDecimalNumber(depositCount)))
     end
 
     -- Pending Events & Link State
@@ -975,17 +1003,18 @@ function FR:UpdateOverviewTab()
 
     if self.overviewSyncStateLbl then
         local isLinked = linkedCategories >= totalCategories and totalCategories > 0
-        self.overviewSyncStateLbl:SetText(string.format("Histoire Status: %s (%d/%d Linked)",
-            isLinked and ColorText("Synchronized", "59E08A") or ColorText("Connecting...", "FFCC00"),
+        self.overviewSyncStateLbl:SetText(string.format("• Sync Stream: %s |c888888(%d/%d channels)|r",
+            isLinked and "|c59E08A● Synchronized|r" or "|cFFCC00▲ Catching Up...|r",
             linkedCategories, totalCategories))
     end
     if self.overviewPendingLbl then
-        self.overviewPendingLbl:SetText(string.format("Pending Ingestion: %s events",
-            ColorText(FormatGold(totalPendingEvents), totalPendingEvents > 0 and "FFCC00" or "59E08A")))
+        self.overviewPendingLbl:SetText(string.format("• Ingest Queue: %s",
+            totalPendingEvents > 0 and string.format("|cFFCC00▲ %s events pending|r", ZO_LocalizeDecimalNumber(totalPendingEvents))
+            or "|c59E08A● Caught Up (0 pending)|r"))
     end
     if self.overviewSpeedLbl then
-        self.overviewSpeedLbl:SetText(string.format("Ingestion Speed: %s events/sec",
-            ColorText(tostring(totalSpeed), "00FFCC")))
+        self.overviewSpeedLbl:SetText(string.format("• Throughput: |c00FFCC%s events/sec|r",
+            ZO_LocalizeDecimalNumber(totalSpeed)))
     end
 
     -- Raffle Metrics Card (Prioritizes live bank ledger with sealed fallback)
@@ -997,69 +1026,69 @@ function FR:UpdateOverviewTab()
 
     if liveMetrics and liveMetrics.totalGold > 0 then
         if self.overviewPotLbl then
-            self.overviewPotLbl:SetText(string.format("Pot: %s gold |c59E08A(Live Bank Ledger)|r", ColorText(FormatGold(liveMetrics.totalGold), "FFD700")))
+            self.overviewPotLbl:SetText(string.format("• Pot: |cFFD700%sg|r |c59E08A(Live Bank)|r", ZO_LocalizeDecimalNumber(liveMetrics.totalGold)))
         end
         if self.overviewTixLbl then
-            self.overviewTixLbl:SetText(string.format("Tickets: %s", ColorText(FormatGold(liveMetrics.totalTickets), "00FFCC")))
+            self.overviewTixLbl:SetText(string.format("• Tickets: |c00FFCC%s|r", ZO_LocalizeDecimalNumber(liveMetrics.totalTickets)))
         end
         if self.overviewEntLbl then
-            self.overviewEntLbl:SetText(string.format("Entrants: %s members (%d deposits)", ColorText(tostring(liveMetrics.entrants), "FFFFFF"), liveMetrics.entries))
+            self.overviewEntLbl:SetText(string.format("• Entrants: |cFFFFFF%d|r |c888888(%d deps)|r", liveMetrics.entrants, liveMetrics.entries))
         end
         if self.overviewPrizesLbl then
             local pFirst = math.floor(liveMetrics.totalGold * 0.30)
             local pSecond = math.floor(liveMetrics.totalGold * 0.20)
             local pThird = math.floor(liveMetrics.totalGold * 0.10)
             local pGuild = math.floor(liveMetrics.totalGold * 0.40)
-            self.overviewPrizesLbl:SetText(string.format("Projected: 1st: %s | 2nd: %s | 3rd: %s | Guild: %s",
-                ColorText(FormatGold(pFirst), "FFD700"),
-                ColorText(FormatGold(pSecond), "FFAA00"),
-                ColorText(FormatGold(pThird), "FF8800"),
-                ColorText(FormatGold(pGuild), "00FFCC")))
+            self.overviewPrizesLbl:SetText(string.format("• Payouts: 🥇 |cFFD700%sg|r (30%%) • 🥈 |cFFAA00%sg|r (20%%) • 🥉 |cFF8800%sg|r (10%%) • Guild: |c00FFCC%sg|r",
+                ZO_LocalizeDecimalNumber(pFirst), ZO_LocalizeDecimalNumber(pSecond), ZO_LocalizeDecimalNumber(pThird), ZO_LocalizeDecimalNumber(pGuild)))
         end
         if self.overviewWinnersLbl then
             if raffleData and raffleData.winners and #raffleData.winners > 0 then
-                local winText = string.format("Prior Week Winners (%s):\n", raffleData.weekLabel or "Sealed")
-                for _, w in ipairs(raffleData.winners) do
-                    winText = winText .. string.format("  #%d %s - %s gold (Ticket #%d)\n",
-                        w.place, ColorText(w.name, "00FFCC"), FormatGold(w.prize), w.ticket)
+                local winLines = { string.format("• |cE6C387Prior Week Winners (%s):|r", raffleData.weekLabel or "Sealed") }
+                local medalIcons = { "🥇", "🥈", "🥉" }
+                for idx, w in ipairs(raffleData.winners) do
+                    local icon = medalIcons[idx] or "✦"
+                    table.insert(winLines, string.format("   %s %s: |c00FFCC%s|r — |cFFD700%s gold|r |c888888(Ticket #%d)|r",
+                        icon, (idx == 1 and "1st" or (idx == 2 and "2nd" or (idx == 3 and "3rd" or "#" .. idx))),
+                        w.name, ZO_LocalizeDecimalNumber(w.prize), w.ticket))
                 end
-                self.overviewWinnersLbl:SetText(winText)
+                self.overviewWinnersLbl:SetText(table.concat(winLines, "\n"))
             else
-                self.overviewWinnersLbl:SetText("Drawing Sunday! Live entries actively recording from guild bank.")
+                self.overviewWinnersLbl:SetText("• |c59E08A● Drawing Sunday!|r Live entries actively accumulating from guild bank.")
             end
         end
     elseif raffleData then
         if self.overviewPotLbl then
-            self.overviewPotLbl:SetText(string.format("Pot: %s gold |c888888(Sealed Prior Week)|r", ColorText(FormatGold(raffleData.pot or 0), "FFD700")))
+            self.overviewPotLbl:SetText(string.format("• Pot: |cFFD700%sg|r |c888888(Sealed)|r", ZO_LocalizeDecimalNumber(raffleData.pot or 0)))
         end
         if self.overviewTixLbl then
-            self.overviewTixLbl:SetText(string.format("Tickets: %s", ColorText(FormatGold(raffleData.tickets or 0), "00FFCC")))
+            self.overviewTixLbl:SetText(string.format("• Tickets: |c00FFCC%s|r", ZO_LocalizeDecimalNumber(raffleData.tickets or 0)))
         end
         if self.overviewEntLbl then
-            self.overviewEntLbl:SetText(string.format("Entrants: %s members", ColorText(tostring(raffleData.entrants or 0), "FFFFFF")))
+            self.overviewEntLbl:SetText(string.format("• Entrants: |cFFFFFF%d members|r", raffleData.entrants or 0))
         end
         if self.overviewPrizesLbl and raffleData.prizes then
             local p = raffleData.prizes
-            self.overviewPrizesLbl:SetText(string.format("Prizes: 1st: %s | 2nd: %s | 3rd: %s | Guild: %s",
-                ColorText(FormatGold(p.first or 0), "FFD700"),
-                ColorText(FormatGold(p.second or 0), "FFAA00"),
-                ColorText(FormatGold(p.third or 0), "FF8800"),
-                ColorText(FormatGold(p.guild or 0), "00FFCC")))
+            self.overviewPrizesLbl:SetText(string.format("• Payouts: 🥇 |cFFD700%sg|r • 🥈 |cFFAA00%sg|r • 🥉 |cFF8800%sg|r • Guild: |c00FFCC%sg|r",
+                ZO_LocalizeDecimalNumber(p.first or 0), ZO_LocalizeDecimalNumber(p.second or 0), ZO_LocalizeDecimalNumber(p.third or 0), ZO_LocalizeDecimalNumber(p.guild or 0)))
         end
         if self.overviewWinnersLbl and raffleData.winners then
-            local winText = "Winners:\n"
-            for _, w in ipairs(raffleData.winners) do
-                winText = winText .. string.format("  #%d %s - %s gold (Ticket #%d)\n",
-                    w.place, ColorText(w.name, "00FFCC"), FormatGold(w.prize), w.ticket)
+            local winLines = { string.format("• |cE6C387Prior Week Winners (%s):|r", raffleData.weekLabel or "Sealed") }
+            local medalIcons = { "🥇", "🥈", "🥉" }
+            for idx, w in ipairs(raffleData.winners) do
+                local icon = medalIcons[idx] or "✦"
+                table.insert(winLines, string.format("   %s %s: |c00FFCC%s|r — |cFFD700%s gold|r |c888888(Ticket #%d)|r",
+                    icon, (idx == 1 and "1st" or (idx == 2 and "2nd" or (idx == 3 and "3rd" or "#" .. idx))),
+                    w.name, ZO_LocalizeDecimalNumber(w.prize), w.ticket))
             end
-            self.overviewWinnersLbl:SetText(winText)
+            self.overviewWinnersLbl:SetText(table.concat(winLines, "\n"))
         end
     else
-        if self.overviewPotLbl then self.overviewPotLbl:SetText("Pot: |c888888--|r") end
-        if self.overviewTixLbl then self.overviewTixLbl:SetText("Tickets: |c888888--|r") end
-        if self.overviewEntLbl then self.overviewEntLbl:SetText("Entrants: |c888888--|r") end
-        if self.overviewPrizesLbl then self.overviewPrizesLbl:SetText("Prizes: No sealed ledger for this guild.") end
-        if self.overviewWinnersLbl then self.overviewWinnersLbl:SetText("Winners: (Switch to Redfur Trading Post or Redfur Dealers)") end
+        if self.overviewPotLbl then self.overviewPotLbl:SetText("• Pot: |c888888--|r") end
+        if self.overviewTixLbl then self.overviewTixLbl:SetText("• Tickets: |c888888--|r") end
+        if self.overviewEntLbl then self.overviewEntLbl:SetText("• Entrants: |c888888--|r") end
+        if self.overviewPrizesLbl then self.overviewPrizesLbl:SetText("• Payouts: |c888888No sealed ledger for this guild.|r") end
+        if self.overviewWinnersLbl then self.overviewWinnersLbl:SetText("• Winners: |c888888(Switch to Redfur Trading Post or Redfur Dealers)|r") end
     end
 end
 

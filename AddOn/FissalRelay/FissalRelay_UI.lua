@@ -98,7 +98,7 @@ function FR:CreateHUD()
 
     -- 1. Main TopLevelWindow (draggable, mouse-interactive, clamped)
     local hud = wm:CreateTopLevelWindow("FissalRelay_HUD")
-    hud:SetDimensions(350, 220)
+    hud:SetDimensions(380, 220)
     hud:SetClampedToScreen(true)
     hud:SetMouseEnabled(true)
     hud:SetMovable(true)
@@ -163,10 +163,10 @@ function FR:CreateHUD()
         ClearTooltip(InformationTooltip)
     end)
 
-    -- 7. Console Button [Console] (Replaces redundant Sync button)
+    -- 7. Prime Console Button [Console]
     local consoleBtn = wm:CreateControl("$(parent)_Console", hud, CT_BUTTON)
     consoleBtn:SetAnchor(RIGHT, closeBtn, LEFT, -8, 0)
-    consoleBtn:SetDimensions(70, 18)
+    consoleBtn:SetDimensions(75, 18)
     consoleBtn:SetFont("ZoFontGame")
     consoleBtn:SetNormalFontColor(0, 1, 0.8, 1)
     consoleBtn:SetMouseOverFontColor(1, 0.9, 0.4, 1)
@@ -174,13 +174,13 @@ function FR:CreateHUD()
     consoleBtn:SetHandler("OnClicked", function()
         if self.ToggleConsole then
             self:ToggleConsole()
-        else
-            self:HandleSlashCommand("console")
+        elseif self.ToggleConsoleWindow then
+            self:ToggleConsoleWindow()
         end
     end)
     consoleBtn:SetHandler("OnMouseEnter", function(ctrl)
         InitializeTooltip(InformationTooltip, ctrl, TOP, 0, -4)
-        SetTooltipText(InformationTooltip, "Open Master Command Console (Overview, MotD, Roster Audits, Bids & Auto-Ranks).")
+        SetTooltipText(InformationTooltip, "Fissal Relay Prime Command Console\nClick to open Overview, MotD Studio, Auditor, Kiosk Recon, and Auto Ranks.")
     end)
     consoleBtn:SetHandler("OnMouseExit", function()
         ClearTooltip(InformationTooltip)
@@ -206,7 +206,7 @@ function FR:CreateHUD()
         val:SetFont("ZoFontGameBold")
         val:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
         val:SetText("--")
-        val:SetWidth(205)
+        val:SetWidth(235)
         val:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
 
         return lbl, val
@@ -227,15 +227,40 @@ function FR:CreateHUD()
     }
 
     local readyLbl = _readyLbl
+    local readyVal = _readyVal
+    local function ShowReadyTooltip(ctrl)
+        InitializeTooltip(InformationTooltip, ctrl, TOP, 0, -4)
+        local saleCount = FR.GetCount and FR:GetCount("sales") or 0
+        local deposits = FR.GetCount and FR:GetCount("deposits") or 0
+        local totalGold = FR.savedVars and FR.savedVars.totalSalesGold or 0
+        local lines = {
+            "|cFF9900Fissal Relay Sync Engine|r",
+            "|c888888Status:|r |c59E08A● Staged & Ready|r",
+            "",
+            string.format("|c00FFCC%s|r Guild Sales recorded", ZO_LocalizeDecimalNumber(saleCount)),
+            string.format("|cFFAA00%s|r Guild Bank Deposits recorded", ZO_LocalizeDecimalNumber(deposits)),
+        }
+        if totalGold > 0 then
+            table.insert(lines, string.format("|cFFD700%s gold|r total sales volume", ZO_LocalizeDecimalNumber(totalGold)))
+        end
+        table.insert(lines, "")
+        table.insert(lines, "|cE6C387How Sync Works:|r")
+        table.insert(lines, "ESO stores all trade history securely in SavedVariables.")
+        table.insert(lines, "Upon /reloadui or logout, the Fissal Relay desktop courier")
+        table.insert(lines, "relays staged records to your homelab database and Discord.")
+        table.insert(lines, "")
+        table.insert(lines, "|c888888• Zero manual exporting needed.\n• Safe, non-destructive caching.|r")
+        SetTooltipText(InformationTooltip, table.concat(lines, "\n"))
+    end
     if readyLbl then
         readyLbl:SetMouseEnabled(true)
-        readyLbl:SetHandler("OnMouseEnter", function(ctrl)
-            InitializeTooltip(InformationTooltip, ctrl, TOP, 0, -4)
-            SetTooltipText(InformationTooltip, "Unpruned records staged in SavedVariables ready for Fissal Relay sync.\nS = Sales\nD = Bank Deposits")
-        end)
-        readyLbl:SetHandler("OnMouseExit", function()
-            ClearTooltip(InformationTooltip)
-        end)
+        readyLbl:SetHandler("OnMouseEnter", ShowReadyTooltip)
+        readyLbl:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
+    end
+    if readyVal then
+        readyVal:SetMouseEnabled(true)
+        readyVal:SetHandler("OnMouseEnter", ShowReadyTooltip)
+        readyVal:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
     end
 
     -- History Sync Channel Tooltip Breakdown
@@ -290,6 +315,70 @@ function FR:CreateHUD()
     -- 10. Last Bump Meter Row (6th telemetry row)
     local _bumpLbl, _bumpVal = CreateMeterRow("Bump", "Last Bump:", 151)
     self.hudElements.bumpVal = _bumpVal
+
+    local bumpLbl = _bumpLbl
+    local bumpVal = _bumpVal
+    local function ShowBumpTooltip(ctrl)
+        InitializeTooltip(InformationTooltip, ctrl, TOP, 0, -4)
+        local telem = FR.GetBumpTelemetryDetails and FR:GetBumpTelemetryDetails()
+        if not telem then
+            SetTooltipText(InformationTooltip, "|cFF9900TTC Bump Telemetry|r\n|c888888No bumps recorded yet this session.\nOpen Guild Store at a Banker to bump listings.|r")
+            return
+        end
+
+        local agoStr = "just now"
+        if telem.elapsed < 60 then
+            agoStr = "just now"
+        elseif telem.elapsed < 3600 then
+            agoStr = string.format("%dm ago", math.floor(telem.elapsed / 60))
+        elseif telem.elapsed < 86400 then
+            agoStr = string.format("%dh ago", math.floor(telem.elapsed / 3600))
+        else
+            agoStr = string.format("%dd ago", math.floor(telem.elapsed / 86400))
+        end
+
+        local lines = {
+            "|cFF9900TTC Bump Telemetry & Impact|r",
+            string.format("|c888888Last Bump:|r |c00FFCC%s|r", agoStr),
+            string.format("|c888888Sales Since Bump:|r |c59E08A%s sales|r (|cFFD700%sg|r)",
+                ZO_LocalizeDecimalNumber(telem.salesSince), ZO_LocalizeDecimalNumber(telem.goldSince)),
+            string.format("|c888888Sales Velocity:|r |c00FFCC%.1f sales/hr|r |c888888(vs %.1f/hr baseline)|r",
+                telem.rateSince, telem.ratePre),
+        }
+
+        if telem.pctLift > 0 then
+            table.insert(lines, string.format("|c888888Frequency Surge:|r |c59E08A+%.1f%% lift|r", telem.pctLift))
+        elseif telem.pctLift < 0 then
+            table.insert(lines, string.format("|c888888Frequency Change:|r |c888888%.1f%%|r", telem.pctLift))
+        else
+            table.insert(lines, "|c888888Frequency Change:|r |c888888Baseline steady|r")
+        end
+
+        if #telem.guilds > 0 then
+            table.insert(lines, "")
+            table.insert(lines, "|cE6C387Sales by Bumped Guild:|r")
+            for _, g in ipairs(telem.guilds) do
+                local liftStr = g.lift > 0 and string.format(" • |c59E08A+%.0f%%|r", g.lift) or ""
+                table.insert(lines, string.format("• |cFFFFFF%s:|r |c00FFCC%d sales|r (|cFFD700%sg|r)%s",
+                    g.name, g.salesSince, ZO_LocalizeDecimalNumber(g.goldSince), liftStr))
+            end
+        end
+
+        table.insert(lines, "")
+        table.insert(lines, "|c888888Tip: Bump every few hours at a Banker to keep listings at the top of TTC!|r")
+        SetTooltipText(InformationTooltip, table.concat(lines, "\n"))
+    end
+
+    if bumpLbl then
+        bumpLbl:SetMouseEnabled(true)
+        bumpLbl:SetHandler("OnMouseEnter", ShowBumpTooltip)
+        bumpLbl:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
+    end
+    if bumpVal then
+        bumpVal:SetMouseEnabled(true)
+        bumpVal:SetHandler("OnMouseEnter", ShowBumpTooltip)
+        bumpVal:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
+    end
 
     -- 11. Bottom Divider Line
     local divider2 = wm:CreateControl("$(parent)_Div2", hud, CT_TEXTURE)
@@ -377,18 +466,28 @@ function FR:UpdateHUD()
     local bidCount = NonContiguousCount(self.savedVars.staff and self.savedVars.staff.bids or {})
     self.hudElements.kiosksVal:SetText(string.format("|c00FF00%d|r owned • |cFFD700%d|r bids", ownedCount, bidCount))
 
-    -- 3b. Last Bump Time
+    -- 3b. Last Bump Time & Impact Telemetry
     if self.hudElements.bumpVal then
-        local lastBump = self.savedVars.lastBumpTime or 0
-        if lastBump > 0 then
-            local ago = GetTimeStamp() - lastBump
-            local agoStr
-            if ago < 60 then agoStr = "just now"
-            elseif ago < 3600 then agoStr = string.format("%dm ago", math.floor(ago / 60))
-            elseif ago < 86400 then agoStr = string.format("%dh ago", math.floor(ago / 3600))
-            else agoStr = string.format("%dd ago", math.floor(ago / 86400))
+        local telem = self.GetBumpTelemetryDetails and self:GetBumpTelemetryDetails()
+        if telem then
+            local agoStr = "just now"
+            if telem.elapsed < 60 then
+                agoStr = "just now"
+            elseif telem.elapsed < 3600 then
+                agoStr = string.format("%dm ago", math.floor(telem.elapsed / 60))
+            elseif telem.elapsed < 86400 then
+                agoStr = string.format("%dh ago", math.floor(telem.elapsed / 3600))
+            else
+                agoStr = string.format("%dd ago", math.floor(telem.elapsed / 86400))
             end
-            self.hudElements.bumpVal:SetText(string.format("|c00FFCC%s|r", agoStr))
+
+            if telem.salesSince > 0 then
+                local liftStr = telem.pctLift > 0 and string.format(" • |c59E08A+%.0f%%|r", telem.pctLift) or ""
+                self.hudElements.bumpVal:SetText(string.format("|c00FFCC%s|r |c59E08A(+%d sales%s)|r",
+                    agoStr, telem.salesSince, liftStr))
+            else
+                self.hudElements.bumpVal:SetText(string.format("|c00FFCC%s|r |c888888(0 sales)|r", agoStr))
+            end
         else
             self.hudElements.bumpVal:SetText("|c888888Never|r")
         end
@@ -404,7 +503,7 @@ function FR:UpdateHUD()
     if self.hudElements.readyVal then
         local totalStaged = saleCount + deposits
         if totalStaged > 0 then
-            self.hudElements.readyVal:SetText(string.format("|c00FF00● Ready|r (|c00FFCC%s|r S • |cFFAA00%s|r D)",
+            self.hudElements.readyVal:SetText(string.format("|c59E08A● Ready|r |c00FFCC%s|r |c888888sales|r • |cFFAA00%s|r |c888888deps|r",
                 ZO_LocalizeDecimalNumber(saleCount), ZO_LocalizeDecimalNumber(deposits)))
         else
             self.hudElements.readyVal:SetText("|c888888○ Idle (0 staged)|r")
@@ -1458,19 +1557,6 @@ function FR:CreateSettingsMenu()
         {
             type = "description",
             text = "Fissal watches your guild store transactions, kiosk ground recon, and bank ledgers with clockwork precision, feeding data smoothly to Redfur Relay.",
-        },
-        {
-            type = "button",
-            name = "Open Master Command Console",
-            tooltip = "Open the interactive Fissal Relay Prime Command Console window (/fissal or /fr).",
-            func = function()
-                if FR.ToggleConsole then
-                    FR:ToggleConsole(true)
-                else
-                    FR:HandleSlashCommand("console")
-                end
-            end,
-            width = "full",
         },
         {
             type = "checkbox",

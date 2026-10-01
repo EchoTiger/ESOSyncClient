@@ -26,31 +26,31 @@ local DEFAULT_RAFFLE_CACHE = {
     post = {
         guildKey = "post",
         guildLabel = "Redfur Trading Post",
-        weekLabel = "Sep 6 - Sep 13",
-        weekStart = 1788735600,
-        pot = 1996000,
-        tickets = 1996,
-        entrants = 51,
-        prizes = { first = 598800, second = 399200, third = 199600, guild = 798400 },
+        weekLabel = "Sep 20 - Sep 27",
+        weekStart = 1789945200,
+        pot = 1552000,
+        tickets = 1552,
+        entrants = 44,
+        prizes = { first = 465600, second = 310400, third = 155200, guild = 620800 },
         winners = {
-            { place = 1, name = "@albai06", ticket = 291, prize = 598800, entries = 2, tickets = 20, gold = 20000 },
-            { place = 2, name = "@TaskiBeowolf", ticket = 1415, prize = 399200, entries = 2, tickets = 300, gold = 300000 },
-            { place = 3, name = "@Utishta", ticket = 843, prize = 199600, entries = 1, tickets = 20, gold = 20000 },
+            { place = 1, name = "@taskibeowolf", ticket = 576, prize = 465600, entries = 1, tickets = 150, gold = 150000 },
+            { place = 2, name = "@dragonmorning3228", ticket = 752, prize = 310400, entries = 1, tickets = 90, gold = 90000 },
+            { place = 3, name = "@rpjunkie", ticket = 923, prize = 155200, entries = 1, tickets = 50, gold = 50000 },
         }
     },
     dealers = {
         guildKey = "dealers",
         guildLabel = "Redfur Dealers",
-        weekLabel = "Sep 6 - Sep 13",
-        weekStart = 1788735600,
-        pot = 2920000,
-        tickets = 2920,
+        weekLabel = "Sep 20 - Sep 27",
+        weekStart = 1789945200,
+        pot = 1905000,
+        tickets = 1905,
         entrants = 35,
-        prizes = { first = 876000, second = 584000, third = 292000, guild = 1168000 },
+        prizes = { first = 476250, second = 285750, third = 190500, guild = 762000 },
         winners = {
-            { place = 1, name = "@Mysyic", ticket = 2364, prize = 876000, entries = 1, tickets = 1000, gold = 1000000 },
-            { place = 2, name = "@warshepherd216", ticket = 15, prize = 584000, entries = 1, tickets = 50, gold = 50000 },
-            { place = 3, name = "@RJ_Brown", ticket = 919, prize = 292000, entries = 1, tickets = 100, gold = 100000 },
+            { place = 1, name = "@ghrothbot", ticket = 1315, prize = 476250, entries = 1, tickets = 50, gold = 50000 },
+            { place = 2, name = "@isthisappropriate", ticket = 397, prize = 285750, entries = 1, tickets = 500, gold = 500000 },
+            { place = 3, name = "@mightyjoemoon", ticket = 1518, prize = 190500, entries = 1, tickets = 30, gold = 30000 },
         }
     }
 }
@@ -67,7 +67,9 @@ function FR:EnsureRaffleState()
             dealers = {},
         }
     end
-    if not self.savedVars.raffleData then
+    -- Migrate stale raffle data if older than official verified ledger
+    local officialStart = (FR.OfficialRaffleLedger and FR.OfficialRaffleLedger.weekStart) or 1789945200
+    if not self.savedVars.raffleData or (self.savedVars.raffleData.post and (self.savedVars.raffleData.post.weekStart or 0) < officialStart) then
         self.savedVars.raffleData = DEFAULT_RAFFLE_CACHE
     end
     if not self.savedVars.settings.raffleMail then
@@ -81,7 +83,7 @@ function FR:EnsureRaffleState()
     if self.savedVars.settings.raffleMail.onlyShowIfPending == nil then
         self.savedVars.settings.raffleMail.onlyShowIfPending = true
     end
-    self.raffleSourceMode = self.savedVars.settings.raffleMail.sourceMode or "official"
+    self.raffleSourceMode = "official"
 end
 
 -- Query available raffle weeks for navigation (Live, Discord Synced, and Archives)
@@ -95,41 +97,28 @@ function FR:GetRaffleWeeks(guildKey)
     local weeks = {}
     local seenKeys = {}
 
-    -- 1. Live In-Game Addon Roll (if active in RaffleGold)
-    if RaffleGold and RaffleGold.db and RaffleGold.db.prizes then
-        local p = RaffleGold.db.prizes
-        local rgGuild = RaffleGold.db.guild or ""
-        local isPost = string.find(rgGuild, "Post") ~= nil
-        local isDealers = string.find(rgGuild, "Dealer") ~= nil
-        local targetMatches = (guildKey == "post" and isPost) or (guildKey == "dealers" and isDealers)
-        if targetMatches and p.amtFrt and p.amtFrt > 0 and p.nameFrt then
-            local label = isPost and "Redfur Trading Post (Local Roll)" or "Redfur Dealers (Local Roll)"
-            local weekLbl = RaffleGold.db.dateStart and string.format("%s - %s", RaffleGold.db.dateStart, RaffleGold.db.dateEnd or "") or "Local Roll"
+    -- 1. Official Sealed Draw Manifest (Authoritative, synced from Discord bot)
+    if FR.OfficialRaffleLedger and FR.OfficialRaffleLedger[guildKey] then
+        local off = FR.OfficialRaffleLedger[guildKey]
+        local offKey = tostring(off.weekStart or off.weekLabel or "official")
+        if not seenKeys[offKey] then
             table.insert(weeks, {
                 guildKey = guildKey,
-                guildLabel = label,
-                weekLabel = weekLbl,
-                weekKey = "local",
-                weekStart = "local",
-                isSynced = false,
-                syncBadge = "|c00FFCC[LOCAL ROLL]|r",
-                syncTooltip = "Live in-game roll read directly from RaffleGold.db SavedVariables.",
-                pot = tonumber(p.tAmt) or 0,
-                tickets = tonumber(p.eAmt) or 0,
-                entrants = tonumber(RaffleGold.db.totalEntries) or 0,
-                prizes = {
-                    first = tonumber(p.amtFrt) or 0,
-                    second = tonumber(p.amtScd) or 0,
-                    third = tonumber(p.amtTrd) or 0,
-                    guild = math.floor((tonumber(p.tAmt) or 0) * 0.4),
-                },
-                winners = {
-                    { place = 1, name = p.nameFrt, ticket = tonumber(p.numFrt) or 0, prize = tonumber(p.amtFrt) or 0 },
-                    { place = 2, name = p.nameScd, ticket = tonumber(p.numScd) or 0, prize = tonumber(p.amtScd) or 0 },
-                    { place = 3, name = p.nameTrd, ticket = tonumber(p.numTrd) or 0, prize = tonumber(p.amtTrd) or 0 },
-                }
+                guildLabel = off.guildLabel or (guildKey == "post" and "Redfur Trading Post" or "Redfur Dealers"),
+                weekLabel = off.weekLabel or "Official Draw",
+                weekKey = offKey,
+                weekStart = off.weekStart,
+                isSynced = true,
+                syncBadge = "|c59E08A[SYNCED ✓]|r",
+                syncTooltip = "Sealed and verified with #raffle-announcements on Discord.",
+                pot = off.pot or 0,
+                tickets = off.tickets or 0,
+                entrants = off.entrants or 0,
+                announceMessageId = off.announceMessageId,
+                prizes = off.prizes or {},
+                winners = off.winners or {},
             })
-            seenKeys["local"] = true
+            seenKeys[offKey] = true
         end
     end
 
@@ -165,28 +154,42 @@ function FR:GetRaffleWeeks(guildKey)
         seenKeys[curLabel] = true
     end
 
-    -- 3. Official Sealed Draw Manifest (synced from Discord bot)
-    if FR.OfficialRaffleLedger and FR.OfficialRaffleLedger[guildKey] then
-        local off = FR.OfficialRaffleLedger[guildKey]
-        local offKey = tostring(off.weekStart or off.weekLabel or "official")
-        if not seenKeys[offKey] then
+    -- 3. Live In-Game Addon Roll (only in debug mode to prevent stale roll hijacking)
+    local isDebug = self.savedVars and self.savedVars.settings and self.savedVars.settings.debugMode
+    if isDebug and RaffleGold and RaffleGold.db and RaffleGold.db.prizes then
+        local p = RaffleGold.db.prizes
+        local rgGuild = RaffleGold.db.guild or ""
+        local isPost = string.find(rgGuild, "Post") ~= nil
+        local isDealers = string.find(rgGuild, "Dealer") ~= nil
+        local targetMatches = (guildKey == "post" and isPost) or (guildKey == "dealers" and isDealers)
+        if targetMatches and p.amtFrt and p.amtFrt > 0 and p.nameFrt then
+            local label = isPost and "Redfur Trading Post (Local Roll)" or "Redfur Dealers (Local Roll)"
+            local weekLbl = RaffleGold.db.dateStart and string.format("%s - %s", RaffleGold.db.dateStart, RaffleGold.db.dateEnd or "") or "Local Roll"
             table.insert(weeks, {
                 guildKey = guildKey,
-                guildLabel = off.guildLabel or (guildKey == "post" and "Redfur Trading Post" or "Redfur Dealers"),
-                weekLabel = off.weekLabel or "Official Draw",
-                weekKey = offKey,
-                weekStart = off.weekStart,
-                isSynced = true,
-                syncBadge = "|c59E08A[SYNCED ✓]|r",
-                syncTooltip = "Sealed and verified with #raffle-announcements on Discord.",
-                pot = off.pot or 0,
-                tickets = off.tickets or 0,
-                entrants = off.entrants or 0,
-                announceMessageId = off.announceMessageId,
-                prizes = off.prizes or {},
-                winners = off.winners or {},
+                guildLabel = label,
+                weekLabel = weekLbl,
+                weekKey = "local",
+                weekStart = "local",
+                isSynced = false,
+                syncBadge = "|c00FFCC[LOCAL ROLL]|r",
+                syncTooltip = "Live in-game roll read directly from RaffleGold.db SavedVariables.",
+                pot = tonumber(p.tAmt) or 0,
+                tickets = tonumber(p.eAmt) or 0,
+                entrants = tonumber(RaffleGold.db.totalEntries) or 0,
+                prizes = {
+                    first = tonumber(p.amtFrt) or 0,
+                    second = tonumber(p.amtScd) or 0,
+                    third = tonumber(p.amtTrd) or 0,
+                    guild = math.floor((tonumber(p.tAmt) or 0) * 0.4),
+                },
+                winners = {
+                    { place = 1, name = p.nameFrt, ticket = tonumber(p.numFrt) or 0, prize = tonumber(p.amtFrt) or 0 },
+                    { place = 2, name = p.nameScd, ticket = tonumber(p.numScd) or 0, prize = tonumber(p.amtScd) or 0 },
+                    { place = 3, name = p.nameTrd, ticket = tonumber(p.numTrd) or 0, prize = tonumber(p.amtTrd) or 0 },
+                }
             })
-            seenKeys[offKey] = true
+            seenKeys["local"] = true
         end
     end
 
@@ -281,8 +284,30 @@ function FR:GetRaffleData(guildKey)
     return weeks[idx] or DEFAULT_RAFFLE_CACHE[guildKey]
 end
 
--- 1-Click Update MotD with Active Raffle Data
-function FR:PushRaffleToMotD(guildKey)
+local function RegisterMotDConfirmDialog()
+    if ESO_Dialogs and not ESO_Dialogs["FISSAL_CONFIRM_UPDATE_MOTD"] then
+        ESO_Dialogs["FISSAL_CONFIRM_UPDATE_MOTD"] = {
+            title = { text = "Confirm MotD Update" },
+            mainText = { text = "Update Message of the Day for |c00FFCC<<1>>|r with active raffle data (pot, tickets, dates)?\n\n|c888888Existing text and links are preserved.|r\n\n|cCCCCCCPreview:|r\n|cFFFFFF<<2>>|r" },
+            buttons = {
+                {
+                    text = SI_DIALOG_CONFIRM,
+                    callback = function(dialog)
+                        if dialog.data and dialog.data.onConfirm then
+                            dialog.data.onConfirm()
+                        end
+                    end,
+                },
+                {
+                    text = SI_DIALOG_CANCEL,
+                },
+            },
+        }
+    end
+end
+
+-- Non-Destructive Update MotD with Active Raffle Data & Confirmation Alert
+function FR:PushRaffleToMotD(guildKey, skipConfirm)
     local guildId = self:ResolveGuildId(guildKey)
     if not guildId or guildId == 0 then
         self.PrintChat("|cFF5555Error:|r Could not resolve guild ID for " .. tostring(guildKey))
@@ -303,26 +328,22 @@ function FR:PushRaffleToMotD(guildKey)
 
     local currentMotD = GetGuildMotD(guildId) or ""
 
-    -- Fable 5.1 Architecture: Retrieve persistent template for this guild rather than parsing live numbers
-    local template = self.GetGuildMotDTemplate and self:GetGuildMotDTemplate(guildId)
-    if not template or template == "" then
-        -- Adopt live MotD if it still contains tokens
-        if string.find(currentMotD, "{raffle_") ~= nil or string.find(currentMotD, "{drawing_date}") ~= nil then
-            template = currentMotD
-            if self.SetGuildMotDTemplate then self:SetGuildMotDTemplate(guildId, template) end
-        end
+    -- Surgical Non-Destructive Base:
+    -- Prefer the live currentMotD directly so existing text, rules, and links are preserved!
+    local baseText = currentMotD
+    if not baseText or baseText == "" then
+        baseText = self.GetGuildMotDTemplate and self:GetGuildMotDTemplate(guildId)
     end
-
-    if not template or template == "" then
-        self.PrintChat(string.format("|cFF5555Error:|r No MotD template configured for %s! Type |cFF9900/fissal motd|r to open the MotD Broadcast Studio.", guildName))
+    if not baseText or baseText == "" then
+        self.PrintChat(string.format("|cFF5555Error:|r No MotD found for %s! Please draft one in MotD Studio (/fr motd).", guildName))
         if self.raffleMailStatusLabel then
-            self.raffleMailStatusLabel:SetText("|cFF5555Missing template - open /fissal motd|r")
+            self.raffleMailStatusLabel:SetText("|cFF5555Empty MotD - Open /fr motd|r")
         end
         return false
     end
 
-    -- Interpolate persistent template with active raffle metrics
-    local resolved = self:ResolveMotDTokens(template, guildId)
+    -- Interpolate raffle tokens, legacy fields, and advance dates surgically
+    local resolved = self:ResolveMotDTokens(baseText, guildId)
 
     -- Auto-balance unclosed color tags
     local _, colorStarts = string.gsub(resolved, "|c", "")
@@ -341,12 +362,29 @@ function FR:PushRaffleToMotD(guildKey)
         byteCount = #resolved
     end
 
-    -- Idempotency Guard (Fable 5.1 S2): Compare AFTER truncation against live MotD to prevent repeated churn
+    -- Idempotency Guard: Compare against live MotD to prevent unneeded writes
     if resolved == currentMotD then
         self.PrintChat(string.format("|c59E08A[MotD]|r %s Message of the Day is already up to date with active raffle data.", guildName))
         if self.raffleMailStatusLabel then
             self.raffleMailStatusLabel:SetText(string.format("|c59E08AMotD already up to date for %s!|r", guildName))
         end
+        return true
+    end
+
+    -- Confirmation Guard: Prompt user with preview before applying live change
+    if not skipConfirm then
+        RegisterMotDConfirmDialog()
+        local previewSnippet = resolved
+        if #previewSnippet > 260 then
+            previewSnippet = string.sub(previewSnippet, 1, 260) .. "..."
+        end
+        ZO_Dialogs_ShowDialog("FISSAL_CONFIRM_UPDATE_MOTD", {
+            onConfirm = function()
+                FR:PushRaffleToMotD(guildKey, true)
+            end,
+        }, {
+            mainTextParams = { guildName, previewSnippet }
+        })
         return true
     end
 
@@ -711,6 +749,7 @@ function FR:CreateRaffleMailUI()
     win:SetClampedToScreen(true)
     win:SetMouseEnabled(true)
     win:SetMovable(true)
+    win:SetHidden(true)
 
     -- Anchor restoration or default docking next to ZO_MailSend
     local pos = self.savedVars and self.savedVars.settings and self.savedVars.settings.raffleMailPos
@@ -912,6 +951,8 @@ function FR:CreateRaffleMailUI()
     sourceBtnBg:SetEdgeTexture("", 1, 1, 0)
 
     local function UpdateSourceBtn()
+        local isDebug = self.savedVars and self.savedVars.settings and self.savedVars.settings.debugMode
+        sourceBtn:SetHidden(not isDebug)
         if self.raffleSourceMode == "local" then
             sourceBtn:SetText("|c00FFCC[Local Addon Roll]|r")
             sourceBtnBg:SetEdgeColor(0, 0.85, 0.75, 0.8)
@@ -1080,26 +1121,36 @@ function FR:CreateRaffleMailUI()
 
     local statusLbl = wm:CreateControl("$(parent)_StatusText", win, CT_LABEL)
     statusLbl:SetAnchor(BOTTOMLEFT, win, BOTTOMLEFT, 12, -18)
-    statusLbl:SetAnchor(BOTTOMRIGHT, win, BOTTOMRIGHT, -90, -18)
+    statusLbl:SetAnchor(BOTTOMRIGHT, win, BOTTOMRIGHT, -110, -18)
     statusLbl:SetFont("ZoFontGameSmall")
     statusLbl:SetColor(0.8, 0.8, 0.8, 1)
-    statusLbl:SetText("|c00FF00[ON]|r Ready | Auto-Attaches Gold | /fr")
+    statusLbl:SetText("|c59E08A● Ready|r |c888888• Auto-attaches prize gold & logs payouts to ledger|r")
     self.raffleMailStatusLabel = statusLbl
 
-    local clearBtn = wm:CreateControl("$(parent)_ClearBtn", win, CT_BUTTON)
-    clearBtn:SetAnchor(BOTTOMRIGHT, win, BOTTOMRIGHT, -12, -16)
-    clearBtn:SetDimensions(74, 20)
-    clearBtn:SetFont("ZoFontGameSmall")
-    clearBtn:SetNormalFontColor(0.8, 0.3, 0.3, 1)
-    clearBtn:SetMouseOverFontColor(1, 0.5, 0.5, 1)
-    clearBtn:SetText("[Clear]")
-    clearBtn:SetHandler("OnClicked", function()
+    local resetBtn = wm:CreateControl("$(parent)_ResetBtn", win, CT_BUTTON)
+    resetBtn:SetAnchor(BOTTOMRIGHT, win, BOTTOMRIGHT, -12, -14)
+    resetBtn:SetDimensions(90, 22)
+    resetBtn:SetFont("ZoFontGameSmall")
+    resetBtn:SetText("Reset Mail")
+    if self.StyleTactileButton then
+        self:StyleTactileButton(resetBtn, {
+            normalBg = { 0.10, 0.06, 0.06, 0.85 },
+            hoverBg = { 0.16, 0.08, 0.08, 0.95 },
+            normalEdge = { 0.45, 0.25, 0.25, 0.70 },
+            hoverEdge = { 0.85, 0.35, 0.35, 0.95 },
+            normalTextColor = { 0.85, 0.60, 0.60, 1 },
+            hoverTextColor = { 1, 0.8, 0.8, 1 },
+            tooltipTitle = "Reset Mail Form",
+            tooltipText = "Safely clear recipient, subject, body, and gold attachments in the mail compose window.",
+        })
+    end
+    resetBtn:SetHandler("OnClicked", function()
         if QueueMoneyAttachment then QueueMoneyAttachment(0) end
         if ZO_MailSendToField then ZO_MailSendToField:SetText("") end
         if ZO_MailSendSubjectField then ZO_MailSendSubjectField:SetText("") end
         if ZO_MailSendBodyField then ZO_MailSendBodyField:SetText("") end
         self.stagedRaffleWinner = nil
-        statusLbl:SetText("|c00FF00[ON]|r Form cleared | /fr")
+        statusLbl:SetText("|c59E08A● Ready|r |c888888• Mail form reset|r")
     end)
 
     self.raffleMailWindow = win
@@ -1129,7 +1180,7 @@ function FR:CreateRaffleMailUI()
                     win:SetHidden(true)
                 end
             elseif newState == SCENE_HIDING then
-                -- Keep stagedRaffleWinner intact so EVENT_MAIL_SEND_SUCCESS can record payout
+                win:SetHidden(true)
             end
         end)
     end
@@ -1309,6 +1360,9 @@ local function OnPlayerActivated()
     EVENT_MANAGER:UnregisterForEvent("FissalRelay_RaffleMail_Init", EVENT_PLAYER_ACTIVATED)
     FR:EnsureRaffleState()
     FR:CreateRaffleMailUI()
+    if FR.raffleMailWindow then
+        FR.raffleMailWindow:SetHidden(true)
+    end
 end
 
 EVENT_MANAGER:RegisterForEvent("FissalRelay_RaffleMail_Init", EVENT_PLAYER_ACTIVATED, OnPlayerActivated)

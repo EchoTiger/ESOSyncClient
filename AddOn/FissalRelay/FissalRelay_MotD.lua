@@ -548,6 +548,44 @@ function FR:BuildMotDStudio(parent)
         self:LoadMotDPreset("trader_update")
     end)
 
+    local undoBtn = wm:CreateControl("$(parent)_UndoBtn", card, CT_BUTTON)
+    undoBtn:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -170, 28)
+    undoBtn:SetDimensions(62, 24)
+    undoBtn:SetFont("ZoFontGameSmall")
+    undoBtn:SetText("↶ Undo")
+    self:StyleTactileButton(undoBtn, {
+        normalBg = { 0.08, 0.08, 0.12, 0.90 },
+        hoverBg = { 0.12, 0.12, 0.18, 0.98 },
+        normalEdge = { 0.40, 0.40, 0.70, 0.80 },
+        hoverEdge = { 0.60, 0.60, 1.00, 1.00 },
+        normalTextColor = { 0.8, 0.8, 1, 1 },
+        hoverTextColor = { 1, 1, 1, 1 },
+        tooltipTitle = "Undo Last Action",
+        tooltipText = "Restore previous draft state before clearing, loading presets, or editing.",
+    })
+    undoBtn:SetHandler("OnClicked", function()
+        self:UndoMotD()
+    end)
+
+    local redoBtn = wm:CreateControl("$(parent)_RedoBtn", card, CT_BUTTON)
+    redoBtn:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -104, 28)
+    redoBtn:SetDimensions(62, 24)
+    redoBtn:SetFont("ZoFontGameSmall")
+    redoBtn:SetText("Redo ↷")
+    self:StyleTactileButton(redoBtn, {
+        normalBg = { 0.08, 0.08, 0.12, 0.90 },
+        hoverBg = { 0.12, 0.12, 0.18, 0.98 },
+        normalEdge = { 0.40, 0.40, 0.70, 0.80 },
+        hoverEdge = { 0.60, 0.60, 1.00, 1.00 },
+        normalTextColor = { 0.8, 0.8, 1, 1 },
+        hoverTextColor = { 1, 1, 1, 1 },
+        tooltipTitle = "Redo Action",
+        tooltipText = "Reapply the undone action in the MotD Studio editor.",
+    })
+    redoBtn:SetHandler("OnClicked", function()
+        self:RedoMotD()
+    end)
+
     local clearBtn = wm:CreateControl("$(parent)_ClearBtn", card, CT_BUTTON)
     clearBtn:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -4, 28)
     clearBtn:SetDimensions(95, 24)
@@ -561,12 +599,17 @@ function FR:BuildMotDStudio(parent)
         normalTextColor = { 0.9, 0.6, 0.6, 1 },
         hoverTextColor = { 1, 0.8, 0.8, 1 },
         tooltipTitle = "Clear Editor Text",
-        tooltipText = "Clear all contents currently inside the MotD editor box.",
+        tooltipText = "Clear all contents currently inside the MotD editor box (saved to Undo buffer).",
     })
     clearBtn:SetHandler("OnClicked", function()
         if self.motdStudioEditBox then
-            self.motdStudioEditBox:SetText("")
-            self:UpdateMotDStudioGauge()
+            local cur = self.motdStudioEditBox:GetText() or ""
+            if cur ~= "" then
+                self:PushMotDUndoState(cur)
+                self.motdStudioEditBox:SetText("")
+                self:UpdateMotDStudioGauge()
+                self.PrintChat("Editor text cleared. (Click [Undo] anytime to restore!)")
+            end
         end
     end)
 
@@ -651,43 +694,103 @@ function FR:BuildMotDStudio(parent)
 end
 
 --[[ =========================================================================
-     MOTD STUDIO CONTROLS & ACTIONS
+     MOTD STUDIO CONTROLS & ACTIONS (WITH UNDO/REDO & CONFIRMATION)
 ========================================================================= ]]--
+
+FR.motdUndoStack = {}
+FR.motdRedoStack = {}
+
+function FR:PushMotDUndoState(text)
+    text = text or (self.motdStudioEditBox and self.motdStudioEditBox:GetText()) or ""
+    local top = self.motdUndoStack[#self.motdUndoStack]
+    if top == text then return end
+    table.insert(self.motdUndoStack, text)
+    if #self.motdUndoStack > 50 then
+        table.remove(self.motdUndoStack, 1)
+    end
+    self.motdRedoStack = {}
+end
+
+function FR:UndoMotD()
+    if not self.motdStudioEditBox then return end
+    if #self.motdUndoStack == 0 then
+        self.PrintChat("Nothing to undo in MotD Studio.")
+        return
+    end
+    local cur = self.motdStudioEditBox:GetText() or ""
+    table.insert(self.motdRedoStack, cur)
+    local prev = table.remove(self.motdUndoStack)
+    self.motdStudioEditBox:SetText(prev)
+    self:UpdateMotDStudioGauge()
+    self.PrintChat("MotD action undone.")
+end
+
+function FR:RedoMotD()
+    if not self.motdStudioEditBox then return end
+    if #self.motdRedoStack == 0 then
+        self.PrintChat("Nothing to redo in MotD Studio.")
+        return
+    end
+    local cur = self.motdStudioEditBox:GetText() or ""
+    table.insert(self.motdUndoStack, cur)
+    local nxt = table.remove(self.motdRedoStack)
+    self.motdStudioEditBox:SetText(nxt)
+    self:UpdateMotDStudioGauge()
+    self.PrintChat("MotD action redone.")
+end
 
 function FR:UpdateMotDStudioGauge()
     if not self.motdStudioEditBox or not self.motdStudioGaugeLbl then return end
     local text = self.motdStudioEditBox:GetText() or ""
     local charCount = (zo_strlen and zo_strlen(text)) or #text
     local byteCount = #text
+    local hasTokens = string.find(text, "{") ~= nil
 
-    local colorCode = "59E08A"
-    local statusNote = string.format("%d characters remaining", MAX_MOTD_CHARS - charCount)
-
-    if charCount > MAX_MOTD_CHARS then
-        colorCode = "FF5555"
-        statusNote = string.format("|cFF5555+%d OVER limit!|r", charCount - MAX_MOTD_CHARS)
-    elseif charCount > (MAX_MOTD_CHARS - 100) then
-        colorCode = "FFCC00"
-        statusNote = string.format("|cFFCC00%d characters remaining (Near limit)|r", MAX_MOTD_CHARS - charCount)
+    local gIdx = self.selectedGuildIndex or 1
+    local guildId = GetGuildId(gIdx)
+    local resChars = charCount
+    local resBytes = byteCount
+    if hasTokens then
+        local resolved = self:ResolveMotDTokens(text, guildId)
+        resChars = (zo_strlen and zo_strlen(resolved)) or #resolved
+        resBytes = #resolved
     end
 
-    self.motdStudioGaugeLbl:SetText(string.format("Length: |c%s%d / %d characters|r (|c888888%s bytes|r) • %s",
-        colorCode, charCount, MAX_MOTD_CHARS, ZO_LocalizeDecimalNumber(byteCount), statusNote))
+    local colorCode = "59E08A"
+    local statusNote = string.format("%d characters remaining", MAX_MOTD_CHARS - resChars)
+
+    if resChars > MAX_MOTD_CHARS then
+        colorCode = "FF5555"
+        statusNote = string.format("|cFF5555+%d OVER limit!|r", resChars - MAX_MOTD_CHARS)
+    elseif resChars > (MAX_MOTD_CHARS - 100) then
+        colorCode = "FFCC00"
+        statusNote = string.format("|cFFCC00%d characters remaining (Near limit)|r", MAX_MOTD_CHARS - resChars)
+    end
+
+    if hasTokens then
+        local tagStatus = (charCount > MAX_MOTD_CHARS and resChars <= MAX_MOTD_CHARS)
+            and "|c59E08A● Tags resolve within limit!|r"
+            or (resChars <= MAX_MOTD_CHARS and "|c59E08A● Ready to interpolate|r" or "|cFF5555▲ Exceeds limit after tags|r")
+        self.motdStudioGaugeLbl:SetText(string.format("Draft: |c888888%d chars|r • Live Push: |c%s%d / %d chars|r (%s) • %s",
+            charCount, colorCode, resChars, MAX_MOTD_CHARS, statusNote, tagStatus))
+    else
+        self.motdStudioGaugeLbl:SetText(string.format("Length: |c%s%d / %d characters|r (|c888888%s bytes|r) • %s",
+            colorCode, charCount, MAX_MOTD_CHARS, ZO_LocalizeDecimalNumber(byteCount), statusNote))
+    end
 end
 
 function FR:InsertTokenIntoMotDEditBox(token)
     if not self.motdStudioEditBox then return end
+    local cur = self.motdStudioEditBox:GetText() or ""
+    self:PushMotDUndoState(cur)
 
     if self.motdStudioEditBox.InsertText then
         self.motdStudioEditBox:InsertText(token)
     else
-        local cur = self.motdStudioEditBox:GetText() or ""
         local pos = self.motdStudioEditBox:GetCursorPosition() or #cur
-
         local before = string.sub(cur, 1, pos)
         local after = string.sub(cur, pos + 1)
         local newText = before .. token .. after
-
         self.motdStudioEditBox:SetText(newText)
         self.motdStudioEditBox:SetCursorPosition(pos + #token)
     end
@@ -702,9 +805,13 @@ end
 function FR:LoadMotDPreset(presetKey)
     local preset = DEFAULT_PRESETS[presetKey]
     if not preset or not self.motdStudioEditBox then return end
+    local cur = self.motdStudioEditBox:GetText() or ""
+    if cur ~= "" and cur ~= preset.text then
+        self:PushMotDUndoState(cur)
+    end
     self.motdStudioEditBox:SetText(preset.text)
     self:UpdateMotDStudioGauge()
-    self.PrintChat(string.format("Loaded MotD template: '%s'", preset.name))
+    self.PrintChat(string.format("Loaded MotD template: '%s'. (Click [Undo] to restore prior draft)", preset.name))
 end
 
 function FR:ApplyTokensToMotDEditor()
@@ -713,10 +820,11 @@ function FR:ApplyTokensToMotDEditor()
     local gIdx = self.selectedGuildIndex or 1
     local guildId = GetGuildId(gIdx)
 
+    self:PushMotDUndoState(raw)
     local resolved = self:ResolveMotDTokens(raw, guildId)
     self.motdStudioEditBox:SetText(resolved)
     self:UpdateMotDStudioGauge()
-    self.PrintChat("Live guild tokens interpolated into editor.")
+    self.PrintChat("Live guild tokens interpolated into editor. (Click [Undo] anytime to revert)")
 end
 
 function FR:PreviewMotDInChat()
@@ -735,7 +843,29 @@ function FR:PreviewMotDInChat()
     end
 end
 
-function FR:BroadcastMotDToGuild()
+local function RegisterMotDBroadcastDialog()
+    if ESO_Dialogs and not ESO_Dialogs["FISSAL_CONFIRM_BROADCAST_MOTD"] then
+        ESO_Dialogs["FISSAL_CONFIRM_BROADCAST_MOTD"] = {
+            title = { text = "Broadcast MotD to Guild" },
+            mainText = { text = "Broadcast this Message of the Day to |c00FFCC<<1>>|r?\n\n|c888888All dynamic tokens have been resolved with live ledger data (<<2>> chars).|r\n\n|cCCCCCCPreview:|r\n|cFFFFFF<<3>>|r" },
+            buttons = {
+                {
+                    text = SI_DIALOG_CONFIRM,
+                    callback = function(dialog)
+                        if dialog.data and dialog.data.onConfirm then
+                            dialog.data.onConfirm()
+                        end
+                    end,
+                },
+                {
+                    text = SI_DIALOG_CANCEL,
+                },
+            },
+        }
+    end
+end
+
+function FR:BroadcastMotDToGuild(bypassConfirm)
     if not self.motdStudioEditBox then return end
     local gIdx = self.selectedGuildIndex or 1
     local guildId = GetGuildId(gIdx)
@@ -747,7 +877,6 @@ function FR:BroadcastMotDToGuild()
     end
 
     local raw = self.motdStudioEditBox:GetText() or ""
-    -- If raw text contains template tokens, persist as the guild's active template (Fable 5.1)
     if string.find(raw, "{raffle_") or string.find(raw, "{guild_") or string.find(raw, "{drawing_date}") or string.find(raw, "{date_week}") then
         self:SetGuildMotDTemplate(guildId, raw)
     end
@@ -765,6 +894,22 @@ function FR:BroadcastMotDToGuild()
 
     if charCount > MAX_MOTD_CHARS or byteCount > MAX_MOTD_CHARS then
         self.PrintChat(string.format("|cFF5555Error:|r MotD exceeds the limit (%d chars, %d bytes, max %d). Please shorten before pushing.", charCount, byteCount, MAX_MOTD_CHARS))
+        return
+    end
+
+    if not bypassConfirm then
+        RegisterMotDBroadcastDialog()
+        local previewSnippet = resolved
+        if #previewSnippet > 260 then
+            previewSnippet = string.sub(previewSnippet, 1, 260) .. "..."
+        end
+        ZO_Dialogs_ShowDialog("FISSAL_CONFIRM_BROADCAST_MOTD", {
+            onConfirm = function()
+                FR:BroadcastMotDToGuild(true)
+            end,
+        }, {
+            mainTextParams = { guildName, tostring(charCount), previewSnippet }
+        })
         return
     end
 

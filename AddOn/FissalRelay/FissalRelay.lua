@@ -10,7 +10,7 @@ FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
 FR.name = "FissalRelay"
-FR.version = "1.6.1"
+FR.version = "1.6.0"
 FR.author = "Echo & Fissal"
 
 -- Defaults for SavedVariables
@@ -608,6 +608,7 @@ function FR:TakeRosterSnapshot(targetGuildId)
         end
     end
 
+    self.savedVars.staff.lastRosterSnapshotTime = GetTimeStamp()
     self:ScanOwnedKiosks()
     return snapped
 end
@@ -772,6 +773,53 @@ function FR:GetMemberSales(guildId, lookbackDays)
     end
 
     return salesByMember
+end
+
+function FR:GetMemberDetailedSales(guildId, memberName)
+    local clean = string.gsub(string.lower(memberName or ""), "^@", "")
+    local now = GetTimeStamp()
+    local thisWeekStart = self.GetTuesdayTradeWeek and self:GetTuesdayTradeWeek(now) or (now - 7 * 86400)
+    local priorWeekStart = thisWeekStart - 604800
+
+    local thisWeekCount = 0
+    local thisWeekGold = 0
+    local priorWeekCount = 0
+    local priorWeekGold = 0
+    local totalCount = 0
+    local totalGold = 0
+    local lastSaleTs = 0
+
+    if self.savedVars and self.savedVars.sales then
+        for _, sale in pairs(self.savedVars.sales) do
+            if sale.guildId == guildId and sale.seller then
+                local sName = string.gsub(string.lower(sale.seller), "^@", "")
+                if sName == clean then
+                    local ts = tonumber(sale.timestamp) or 0
+                    local price = tonumber(sale.price) or 0
+                    totalCount = totalCount + 1
+                    totalGold = totalGold + price
+                    if ts > lastSaleTs then lastSaleTs = ts end
+                    if ts >= thisWeekStart then
+                        thisWeekCount = thisWeekCount + 1
+                        thisWeekGold = thisWeekGold + price
+                    elseif ts >= priorWeekStart and ts < thisWeekStart then
+                        priorWeekCount = priorWeekCount + 1
+                        priorWeekGold = priorWeekGold + price
+                    end
+                end
+            end
+        end
+    end
+
+    return {
+        thisWeekCount = thisWeekCount,
+        thisWeekGold = thisWeekGold,
+        priorWeekCount = priorWeekCount,
+        priorWeekGold = priorWeekGold,
+        totalCount = totalCount,
+        totalGold = totalGold,
+        lastSaleTs = lastSaleTs,
+    }
 end
 
 -- Grounded Redfur Dues Rules definition
@@ -1048,6 +1096,186 @@ function FR:GetLibHistoireChannelDetails()
     end
 
     return details
+end
+
+--[[ =========================================================================
+     TRADE WEEK & BUMP TELEMETRY ENGINES
+========================================================================= ]]--
+
+-- Canonical Tuesday 20:00 UTC (3:00 PM EDT) Kiosk Trade Week Boundary
+local TUESDAY_RESET_EPOCH_OFFSET = 504000 -- Jan 6, 1970 20:00 UTC
+local SECONDS_IN_WEEK = 604800
+
+function FR:GetTuesdayTradeWeek(ts)
+    ts = tonumber(ts) or GetTimeStamp()
+    local elapsed = (ts - TUESDAY_RESET_EPOCH_OFFSET) % SECONDS_IN_WEEK
+    local weekStart = ts - elapsed
+    local weekEnd = weekStart + SECONDS_IN_WEEK
+    return weekStart, weekEnd
+end
+
+function FR:GetLastSnapshotTime(guildId)
+    if not self.savedVars or not self.savedVars.staff then return 0 end
+    if guildId and self.savedVars.staff.rosterSnapshots and self.savedVars.staff.rosterSnapshots[guildId] then
+        return self.savedVars.staff.rosterSnapshots[guildId].timestamp or 0
+    end
+    if self.savedVars.staff.lastRosterSnapshotTime and self.savedVars.staff.lastRosterSnapshotTime > 0 then
+        return self.savedVars.staff.lastRosterSnapshotTime
+    end
+    local latest = 0
+    if self.savedVars.staff.rosterSnapshots then
+        for _, snap in pairs(self.savedVars.staff.rosterSnapshots) do
+            if snap.timestamp and snap.timestamp > latest then
+                latest = snap.timestamp
+            end
+        end
+    end
+    return latest
+end
+
+function FR:GetBumpTelemetryDetails()
+    local lastBump = self.savedVars and self.savedVars.lastBumpTime or 0
+    if not lastBump or lastBump == 0 then
+        return nil
+    end
+
+    local now = GetTimeStamp()
+    local elapsed = math.max(now - lastBump, 60)
+    local windowHours = elapsed / 3600
+    local baselineDuration = math.min(math.max(elapsed, 6 * 3600), 24 * 3600)
+    local baselineHours = baselineDuration / 3600
+    local baselineStart = lastBump - baselineDuration
+
+    local guilds = {}
+    local totalSalesSince = 0
+    local totalGoldSince = 0
+    local totalSalesPre = 0
+    local totalGoldPre = 0
+
+    local guildNames = {}
+    local numGuilds = GetNumGuilds()
+    for i = 1, numGuilds do
+        local gId = GetGuildId(i)
+        guildNames[gId] = GetGuildName(gId)
+    end
+
+    if self.savedVars and self.savedVars.sales then
+        for _, sale in pairs(self.savedVars.sales) do
+            local ts = tonumber(sale.timestamp)
+            local gId = sale.guildId
+            if ts and gId then
+                local price = tonumber(sale.price) or 0
+                if ts >= lastBump and ts <= now then
+                    totalSalesSince = totalSalesSince + 1
+                    totalGoldSince = totalGoldSince + price
+                    if not guilds[gId] then
+                        guilds[gId] = {
+                            name = guildNames[gId] or ("Guild " .. tostring(gId)),
+                            salesSince = 0,
+                            goldSince = 0,
+                            salesPre = 0,
+                            goldPre = 0,
+                        }
+                    end
+                    guilds[gId].salesSince = guilds[gId].salesSince + 1
+                    guilds[gId].goldSince = guilds[gId].goldSince + price
+                elseif ts >= baselineStart and ts < lastBump then
+                    totalSalesPre = totalSalesPre + 1
+                    totalGoldPre = totalGoldPre + price
+                    if not guilds[gId] then
+                        guilds[gId] = {
+                            name = guildNames[gId] or ("Guild " .. tostring(gId)),
+                            salesSince = 0,
+                            goldSince = 0,
+                            salesPre = 0,
+                            goldPre = 0,
+                        }
+                    end
+                    guilds[gId].salesPre = guilds[gId].salesPre + 1
+                    guilds[gId].goldPre = guilds[gId].goldPre + price
+                end
+            end
+        end
+    end
+
+    local rateSince = totalSalesSince / windowHours
+    local ratePre = totalSalesPre / baselineHours
+    local pctLift = 0
+    if ratePre > 0 then
+        pctLift = ((rateSince - ratePre) / ratePre) * 100
+    elseif totalSalesSince > 0 then
+        pctLift = 100
+    end
+
+    local guildList = {}
+    for gId, gData in pairs(guilds) do
+        local gRateSince = gData.salesSince / windowHours
+        local gRatePre = gData.salesPre / baselineHours
+        local gLift = 0
+        if gRatePre > 0 then
+            gLift = ((gRateSince - gRatePre) / gRatePre) * 100
+        elseif gData.salesSince > 0 then
+            gLift = 100
+        end
+        gData.guildId = gId
+        gData.rateSince = gRateSince
+        gData.ratePre = gRatePre
+        gData.lift = gLift
+        table.insert(guildList, gData)
+    end
+    table.sort(guildList, function(a, b) return a.salesSince > b.salesSince end)
+
+    return {
+        lastBump = lastBump,
+        elapsed = elapsed,
+        salesSince = totalSalesSince,
+        goldSince = totalGoldSince,
+        salesPre = totalSalesPre,
+        rateSince = rateSince,
+        ratePre = ratePre,
+        pctLift = pctLift,
+        guilds = guildList,
+    }
+end
+
+function FR:ResolveBidStatus(bid)
+    if not bid then return "Unknown", "888888" end
+    local now = GetTimeStamp()
+    local bidTs = tonumber(bid.timestamp) or now
+    local weekStart, weekEnd = self:GetTuesdayTradeWeek(bidTs)
+    local isPastReset = (now >= weekEnd)
+
+    if bid.status and string.find(bid.status, "Direct Purchase") then
+        return "Direct Purchase (Won)", "59E08A"
+    end
+
+    local ownedTrader = GetGuildOwnedKioskInfo and GetGuildOwnedKioskInfo(bid.guildId)
+    local isMatchingOwned = false
+    if ownedTrader and ownedTrader ~= "" and bid.kioskName and bid.kioskName ~= "" then
+        local cleanOwned = string.lower(ownedTrader)
+        local cleanBid = string.lower(bid.kioskName)
+        if cleanBid == cleanOwned or string.find(cleanBid, cleanOwned, 1, true) or string.find(cleanOwned, cleanBid, 1, true) then
+            isMatchingOwned = true
+        end
+    end
+
+    if isPastReset then
+        if isMatchingOwned then
+            return "Won (Active Trader)", "59E08A"
+        elseif bid.status and string.find(bid.status, "Refund") then
+            return "Refunded (Outbid)", "888888"
+        elseif bid.refundTime then
+            return "Refunded (Outbid)", "888888"
+        else
+            return "Closed (Awaiting Refund)", "FFCC00"
+        end
+    else
+        if bid.status and string.find(bid.status, "Refund") then
+            return "Refunded (Outbid)", "888888"
+        else
+            return "Active Bid (Pending Reset)", "00FFCC"
+        end
+    end
 end
 
 function FR:UpdateCategorySyncTelemetry()
@@ -1670,6 +1898,11 @@ function FR:StepNextBumpGuild()
     if self.currentBumpIndex > #self.bumpQueue then
         self.isBumping = false
         self.savedVars.lastBumpTime = GetTimeStamp()
+        local bumpedGuilds = {}
+        for _, g in ipairs(self.bumpQueue) do
+            bumpedGuilds[g.id] = { name = g.name, time = self.savedVars.lastBumpTime }
+        end
+        self.savedVars.lastBumpGuilds = bumpedGuilds
         PlayFissalSound()
         PrintChat(string.format("All %d guild(s) successfully bumped! Total %s listings recorded for TTC.",
             #self.bumpQueue, ColorText(ZO_LocalizeDecimalNumber(self.bumpTotalItemsScanned), "FFD700")))

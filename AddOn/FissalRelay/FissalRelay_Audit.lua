@@ -435,7 +435,7 @@ function FR:BuildAuditorUI(parent)
     h1:SetText(ColorText("MEMBER", "FF9900"))
 
     local h2 = wm:CreateControl("$(parent)_H2", colHeader, CT_LABEL)
-    h2:SetAnchor(LEFT, colHeader, LEFT, 210, 0)
+    h2:SetAnchor(LEFT, colHeader, LEFT, 190, 0)
     h2:SetFont("ZoFontGameBold")
     h2:SetText(ColorText("RANK ↕", "00FFCC"))
     h2:SetMouseEnabled(true)
@@ -445,7 +445,7 @@ function FR:BuildAuditorUI(parent)
     end)
 
     local h3 = wm:CreateControl("$(parent)_H3", colHeader, CT_LABEL)
-    h3:SetAnchor(LEFT, colHeader, LEFT, 355, 0)
+    h3:SetAnchor(LEFT, colHeader, LEFT, 300, 0)
     h3:SetFont("ZoFontGameBold")
     h3:SetText(ColorText("OFFLINE ↕", "FFD700"))
     h3:SetMouseEnabled(true)
@@ -455,7 +455,7 @@ function FR:BuildAuditorUI(parent)
     end)
 
     local h4 = wm:CreateControl("$(parent)_H4", colHeader, CT_LABEL)
-    h4:SetAnchor(LEFT, colHeader, LEFT, 445, 0)
+    h4:SetAnchor(LEFT, colHeader, LEFT, 370, 0)
     h4:SetFont("ZoFontGameBold")
     h4:SetText(ColorText("SALES ↕", "59E08A"))
     h4:SetMouseEnabled(true)
@@ -465,7 +465,7 @@ function FR:BuildAuditorUI(parent)
     end)
 
     local h5 = wm:CreateControl("$(parent)_H5", colHeader, CT_LABEL)
-    h5:SetAnchor(LEFT, colHeader, LEFT, 535, 0)
+    h5:SetAnchor(LEFT, colHeader, LEFT, 450, 0)
     h5:SetFont("ZoFontGameBold")
     h5:SetText(ColorText("DUES ↕", "59E08A"))
     h5:SetMouseEnabled(true)
@@ -475,18 +475,19 @@ function FR:BuildAuditorUI(parent)
     end)
 
     local h6 = wm:CreateControl("$(parent)_H6", colHeader, CT_LABEL)
-    h6:SetAnchor(LEFT, colHeader, LEFT, 620, 0)
+    h6:SetAnchor(LEFT, colHeader, LEFT, 525, 0)
     h6:SetFont("ZoFontGameBold")
-    h6:SetText(ColorText("STATUS", "00FFCC"))
+    h6:SetText(ColorText("NOTE / MAIL", "00FFCC"))
 
     local h8 = wm:CreateControl("$(parent)_H8", colHeader, CT_LABEL)
-    h8:SetAnchor(RIGHT, colHeader, RIGHT, -16, 0)
+    h8:SetAnchor(LEFT, colHeader, LEFT, 640, 0)
     h8:SetFont("ZoFontGameBold")
-    h8:SetText(ColorText("ACTION", "FF9900"))
+    h8:SetText(ColorText("ACTION / DISPATCH", "FF9900"))
 
     -- 4. Table Rows (9 Rows)
     self.auditRows = {}
     local rowY = headerY + 24
+    local AUDIT_ACTIONS = { "Warn Mail", "Kick & Mail", "Kick Only", "Exempt [LOA]" }
 
     for r = 1, ROWS_PER_PAGE do
         local row = wm:CreateControl("$(parent)_Row_" .. r, card, CT_BACKDROP)
@@ -499,7 +500,7 @@ function FR:BuildAuditorUI(parent)
 
         local nameLbl = wm:CreateControl("$(parent)_Name", row, CT_LABEL)
         nameLbl:SetAnchor(LEFT, row, LEFT, 10, 0)
-        nameLbl:SetDimensions(190, 22)
+        nameLbl:SetDimensions(175, 22)
         nameLbl:SetFont("ZoFontGameMedium")
         nameLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
         nameLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
@@ -507,8 +508,8 @@ function FR:BuildAuditorUI(parent)
         row.nameLbl = nameLbl
 
         local rankLbl = wm:CreateControl("$(parent)_Rank", row, CT_LABEL)
-        rankLbl:SetAnchor(LEFT, row, LEFT, 210, 0)
-        rankLbl:SetDimensions(135, 22)
+        rankLbl:SetAnchor(LEFT, row, LEFT, 190, 0)
+        rankLbl:SetDimensions(105, 22)
         rankLbl:SetFont("ZoFontGameSmall")
         rankLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
         rankLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
@@ -516,56 +517,109 @@ function FR:BuildAuditorUI(parent)
         row.rankLbl = rankLbl
 
         local daysLbl = wm:CreateControl("$(parent)_Days", row, CT_LABEL)
-        daysLbl:SetAnchor(LEFT, row, LEFT, 355, 0)
-        daysLbl:SetDimensions(80, 22)
+        daysLbl:SetAnchor(LEFT, row, LEFT, 300, 0)
+        daysLbl:SetDimensions(65, 22)
         daysLbl:SetFont("ZoFontGameBold")
         daysLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
         daysLbl:SetText("14d")
         row.daysLbl = daysLbl
 
         local salesLbl = wm:CreateControl("$(parent)_Sales", row, CT_LABEL)
-        salesLbl:SetAnchor(LEFT, row, LEFT, 445, 0)
-        salesLbl:SetDimensions(80, 22)
+        salesLbl:SetAnchor(LEFT, row, LEFT, 370, 0)
+        salesLbl:SetDimensions(75, 22)
         salesLbl:SetFont("ZoFontGameSmall")
         salesLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
         salesLbl:SetText("0")
         row.salesLbl = salesLbl
 
         local duesLbl = wm:CreateControl("$(parent)_Dues", row, CT_LABEL)
-        duesLbl:SetAnchor(LEFT, row, LEFT, 535, 0)
-        duesLbl:SetDimensions(75, 22)
+        duesLbl:SetAnchor(LEFT, row, LEFT, 450, 0)
+        duesLbl:SetDimensions(70, 22)
         duesLbl:SetFont("ZoFontGameSmall")
         duesLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
         duesLbl:SetText("0g")
         row.duesLbl = duesLbl
 
-        local statusLbl = wm:CreateControl("$(parent)_Status", row, CT_LABEL)
-        statusLbl:SetAnchor(LEFT, row, LEFT, 620, 0)
-        statusLbl:SetDimensions(105, 22)
-        statusLbl:SetFont("ZoFontGameSmall")
-        statusLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-        statusLbl:SetText("")
-        row.statusLbl = statusLbl
+        local noteLbl = wm:CreateControl("$(parent)_Note", row, CT_LABEL)
+        noteLbl:SetAnchor(LEFT, row, LEFT, 525, 0)
+        noteLbl:SetDimensions(110, 22)
+        noteLbl:SetFont("ZoFontGameSmall")
+        noteLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+        noteLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+        noteLbl:SetText("--")
+        row.noteLbl = noteLbl
 
-        local mailBtn = wm:CreateControl("$(parent)_MailBtn", row, CT_BUTTON)
-        mailBtn:SetAnchor(RIGHT, row, RIGHT, -10, 0)
-        mailBtn:SetDimensions(88, 22)
-        mailBtn:SetFont("ZoFontGameSmall")
-        mailBtn:SetText("Warn Mail")
-        self:StyleTactileButton(mailBtn, {
+        -- Action Selector Button (Cycles actions)
+        local actionBtn = wm:CreateControl("$(parent)_ActionBtn", row, CT_BUTTON)
+        actionBtn:SetAnchor(LEFT, row, LEFT, 640, 0)
+        actionBtn:SetDimensions(125, 22)
+        actionBtn:SetFont("ZoFontGameSmall")
+        actionBtn:SetText("Warn Mail ▾")
+        row.actionIndex = 1
+        row.selectedAction = "Warn Mail"
+
+        self:StyleTactileButton(actionBtn, {
             normalBg = { 0.12, 0.10, 0.04, 0.90 },
             hoverBg = { 0.18, 0.14, 0.06, 0.98 },
             normalEdge = { 0.75, 0.55, 0.10, 0.80 },
             hoverEdge = { 1.00, 0.85, 0.20, 1.00 },
             normalTextColor = { 1, 0.85, 0.2, 1 },
             hoverTextColor = { 1, 0.95, 0.5, 1 },
-            tooltipTitle = "Stage Inactivity Warning Mail",
-            tooltipText = "Open mail compose window addressed to this member with a polite check-in template (zero gold attached).",
+            tooltipTitle = "Select Action",
+            tooltipText = "Click to cycle: Warn Mail, Kick & Mail, Kick Only, Exempt [LOA]",
         })
-        row.mailBtn = mailBtn
+        actionBtn:SetHandler("OnClicked", function()
+            row.actionIndex = (row.actionIndex % #AUDIT_ACTIONS) + 1
+            row.selectedAction = AUDIT_ACTIONS[row.actionIndex]
+            actionBtn:SetText(row.selectedAction .. " ▾")
+            if row.selectedAction == "Warn Mail" then
+                actionBtn:SetNormalFontColor(1, 0.85, 0.2, 1)
+            elseif row.selectedAction == "Kick & Mail" then
+                actionBtn:SetNormalFontColor(1, 0.55, 0.2, 1)
+            elseif row.selectedAction == "Kick Only" then
+                actionBtn:SetNormalFontColor(1, 0.35, 0.35, 1)
+            else
+                actionBtn:SetNormalFontColor(0, 1, 0.85, 1)
+            end
+        end)
+        row.actionBtn = actionBtn
+
+        local applyBtn = wm:CreateControl("$(parent)_ApplyBtn", row, CT_BUTTON)
+        applyBtn:SetAnchor(LEFT, actionBtn, RIGHT, 6, 0)
+        applyBtn:SetDimensions(65, 22)
+        applyBtn:SetFont("ZoFontGameBold")
+        applyBtn:SetText("Apply")
+        self:StyleTactileButton(applyBtn, {
+            normalBg = { 0.04, 0.14, 0.10, 0.90 },
+            hoverBg = { 0.06, 0.20, 0.14, 0.98 },
+            normalEdge = { 0.20, 0.80, 0.40, 0.85 },
+            hoverEdge = { 0.30, 1.00, 0.50, 1.00 },
+            normalTextColor = { 0.3, 1, 0.5, 1 },
+            hoverTextColor = { 0.6, 1, 0.7, 1 },
+            tooltipTitle = "Apply Action",
+            tooltipText = "Execute the selected action on this member with safe confirmation.",
+        })
+        row.applyBtn = applyBtn
 
         self.auditRows[r] = row
     end
+
+    -- Mouse Wheel support on card for smooth list scrolling
+    card:SetMouseEnabled(true)
+    card:SetHandler("OnMouseWheel", function(control, delta)
+        local maxPages = math.max(1, math.ceil(#(self.auditFilteredMembers or {}) / ROWS_PER_PAGE))
+        if delta > 0 then
+            if self.auditCurrentPage > 1 then
+                self.auditCurrentPage = self.auditCurrentPage - 1
+                self:RenderAuditorRows()
+            end
+        elseif delta < 0 then
+            if self.auditCurrentPage < maxPages then
+                self.auditCurrentPage = self.auditCurrentPage + 1
+                self:RenderAuditorRows()
+            end
+        end
+    end)
 
     -- 5. Bottom Navigation & Status Bar
     local footerY = -8
@@ -761,6 +815,176 @@ function FR:UpdateAuditorUI()
     self:RenderAuditorRows()
 end
 
+function FR:RecordMemberMailSent(memberName, mailType)
+    if not self.savedVars then return end
+    if not self.savedVars.staff then self.savedVars.staff = {} end
+    if not self.savedVars.staff.mailHistory then self.savedVars.staff.mailHistory = {} end
+    local clean = string.gsub(string.lower(memberName or ""), "^@", "")
+    local hist = self.savedVars.staff.mailHistory[clean] or { count = 0, lastMailTime = 0, types = {} }
+    hist.count = (hist.count or 0) + 1
+    hist.lastMailTime = GetTimeStamp()
+    table.insert(hist.types, { type = mailType or "warn", time = hist.lastMailTime })
+    self.savedVars.staff.mailHistory[clean] = hist
+end
+
+function FR:GetMemberMailInfo(memberName)
+    if not self.savedVars or not self.savedVars.staff or not self.savedVars.staff.mailHistory then return 0, 0 end
+    local clean = string.gsub(string.lower(memberName or ""), "^@", "")
+    local hist = self.savedVars.staff.mailHistory[clean]
+    if hist then
+        return hist.count or 0, hist.lastMailTime or 0
+    end
+    return 0, 0
+end
+
+local function RegisterAuditorCustomDialogs()
+    if ESO_Dialogs and not ESO_Dialogs["FISSAL_CONFIRM_KICK_AND_MAIL"] then
+        ESO_Dialogs["FISSAL_CONFIRM_KICK_AND_MAIL"] = {
+            title = { text = "Confirm Kick & Courtesy Mail" },
+            mainText = { text = "Remove |c00FFCC<<1>>|r from |c00FFCC<<2>>|r and send courtesy re-invite mail?\n\n|cCCCCCCMail Message:|r\n|cFFFFFFThank you for being part of <<2>>! As our trading roster is currently full, we had to open up your space to keep trades flowing while you take a break. You are always warmly welcome back whenever you return to Tamriel—simply message an officer or re-apply!\n\nWarm regards,\n<<2>> Staff|r" },
+            buttons = {
+                {
+                    text = SI_DIALOG_CONFIRM,
+                    callback = function(dialog)
+                        if dialog.data and dialog.data.onConfirm then dialog.data.onConfirm() end
+                    end,
+                },
+                { text = SI_DIALOG_CANCEL },
+            },
+        }
+    end
+
+    if ESO_Dialogs and not ESO_Dialogs["FISSAL_CONFIRM_KICK_MEMBER"] then
+        ESO_Dialogs["FISSAL_CONFIRM_KICK_MEMBER"] = {
+            title = { text = "Confirm Guild Removal" },
+            mainText = { text = "Remove |c00FFCC<<1>>|r from |c00FFCC<<2>>|r without sending mail?" },
+            buttons = {
+                {
+                    text = SI_DIALOG_CONFIRM,
+                    callback = function(dialog)
+                        if dialog.data and dialog.data.onConfirm then dialog.data.onConfirm() end
+                    end,
+                },
+                { text = SI_DIALOG_CANCEL },
+            },
+        }
+    end
+end
+
+function FR:ApplyAuditAction(m, action)
+    if not m or not m.name then return end
+    local gIdx = self.selectedGuildIndex or 1
+    local guildId = GetGuildId(gIdx)
+    local guildName = GetGuildName(guildId)
+    action = action or "Warn Mail"
+
+    if action == "Warn Mail" then
+        self:RecordMemberMailSent(m.name, "warn")
+        self:TriggerInactivityMailHandoff(m.name, m.days)
+        self.PrintChat(string.format("Staged warning mail for %s. (Recorded in mail history)", ColorText(m.name, "00FFCC")))
+        self:RenderAuditorRows()
+
+    elseif action == "Kick & Mail" then
+        RegisterAuditorCustomDialogs()
+        ZO_Dialogs_ShowDialog("FISSAL_CONFIRM_KICK_AND_MAIL", {
+            onConfirm = function()
+                SCENE_MANAGER:Show("mailSend")
+                zo_callLater(function()
+                    ZO_MailSendToField:SetText(m.name)
+                    ZO_MailSendSubjectField:SetText(string.format("[%s] Roster Space Update", guildName))
+                    ZO_MailSendBodyField:SetText(string.format("Greetings %s,\n\nThank you for being part of %s! As our trading roster is currently full, we had to open up your space to keep trades flowing while you take a break. You are always warmly welcome back whenever you return to Tamriel—simply message any officer or re-apply!\n\nWarm regards,\n%s Staff",
+                        m.name, guildName, guildName))
+                    ZO_MailSendBodyField:TakeFocus()
+                end, 200)
+
+                FR:RecordMemberMailSent(m.name, "kick_mail")
+
+                local mIdx = GetGuildMemberIndexFromDisplayName and GetGuildMemberIndexFromDisplayName(guildId, m.name)
+                if not mIdx or mIdx <= 0 then
+                    local numM = GetNumGuildMembers(guildId)
+                    for i = 1, numM do
+                        local dName = GetGuildMemberInfo(guildId, i)
+                        if string.lower(dName) == string.lower(m.name) then
+                            mIdx = i
+                            break
+                        end
+                    end
+                end
+
+                if mIdx and mIdx > 0 then
+                    GuildRemove(guildId, mIdx)
+                    FR.PrintChat(string.format("|c59E08ARemoved:|r %s from %s and staged courtesy mail.", ColorText(m.name, "00FFCC"), ColorText(guildName, "FF9900")))
+                else
+                    FR.PrintChat(string.format("|cFF5555Error:|r Could not find member index for %s in guild.", m.name))
+                end
+
+                zo_callLater(function()
+                    FR:RunRosterAudit()
+                    FR:UpdateAuditorUI()
+                end, 500)
+            end,
+        }, {
+            mainTextParams = { m.name, guildName }
+        })
+
+    elseif action == "Kick Only" then
+        RegisterAuditorCustomDialogs()
+        ZO_Dialogs_ShowDialog("FISSAL_CONFIRM_KICK_MEMBER", {
+            onConfirm = function()
+                local mIdx = GetGuildMemberIndexFromDisplayName and GetGuildMemberIndexFromDisplayName(guildId, m.name)
+                if not mIdx or mIdx <= 0 then
+                    local numM = GetNumGuildMembers(guildId)
+                    for i = 1, numM do
+                        local dName = GetGuildMemberInfo(guildId, i)
+                        if string.lower(dName) == string.lower(m.name) then
+                            mIdx = i
+                            break
+                        end
+                    end
+                end
+
+                if mIdx and mIdx > 0 then
+                    GuildRemove(guildId, mIdx)
+                    FR.PrintChat(string.format("|c59E08ARemoved:|r %s from %s.", ColorText(m.name, "00FFCC"), ColorText(guildName, "FF9900")))
+                else
+                    FR.PrintChat(string.format("|cFF5555Error:|r Could not find member index for %s in guild.", m.name))
+                end
+
+                zo_callLater(function()
+                    FR:RunRosterAudit()
+                    FR:UpdateAuditorUI()
+                end, 500)
+            end,
+        }, {
+            mainTextParams = { m.name, guildName }
+        })
+
+    elseif action == "Exempt [LOA]" then
+        local mIdx = GetGuildMemberIndexFromDisplayName and GetGuildMemberIndexFromDisplayName(guildId, m.name)
+        if not mIdx or mIdx <= 0 then
+            local numM = GetNumGuildMembers(guildId)
+            for i = 1, numM do
+                local dName = GetGuildMemberInfo(guildId, i)
+                if string.lower(dName) == string.lower(m.name) then
+                    mIdx = i
+                    break
+                end
+            end
+        end
+
+        if mIdx and mIdx > 0 then
+            local curNote = m.note or ""
+            local newNote = curNote ~= "" and (curNote .. " [LOA]") or "[LOA]"
+            SetGuildMemberNote(guildId, mIdx, newNote)
+            self.PrintChat(string.format("Added [LOA] exemption tag to %s's note.", ColorText(m.name, "00FFCC")))
+            zo_callLater(function()
+                FR:RunRosterAudit()
+                FR:UpdateAuditorUI()
+            end, 500)
+        end
+    end
+end
+
 function FR:RenderAuditorRows()
     local members = self.auditFilteredMembers or {}
     local total = #members
@@ -769,6 +993,8 @@ function FR:RenderAuditorRows()
     if self.auditCurrentPage < 1 then self.auditCurrentPage = 1 end
 
     local startIndex = (self.auditCurrentPage - 1) * ROWS_PER_PAGE
+    local gIdx = self.selectedGuildIndex or 1
+    local guildId = GetGuildId(gIdx)
 
     for r = 1, ROWS_PER_PAGE do
         local row = self.auditRows and self.auditRows[r]
@@ -779,17 +1005,66 @@ function FR:RenderAuditorRows()
                 local m = members[memberIndex]
                 row:SetHidden(false)
 
+                local mailCount, lastMailTime = self:GetMemberMailInfo(m.name)
+                local noteLower = string.lower(m.note or "")
+                local isPerm = string.find(noteLower, "perm") or string.find(noteLower, "founder") or string.find(noteLower, "core") or string.find(noteLower, "vip") or string.find(noteLower, "staff")
+
                 -- Name
                 row.nameLbl:SetText(m.name)
                 row.nameLbl:SetMouseEnabled(true)
                 row.nameLbl:SetHandler("OnMouseEnter", function(ctrl)
                     InitializeTooltip(InformationTooltip, ctrl, TOP, 0, -4)
+                    local sDetails = FR.GetMemberDetailedSales and FR:GetMemberDetailedSales(guildId, m.name)
+                    local lines = {
+                        string.format("|c00FFCC%s|r  |c888888(Rank: %s • %d days offline)|r", m.name, m.rank, m.days),
+                    }
+                    if m.note and m.note ~= "" then
+                        table.insert(lines, string.format("|cFFD700Member Note:|r |cFFFFFF%s|r", m.note))
+                    end
+
+                    if mailCount > 0 then
+                        local agoStr = "just now"
+                        local ago = GetTimeStamp() - lastMailTime
+                        if ago < 3600 then agoStr = string.format("%dm ago", math.floor(ago / 60))
+                        elseif ago < 86400 then agoStr = string.format("%dh ago", math.floor(ago / 3600))
+                        else agoStr = string.format("%dd ago", math.floor(ago / 86400)) end
+                        table.insert(lines, string.format("|c888888Mail History:|r |cFFCC00✉ %d time(s) mailed (last: %s)|r", mailCount, agoStr))
+                    else
+                        table.insert(lines, "|c888888Mail History:|r |c888888Never mailed check-in|r")
+                    end
+
+                    table.insert(lines, "")
+                    table.insert(lines, "|cE6C387Trade Velocity Breakdown:|r")
+                    if sDetails then
+                        table.insert(lines, string.format("• Current Trade Week: |c59E08A%d sales|r (|cFFD700%sg|r)",
+                            sDetails.thisWeekCount, ZO_LocalizeDecimalNumber(sDetails.thisWeekGold)))
+                        table.insert(lines, string.format("• Prior Trade Week:   |c59E08A%d sales|r (|cFFD700%sg|r)",
+                            sDetails.priorWeekCount, ZO_LocalizeDecimalNumber(sDetails.priorWeekGold)))
+                        table.insert(lines, string.format("• Total Recorded:     |c00FFCC%d sales|r (|cFFD700%sg|r)",
+                            sDetails.totalCount, ZO_LocalizeDecimalNumber(sDetails.totalGold)))
+                        if sDetails.lastSaleTs > 0 then
+                            local ago = GetTimeStamp() - sDetails.lastSaleTs
+                            local agoStr = (ago < 86400) and string.format("%dh ago", math.floor(ago / 3600)) or string.format("%dd ago", math.floor(ago / 86400))
+                            table.insert(lines, string.format("• Last Recorded Sale: |c00FFCC%s|r", agoStr))
+                        else
+                            table.insert(lines, "• Last Recorded Sale: |c888888None recorded|r")
+                        end
+                    else
+                        table.insert(lines, string.format("• Recorded Sales: |c59E08A%d|r (|cFFD700%sg|r)", m.salesCount or 0, ZO_LocalizeDecimalNumber(m.salesGold or 0)))
+                    end
+
+                    table.insert(lines, "")
+                    table.insert(lines, "|cE6C387Treasury & Dues Status:|r")
+                    table.insert(lines, string.format("• Bank Deposits: |cFFAA00%sg|r", ZO_LocalizeDecimalNumber(m.deposits or 0)))
                     local duesColor = m.duesMet and "59E08A" or "FF5555"
-                    local noteExtra = (m.note and m.note ~= "") and string.format("\n|cFFD700Member Note:|r |cFFFFFF%s|r", m.note) or ""
-                    SetTooltipText(InformationTooltip, string.format(
-                        "|c00FFCC%s|r\n|c888888Rank: %s\nOffline: %d days|r\n|c59E08ASales Recorded: %d (%sg)|r\n|cFFD700Bank Deposits: %sg|r\n|c%sDues Status: %s (%s)|r%s",
-                        m.name, m.rank, m.days, m.salesCount or 0, ZO_LocalizeDecimalNumber(m.salesGold or 0),
-                        ZO_LocalizeDecimalNumber(m.deposits or 0), duesColor, m.duesMet and "DUES MET" or "MISSING DUES", m.duesReason or "Unmet", noteExtra))
+                    table.insert(lines, string.format("• Dues Status: |c%s%s (%s)|r", duesColor, m.duesMet and "DUES MET" or "MISSING DUES", m.duesReason or "Unmet"))
+
+                    if isPerm then
+                        table.insert(lines, "")
+                        table.insert(lines, "|c00FFCC🛡 PROTECTED: Permanent member note keyword detected!|r")
+                    end
+
+                    SetTooltipText(InformationTooltip, table.concat(lines, "\n"))
                 end)
                 row.nameLbl:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
 
@@ -812,24 +1087,32 @@ function FR:RenderAuditorRows()
                 local depText = m.deposits > 0 and string.format("|c59E08A%sg|r", ZO_LocalizeDecimalNumber(m.deposits)) or "|c6666660g|r"
                 row.duesLbl:SetText(depText)
 
-                -- Dues Status Badge
-                if m.duesMet then
-                    row.statusLbl:SetText("|c59E08A[MET ✓]|r")
+                -- Note / Shield / Mail column
+                if isPerm then
+                    row.noteLbl:SetText("|c00FFCC🛡 PERM|r")
+                elseif mailCount > 0 then
+                    row.noteLbl:SetText(string.format("|cFFCC00✉ %dx|r", mailCount))
+                elseif m.note and m.note ~= "" then
+                    local cleanNote = string.gsub(m.note, "\n", " ")
+                    if #cleanNote > 10 then cleanNote = string.sub(cleanNote, 1, 8) .. ".." end
+                    row.noteLbl:SetText(string.format("|cFFD700%s|r", cleanNote))
                 else
-                    row.statusLbl:SetText("|cFF5555[UNMET]|r")
+                    row.noteLbl:SetText("|c444444--|r")
                 end
 
-                if row.noteLbl then
-                    local cleanNote = string.gsub(m.note or "", "\n", " ")
-                    if #cleanNote > 12 then
-                        cleanNote = string.sub(cleanNote, 1, 10) .. ".."
-                    end
-                    row.noteLbl:SetText(cleanNote)
-                end
+                row.noteLbl:SetMouseEnabled(true)
+                row.noteLbl:SetHandler("OnMouseEnter", function(ctrl)
+                    InitializeTooltip(InformationTooltip, ctrl, TOP, 0, -4)
+                    local tip = string.format("|c00FFCC%s|r\n|cFFD700Note:|r %s\n|c888888Mail Count:|r %d time(s) mailed",
+                        m.name, (m.note and m.note ~= "") and m.note or "None", mailCount)
+                    if isPerm then tip = tip .. "\n|c00FFCC🛡 PROTECTED: Permanent member note keyword detected!|r" end
+                    SetTooltipText(InformationTooltip, tip)
+                end)
+                row.noteLbl:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
 
-                -- Warn Mail button handler
-                row.mailBtn:SetHandler("OnClicked", function()
-                    self:TriggerInactivityMailHandoff(m.name, m.days)
+                -- Apply button handler
+                row.applyBtn:SetHandler("OnClicked", function()
+                    self:ApplyAuditAction(m, row.selectedAction or "Warn Mail")
                 end)
             else
                 row:SetHidden(true)
