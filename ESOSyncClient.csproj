@@ -28,6 +28,7 @@
   <ItemGroup>
     <Compile Remove="RedfurSync.Tests\**\*.cs" />
     <Compile Remove="RedfurSync.Core\**\*.cs" />
+    <Compile Remove="tools\**\*.cs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="RedfurSync.Core\RedfurSync.Core.csproj" />

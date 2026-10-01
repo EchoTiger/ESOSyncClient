@@ -133,6 +133,15 @@ namespace RedfurSync
                 {
                     try { File.Delete(prevExe); } catch { }
                 }
+                try
+                {
+                    var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                    foreach (var p in Directory.EnumerateFiles(baseDir, "*.prev"))
+                    {
+                        try { File.Delete(p); } catch { }
+                    }
+                }
+                catch { }
             }
 
             // ── Self-Relocation into ESO AddOns Chamber ─────────────────────────────

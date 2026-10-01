@@ -161,9 +161,14 @@ namespace RedfurSync
                 _fileSystem.WriteAllText(pendingPath, JsonSerializer.Serialize(pendingRecord));
 
                 if (_fileSystem.FileExists(prevPath))
-                    _fileSystem.DeleteFile(prevPath);
+                {
+                    try { _fileSystem.DeleteFile(prevPath); }
+                    catch { prevPath = exePath + "." + DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + ".prev"; }
+                }
                 if (_fileSystem.FileExists(oldPath))
-                    _fileSystem.DeleteFile(oldPath);
+                {
+                    try { _fileSystem.DeleteFile(oldPath); } catch { }
+                }
 
                 _fileSystem.MoveFile(exePath, prevPath);
                 originalMoved = true;
@@ -195,12 +200,30 @@ namespace RedfurSync
                     throw new TimeoutException($"New relay instance failed to confirm health within {timeout.TotalSeconds}s.");
                 }
 
-                if (_fileSystem.FileExists(prevPath))
-                    _fileSystem.DeleteFile(prevPath);
-                if (_fileSystem.FileExists(pendingPath))
-                    _fileSystem.DeleteFile(pendingPath);
-                if (_fileSystem.FileExists(healthyPath))
-                    _fileSystem.DeleteFile(healthyPath);
+                try
+                {
+                    if (_fileSystem.FileExists(prevPath))
+                        _fileSystem.DeleteFile(prevPath);
+                }
+                catch
+                {
+                    // On Windows, the process image cannot be deleted while the running instance lives.
+                    // Program.cs cleans up stale .prev files on next startup.
+                }
+
+                try
+                {
+                    if (_fileSystem.FileExists(pendingPath))
+                        _fileSystem.DeleteFile(pendingPath);
+                }
+                catch { }
+
+                try
+                {
+                    if (_fileSystem.FileExists(healthyPath))
+                        _fileSystem.DeleteFile(healthyPath);
+                }
+                catch { }
 
                 return UpdateApplyResult.Success;
             }
