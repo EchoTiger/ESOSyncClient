@@ -75,6 +75,9 @@ namespace RedfurSync
 
         [JsonPropertyName("Theme")]
         public string Theme { get; set; } = "fissal";
+
+        [JsonPropertyName("CustomEsoLiveDirectory")]
+        public string? CustomEsoLiveDirectory { get; set; } = null;
         
         // Polling and application state behavior variables
         [JsonPropertyName("DebounceMs")]

@@ -195,4 +195,55 @@ public sealed class AddonInstallerServiceTests
             AddonInstallerService.RemoteAddonDownloadUrl = null;
         }
     }
+
+    [Fact]
+    public void ParseLuaVersion_ExtractsVersionString()
+    {
+        var lua = "local FR = FissalRelay\nFR.name = \"FissalRelay\"\nFR.version = \"1.6.1\"\nFR.author = \"Echo\"";
+        var ver = AddonInstallerService.ParseLuaVersion(lua);
+        Assert.Equal("1.6.1", ver);
+    }
+
+    [Fact]
+    public void CheckAddonInstallStatus_DetectsUpdateAvailable_WhenLuaScriptVersionIsOlderThanManifest()
+    {
+        using var temp = new TemporaryDirectory();
+        var liveDir = Path.Combine(temp.Path, "live");
+        var addonDir = Path.Combine(liveDir, "AddOns", "FissalRelay");
+        Directory.CreateDirectory(addonDir);
+
+        File.WriteAllText(Path.Combine(addonDir, "FissalRelay.txt"),
+            $"## Title: Fissal\n## Version: {AddonInstallerService.LatestAddonVersion}\n## AddOnVersion: {AddonInstallerService.LatestAddonVersionCode}\n");
+
+        File.WriteAllText(Path.Combine(addonDir, "FissalRelay.lua"),
+            "local FR = FissalRelay\nFR.version = \"1.6.0\"\n");
+
+        var status = AddonInstallerService.CheckAddonInstallStatus(liveDir);
+
+        Assert.Equal(AddonInstallState.UpdateAvailable, status.State);
+        Assert.True(status.NeedsUpdate);
+        Assert.Equal("1.6.0", status.InstalledVersion);
+        Assert.Contains("Update required", status.StatusMessage);
+    }
+
+    [Fact]
+    public void FindEsoLiveDirectory_RespectsAppConfigCustomEsoLiveDirectory()
+    {
+        using var temp = new TemporaryDirectory();
+        var liveDir = Path.Combine(temp.Path, "custom_live");
+        Directory.CreateDirectory(liveDir);
+
+        var prev = AppConfig.Instance.CustomEsoLiveDirectory;
+        try
+        {
+            AppConfig.Instance.CustomEsoLiveDirectory = liveDir;
+            var found = AddonInstallerService.FindEsoLiveDirectory();
+            Assert.Equal(liveDir, found);
+        }
+        finally
+        {
+            AppConfig.Instance.CustomEsoLiveDirectory = prev;
+        }
+    }
+
 }

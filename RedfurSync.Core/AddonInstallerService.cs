@@ -114,6 +114,13 @@ namespace RedfurSync
                 catch { }
             }
 
+            try
+            {
+                var configured = AppConfig.Instance?.CustomEsoLiveDirectory;
+                if (!string.IsNullOrWhiteSpace(configured) && Directory.Exists(configured)) return configured;
+            }
+            catch { }
+
             var candidates = new List<string>
             {
                 @"E:\Files\Documents\Elder Scrolls Online\live",
@@ -211,6 +218,27 @@ namespace RedfurSync
             return (version, versionCode);
         }
 
+        public static string? ParseLuaVersion(string luaContent)
+        {
+            if (string.IsNullOrWhiteSpace(luaContent)) return null;
+
+            using var reader = new StringReader(luaContent);
+            string? line;
+            while ((line = reader.ReadLine()) != null)
+            {
+                var trimmed = line.Trim();
+                if (trimmed.StartsWith("--")) continue;
+
+                var match = System.Text.RegularExpressions.Regex.Match(trimmed, @"^(?:FR|FissalRelay)\.version\s*=\s*""([^""]+)""");
+                if (match.Success)
+                {
+                    return match.Groups[1].Value.Trim();
+                }
+            }
+
+            return null;
+        }
+
         public static AddonStatusResult CheckAddonInstallStatus(string? explicitEsoLiveDir = null, Func<string>? customProvider = null)
         {
             string? liveDir = !string.IsNullOrWhiteSpace(explicitEsoLiveDir)
@@ -229,6 +257,7 @@ namespace RedfurSync
             string addonsRoot = Path.Combine(liveDir, "AddOns");
             string addonDir = Path.Combine(addonsRoot, AddonDirectoryName);
             string manifestPath = Path.Combine(addonDir, "FissalRelay.txt");
+            string mainLuaPath = Path.Combine(addonDir, "FissalRelay.lua");
 
             bool libHistoire = Directory.Exists(Path.Combine(addonsRoot, "LibHistoire"));
             bool libAddonMenu = Directory.Exists(Path.Combine(addonsRoot, "LibAddonMenu-2.0"));
@@ -254,6 +283,16 @@ namespace RedfurSync
                 string manifestText = File.ReadAllText(manifestPath);
                 var (installedVer, installedCode) = ParseManifestVersion(manifestText);
 
+                string? luaVer = null;
+                if (File.Exists(mainLuaPath))
+                {
+                    try
+                    {
+                        luaVer = ParseLuaVersion(File.ReadAllText(mainLuaPath));
+                    }
+                    catch { }
+                }
+
                 bool updateNeeded = false;
                 if (!string.IsNullOrWhiteSpace(installedVer))
                 {
@@ -268,17 +307,46 @@ namespace RedfurSync
                     updateNeeded = true;
                 }
 
+                if (!string.IsNullOrWhiteSpace(luaVer))
+                {
+                    if (RelayVersion.IsServerNewer(effectiveLatest, luaVer))
+                    {
+                        updateNeeded = true;
+                    }
+                    if (!string.IsNullOrWhiteSpace(installedVer) && RelayVersion.IsServerNewer(installedVer, luaVer))
+                    {
+                        updateNeeded = true;
+                    }
+                }
+
+                string displayedVer = (!string.IsNullOrWhiteSpace(luaVer) && !string.IsNullOrWhiteSpace(installedVer) && RelayVersion.IsServerNewer(installedVer, luaVer))
+                    ? luaVer
+                    : (installedVer ?? luaVer ?? "unknown");
+
                 var state = updateNeeded ? AddonInstallState.UpdateAvailable : AddonInstallState.UpToDate;
-                string msg = updateNeeded
-                    ? $"Update available: v{installedVer ?? "unknown"} is installed, latest is v{effectiveLatest}."
-                    : $"Addon is up to date (v{installedVer ?? effectiveLatest}).";
+                string msg;
+                if (updateNeeded)
+                {
+                    if (!string.IsNullOrWhiteSpace(luaVer) && !string.IsNullOrWhiteSpace(installedVer) && luaVer != installedVer)
+                    {
+                        msg = $"Update required: In-game scripts (v{luaVer}) do not match manifest (v{installedVer}). Reinstall or update to v{effectiveLatest}.";
+                    }
+                    else
+                    {
+                        msg = $"Update available: v{displayedVer} is installed, latest is v{effectiveLatest}.";
+                    }
+                }
+                else
+                {
+                    msg = $"Addon is up to date (v{displayedVer}).";
+                }
 
                 return new AddonStatusResult
                 {
                     State = state,
                     EsoLiveDirectory = liveDir,
                     AddonDirectory = addonDir,
-                    InstalledVersion = installedVer,
+                    InstalledVersion = displayedVer,
                     InstalledVersionCode = installedCode,
                     LatestVersion = effectiveLatest,
                     LibHistoireInstalled = libHistoire,

@@ -3552,7 +3552,7 @@ namespace RedfurSync
             {
                 Dock = DockStyle.Top,
                 ColumnCount = 2,
-                RowCount = 6,
+                RowCount = 7,
                 BackColor = CPanelBg,
                 Padding = new Padding((int)(16 * _scale)),
                 AutoSize = true,
@@ -3640,7 +3640,23 @@ namespace RedfurSync
             pathLayout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             pathLayout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
-            _txtAddonEsoPath = MakeStyledTextBox("");
+            string initialLivePath = AppConfig.Instance.CustomEsoLiveDirectory ?? AddonInstallerService.FindEsoLiveDirectory() ?? "";
+            _txtAddonEsoPath = MakeStyledTextBox(initialLivePath);
+            _txtAddonEsoPath.Leave += (_, _) =>
+            {
+                var text = _txtAddonEsoPath.Text.Trim();
+                if (!string.IsNullOrWhiteSpace(text) && Directory.Exists(text))
+                {
+                    var cfg = AppConfig.Instance;
+                    if (!string.Equals(cfg.CustomEsoLiveDirectory, text, StringComparison.OrdinalIgnoreCase))
+                    {
+                        cfg.CustomEsoLiveDirectory = text;
+                        cfg.Save();
+                        RefreshAddonView();
+                        RefreshSetupView();
+                    }
+                }
+            };
             pathLayout.Controls.Add(_txtAddonEsoPath, 0, 0);
 
             _btnBrowseEsoPath = MakeStyledButton("Browse...", CText);
@@ -3659,7 +3675,11 @@ namespace RedfurSync
                 if (fbd.ShowDialog() == DialogResult.OK)
                 {
                     _txtAddonEsoPath.Text = fbd.SelectedPath;
+                    var cfg = AppConfig.Instance;
+                    cfg.CustomEsoLiveDirectory = fbd.SelectedPath;
+                    cfg.Save();
                     RefreshAddonView();
+                    RefreshSetupView();
                 }
             };
             pathLayout.Controls.Add(_btnBrowseEsoPath, 1, 0);
@@ -3710,9 +3730,22 @@ namespace RedfurSync
                     return;
                 }
 
+                var cfg = AppConfig.Instance;
+                if (!string.Equals(cfg.CustomEsoLiveDirectory, path, StringComparison.OrdinalIgnoreCase))
+                {
+                    cfg.CustomEsoLiveDirectory = path;
+                    cfg.Save();
+                }
+
                 bool ok = AddonInstallerService.InstallOrUpdateAddon(path, out string msg);
                 RefreshAddonView();
-                FissalBox.Show(msg, ok ? "Addon Installation Successful" : "Installation Notice");
+                RefreshSetupView();
+
+                string fullMsg = ok
+                    ? $"{msg}\n\nNotice: If Elder Scrolls Online is currently running, remember to type /reloadui in-game chat to load the new scripts into memory!"
+                    : msg;
+                FissalBox.Show(fullMsg, ok ? "Addon Installation Successful" : "Installation Notice");
+                return;
             };
             actionFlow.Controls.Add(_btnInstallOrUpdateAddon);
 
@@ -3750,6 +3783,18 @@ namespace RedfurSync
             actionFlow.Controls.Add(_btnOpenSavedVars);
 
             formPanel.Controls.Add(actionFlow, 1, 5);
+
+            // In-Game Notice Callout
+            formPanel.Controls.Add(MakeFieldLabel("In-Game Notice:"), 0, 6);
+            var noticeLabel = new Label
+            {
+                Text = "⚡ Note: If ESO is running when installing or updating, type /reloadui in-game to load new scripts.",
+                ForeColor = CGoldBrt,
+                Font = Mono(8f, _scale, FontStyle.Italic),
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+            };
+            formPanel.Controls.Add(noticeLabel, 1, 6);
 
             layout.Controls.Add(formPanel, 0, 0);
 
@@ -3885,14 +3930,14 @@ namespace RedfurSync
                     _lblAddonStatusBadge.Text = "● ADDON IS INSTALLED & UP TO DATE";
                     _lblAddonStatusBadge.ForeColor = CGreen;
                     _lblAddonStatusDetail.Text = $"Version {status.InstalledVersion} is active in ESO live directory.";
-                    _btnInstallOrUpdateAddon.Text = "Reinstall Addon (v" + status.LatestVersion + ")";
+                    _btnInstallOrUpdateAddon.Text = "Repair / Reinstall Addon (v" + status.LatestVersion + ")";
                     _btnInstallOrUpdateAddon.ForeColor = CGoldBrt;
                     break;
 
                 case AddonInstallState.UpdateAvailable:
                     _lblAddonStatusBadge.Text = "▲ ADDON UPDATE REQUIRED";
                     _lblAddonStatusBadge.ForeColor = CWarn;
-                    _lblAddonStatusDetail.Text = $"Installed: v{status.InstalledVersion ?? "?"} → Latest: v{status.LatestVersion}.";
+                    _lblAddonStatusDetail.Text = status.StatusMessage;
                     _btnInstallOrUpdateAddon.Text = "Update Addon to v" + status.LatestVersion + " Now";
                     _btnInstallOrUpdateAddon.ForeColor = CGreen;
                     break;
@@ -4205,6 +4250,31 @@ namespace RedfurSync
             _lblDeviceInfo.Text = $"Auth Mode: {authMode}\nToken Storage: DPAPI Encrypted (CurrentUser)\nUpdate Endpoint: {cfg.UpdateUrl}";
             UpdateSilentSyncButton();
             UpdateSyncMmButton();
+
+            if (_lblSetupAddonStatus != null && !_lblSetupAddonStatus.IsDisposed)
+            {
+                var addonStatus = AddonInstallerService.CheckAddonInstallStatus();
+                switch (addonStatus.State)
+                {
+                    case AddonInstallState.UpToDate:
+                        _lblSetupAddonStatus.Text = $"✔ Addon v{addonStatus.InstalledVersion} Active";
+                        _lblSetupAddonStatus.ForeColor = CGreen;
+                        break;
+                    case AddonInstallState.UpdateAvailable:
+                        _lblSetupAddonStatus.Text = $"▲ Update Available (v{addonStatus.InstalledVersion ?? "?"} → v{addonStatus.LatestVersion})";
+                        _lblSetupAddonStatus.ForeColor = CWarn;
+                        break;
+                    case AddonInstallState.NotInstalled:
+                        _lblSetupAddonStatus.Text = "✖ Addon Not Installed";
+                        _lblSetupAddonStatus.ForeColor = CBarFail;
+                        break;
+                    case AddonInstallState.EsoNotFound:
+                    default:
+                        _lblSetupAddonStatus.Text = "⚠ ESO Directory Not Found";
+                        _lblSetupAddonStatus.ForeColor = CWarn;
+                        break;
+                }
+            }
         }
 
         private void UpdateSilentSyncButton()

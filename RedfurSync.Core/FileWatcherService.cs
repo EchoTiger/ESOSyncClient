@@ -150,7 +150,7 @@ namespace RedfurSync
         /// <summary>Inject the ESO "live" watch root so tests can point watchers at a temp dir.
         /// Default mirrors the original MyDocuments/Elder Scrolls Online/live path.</summary>
         internal Func<string> WatchRootProvider { get; set; } =
-            () => Path.Combine(
+            () => AddonInstallerService.FindEsoLiveDirectory() ?? Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments),
                 "Elder Scrolls Online",
                 "live");

@@ -195,7 +195,7 @@ function FR:CreateConsoleUI()
     title:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     title:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
     title:SetFont("ZoFontGameBold")
-    title:SetText(string.format("|cFF9900FISSAL RELAY PRIME|r  |c00FFCCCOMMAND CONSOLE|r  |c888888v%s|r", self.version or "1.6.0"))
+    title:SetText(string.format("|cFF9900FISSAL RELAY PRIME|r  |c00FFCCCOMMAND CONSOLE|r  |c888888v%s|r", FR.version or "1.6.1"))
 
     -- 7. Top Divider Line
     local topDiv = wm:CreateControl("$(parent)_DivTop", console, CT_TEXTURE)
