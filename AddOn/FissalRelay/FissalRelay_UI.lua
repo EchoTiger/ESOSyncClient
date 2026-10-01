@@ -163,23 +163,26 @@ function FR:CreateHUD()
         ClearTooltip(InformationTooltip)
     end)
 
-    -- 7. Sync Button [Sync]
-    local syncBtn = wm:CreateControl("$(parent)_Sync", hud, CT_BUTTON)
-    syncBtn:SetAnchor(RIGHT, closeBtn, LEFT, -8, 0)
-    syncBtn:SetDimensions(50, 18)
-    syncBtn:SetFont("ZoFontGame")
-    syncBtn:SetNormalFontColor(0, 1, 0.8, 1)
-    syncBtn:SetMouseOverFontColor(1, 0.9, 0.4, 1)
-    syncBtn:SetText("[Sync]")
-    syncBtn:SetHandler("OnClicked", function()
-        self:HandleSlashCommand("sync")
-        self:UpdateHUD()
+    -- 7. Console Button [Console] (Replaces redundant Sync button)
+    local consoleBtn = wm:CreateControl("$(parent)_Console", hud, CT_BUTTON)
+    consoleBtn:SetAnchor(RIGHT, closeBtn, LEFT, -8, 0)
+    consoleBtn:SetDimensions(70, 18)
+    consoleBtn:SetFont("ZoFontGame")
+    consoleBtn:SetNormalFontColor(0, 1, 0.8, 1)
+    consoleBtn:SetMouseOverFontColor(1, 0.9, 0.4, 1)
+    consoleBtn:SetText("[Console]")
+    consoleBtn:SetHandler("OnClicked", function()
+        if self.ToggleConsole then
+            self:ToggleConsole()
+        else
+            self:HandleSlashCommand("console")
+        end
     end)
-    syncBtn:SetHandler("OnMouseEnter", function(ctrl)
+    consoleBtn:SetHandler("OnMouseEnter", function(ctrl)
         InitializeTooltip(InformationTooltip, ctrl, TOP, 0, -4)
-        SetTooltipText(InformationTooltip, "Turbo-pump LibHistoire history requests, scan kiosks, take fresh roster snapshots, and refresh telemetry.")
+        SetTooltipText(InformationTooltip, "Open Master Command Console (Overview, MotD, Roster Audits, Bids & Auto-Ranks).")
     end)
-    syncBtn:SetHandler("OnMouseExit", function()
+    consoleBtn:SetHandler("OnMouseExit", function()
         ClearTooltip(InformationTooltip)
     end)
 
@@ -1455,6 +1458,19 @@ function FR:CreateSettingsMenu()
         {
             type = "description",
             text = "Fissal watches your guild store transactions, kiosk ground recon, and bank ledgers with clockwork precision, feeding data smoothly to Redfur Relay.",
+        },
+        {
+            type = "button",
+            name = "Open Master Command Console",
+            tooltip = "Open the interactive Fissal Relay Prime Command Console window (/fissal or /fr).",
+            func = function()
+                if FR.ToggleConsole then
+                    FR:ToggleConsole(true)
+                else
+                    FR:HandleSlashCommand("console")
+                end
+            end,
+            width = "full",
         },
         {
             type = "checkbox",
