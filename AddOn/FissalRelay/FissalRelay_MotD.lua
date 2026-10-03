@@ -115,6 +115,43 @@ end
      RAFFLE DATE & CYCLE CALCULATOR
 ========================================================================= ]]--
 
+local MONTH_NAMES = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" }
+local DAYS_IN_MONTH = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
+
+local function FallbackDate(ts)
+    local days = math.floor(ts / 86400)
+    local weekday = ((days + 4) % 7) -- 0=Sun, 1=Mon, ..., 6=Sat
+    local DAY_NAMES = { [0] = "Sunday", [1] = "Monday", [2] = "Tuesday", [3] = "Wednesday", [4] = "Thursday", [5] = "Friday", [6] = "Saturday" }
+
+    local y = 1970
+    while true do
+        local leap = (y % 4 == 0 and (y % 100 ~= 0 or y % 400 == 0))
+        local daysInYear = leap and 366 or 365
+        if days < daysInYear then break end
+        days = days - daysInYear
+        y = y + 1
+    end
+    local leap = (y % 4 == 0 and (y % 100 ~= 0 or y % 400 == 0))
+    local m = 1
+    while m <= 12 do
+        local dim = DAYS_IN_MONTH[m]
+        if m == 2 and leap then dim = 29 end
+        if days < dim then break end
+        days = days - dim
+        m = m + 1
+    end
+    local d = days + 1
+    return MONTH_NAMES[m] or "Sep", d, DAY_NAMES[weekday] or "Sunday", y
+end
+
+function FR:NormalizeDashesBytePreserving(str)
+    if not str then return "" end
+    -- Replace multi-byte UTF-8 dashes with equal-length ASCII hyphens so byte indices match 1:1
+    local out = str:gsub("\xE2\x80\x93", "---"):gsub("\xE2\x80\x94", "---"):gsub("\xE2\x80\x92", "---"):gsub("\xE2\x80\x91", "---")
+    out = out:gsub("\xC2\xA0", "  ")
+    return out
+end
+
 function FR:GetRaffleDateInfo(guildId)
     local nowTs = GetTimeStamp()
     local curStart = self.GetCurrentRaffleWeekStart and self:GetCurrentRaffleWeekStart(nowTs) or (1789945200 + math.floor((nowTs - 1789945200) / 604800) * 604800)
@@ -123,8 +160,16 @@ function FR:GetRaffleDateInfo(guildId)
 
     local function SafeDate(fmt, ts)
         if os and os.date then
-            local ok, str = pcall(os.date, fmt, ts)
-            if ok and str then return str end
+            -- Align to Eastern Time (EDT = UTC-4 = 14400s)
+            local ok, str = pcall(os.date, "!" .. fmt, ts - 14400)
+            if ok and str and str ~= "" then return str end
+            local ok2, str2 = pcall(os.date, fmt, ts)
+            if ok2 and str2 and str2 ~= "" then return str2 end
+        end
+        local fMonth, fDay, fWeekday = FallbackDate(ts - 14400)
+        if fmt == "%b" then return fMonth
+        elseif fmt == "%d" then return tostring(fDay)
+        elseif fmt == "%A" then return fWeekday
         end
         return ""
     end
@@ -194,45 +239,50 @@ end
 function FR:ReplaceMotDDateRange(text, dateInfo)
     if not text or text == "" or not dateInfo then return text end
 
-    local isWinnerAnnouncement = string.find(string.lower(text), "winner") ~= nil
+    -- Accurate Winner Announcement check: Only if the title/header explicitly announces winners,
+    -- NOT just because the word "winner" or "winners" appears in the body (e.g. "Winners drawn Sunday" or "{raffle_winners}").
+    local lowerText = string.lower(text)
+    local isWinnerAnnouncement = false
+    if (lowerText:find("raffle winner") or lowerText:find("weekly winner") or lowerText:find("winners announcement") or lowerText:find("congratulations"))
+       and not (lowerText:find("weekly raffle") or lowerText:find("raffle push")) then
+        isWinnerAnnouncement = true
+    end
+
     local targetRange = isWinnerAnnouncement and dateInfo.previousRange or dateInfo.currentRange
     local resolved = text
 
-    local months = { "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec" }
-    local lowerText = string.lower(resolved)
+    -- 1. Surgical Legacy Date Range (e.g. "Sep 20 - 27", "Sep 20 – 27", "Sep 27 – Oct 4", "Sept 27 - Oct 4")
+    local norm = self.NormalizeDashesBytePreserving and self:NormalizeDashesBytePreserving(resolved)
+        or resolved:gsub("\xE2\x80\x93", "---"):gsub("\xE2\x80\x94", "---")
 
-    -- 1. Surgical Legacy Date Range (e.g. "Sep 13 - 20", "Sep 13 - Sep 20", "Sep 13 – 20")
-    for _, m in ipairs(months) do
-        local lowerM = string.lower(m)
-        local pos = 1
-        while true do
-            local startIdx = string.find(lowerText, lowerM, pos, true)
-            if not startIdx then break end
+    -- Priority 1: Cross-month range e.g. "Sep 27 - Oct 4", "Sept 27 - Oct 4", "Sep 27 – Oct 4"
+    local patA = "([A-Za-z]+%.?%s+%d+%s*[%-]+%s*[A-Za-z]+%.?%s+%d+)"
+    -- Priority 2: Same-month range e.g. "Sep 20 - 27", "Sep 20 – 27", "Sept 20 - 27"
+    local patB = "([A-Za-z]+%.?%s+%d+%s*[%-]+%s*%d+)"
 
-            local remainder = resolved:sub(startIdx)
-            local fullMatch = remainder:match("^([A-Za-z]+%s+%d+%s*[%-–—]%s*[A-Za-z]+%s+%d+)")
-            if not fullMatch then
-                fullMatch = remainder:match("^([A-Za-z]+%s+%d+%s*[%-–—]%s*%d+)")
-            end
-
-            if fullMatch and #fullMatch > 0 then
-                local endIdx = startIdx + #fullMatch - 1
-                resolved = resolved:sub(1, startIdx - 1) .. targetRange .. resolved:sub(endIdx + 1)
-                break
-            end
-
-            pos = startIdx + #lowerM
-        end
+    local s, e = norm:find(patA)
+    if not s then
+        s, e = norm:find(patB)
     end
 
-    -- 2. Surgical Legacy Drawing Date (e.g. "Drawing Sunday, Sep 20" or "Drawing Sep 20")
+    if s and e then
+        resolved = resolved:sub(1, s - 1) .. targetRange .. resolved:sub(e + 1)
+    end
+
+    -- 2. Surgical Legacy Drawing Date (e.g. "Drawing Sunday, Sep 27 (7:00 PM ET)" or "Drawing Sep 27")
     if not isWinnerAnnouncement and dateInfo.drawingDate and dateInfo.drawingDate ~= "" then
-        for _, m in ipairs(months) do
-            local pattern = "([Dd]rawing%s+[%a,]-%s*" .. m .. "%s+%d+)"
-            local s, e, matchStr = resolved:find(pattern)
-            if s and matchStr then
-                resolved = resolved:sub(1, s - 1) .. "Drawing " .. dateInfo.drawingDate .. resolved:sub(e + 1)
-                break
+        local normDraw = self.NormalizeDashesBytePreserving and self:NormalizeDashesBytePreserving(resolved)
+            or resolved:gsub("\xE2\x80\x93", "---"):gsub("\xE2\x80\x94", "---")
+        local drawPat1 = "([Dd]rawing%s+[%a,]-%s*[A-Za-z]+%.?%s+%d+%s*%(?[%d:%s%a]*%)?)"
+        local ds, de, matchStr = normDraw:find(drawPat1)
+        if ds and de then
+            local trailingPeriod = matchStr:match("%.$") and "." or ""
+            resolved = resolved:sub(1, ds - 1) .. "Drawing " .. dateInfo.drawingDate .. trailingPeriod .. resolved:sub(de + 1)
+        else
+            local drawPat2 = "([Dd]rawing%s+[%a,]-%s*[A-Za-z]+%.?%s+%d+)"
+            local ds2, de2 = normDraw:find(drawPat2)
+            if ds2 and de2 then
+                resolved = resolved:sub(1, ds2 - 1) .. "Drawing " .. dateInfo.drawingDate .. resolved:sub(de2 + 1)
             end
         end
     end
@@ -320,7 +370,7 @@ function FR:ResolveMotDTokens(rawText, guildId)
         ["{drawing_date}"] = dateInfo.drawingDate,
         ["{raffle_start}"] = dateInfo.startDate,
         ["{raffle_end}"] = dateInfo.endDate,
-        ["{date_week}"] = dateInfo.sealedLabel or dateInfo.currentRange,
+        ["{date_week}"] = dateInfo.currentRange,
     }
 
     local resolved = rawText

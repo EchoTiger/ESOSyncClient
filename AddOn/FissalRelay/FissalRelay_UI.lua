@@ -1422,6 +1422,12 @@ function FR:ApplyRaffleNumbersToEditor()
     updated, ok3, oldEntrants = self:ReplaceRaffleField(updated, "entrants", entrantsStr)
     updated, ok4, oldEntries = self:ReplaceRaffleField(updated, "entries", entriesStr)
 
+    -- Surgically update date range & drawing date if date engine is available
+    if self.ReplaceMotDDateRange and self.GetRaffleDateInfo then
+        local dateInfo = self:GetRaffleDateInfo(guildId)
+        updated = self:ReplaceMotDDateRange(updated, dateInfo)
+    end
+
     local matchedAny = ok1 or ok2 or ok3 or ok4
     if not matchedAny then
         if self.motdStatusText then

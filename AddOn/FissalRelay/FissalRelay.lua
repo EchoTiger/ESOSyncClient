@@ -10,7 +10,7 @@ FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
 FR.name = "FissalRelay"
-FR.version = "1.6.0"
+FR.version = "1.6.1"
 FR.author = "Echo & Fissal"
 
 -- Defaults for SavedVariables
@@ -2239,6 +2239,12 @@ function FR:GetRaffleMotDPreview(guildIndexOrId, lookbackDays, ticketPrice)
     updatedMotD, ok2, oldTickets = self:ReplaceRaffleField(updatedMotD, "tickets in pool", ticketsStr)
     updatedMotD, ok3, oldEntrants = self:ReplaceRaffleField(updatedMotD, "entrants", entrantsStr)
     updatedMotD, ok4, oldEntries = self:ReplaceRaffleField(updatedMotD, "entries", entriesStr)
+
+    -- Surgically update date range & drawing date if date engine is available
+    if self.ReplaceMotDDateRange and self.GetRaffleDateInfo then
+        local dateInfo = self:GetRaffleDateInfo(guildId)
+        updatedMotD = self:ReplaceMotDDateRange(updatedMotD, dateInfo)
+    end
 
     local matchedAny = ok1 or ok2 or ok3 or ok4
     local MAX_MOTD_CHARS = MAX_GUILD_MOTD_LENGTH or 2048
