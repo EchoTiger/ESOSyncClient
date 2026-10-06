@@ -457,72 +457,10 @@ function FR:BuildAuditorUI(parent)
     self.auditShieldToggle = shieldToggle
 
     -- Rank Filter Cycle Button
-    local rankBtn = wm:CreateControl("$(parent)_RankFilterBtn", card, CT_BUTTON)
-    rankBtn:SetAnchor(TOPLEFT, card, TOPLEFT, 452, 7)
-    rankBtn:SetDimensions(88, 22)
-    rankBtn:SetFont("ZoFontGameSmall")
-    rankBtn:SetText("Rank: All")
-    self:StyleTactileButton(rankBtn, {
-        normalBg = { 0.10, 0.08, 0.14, 0.85 },
-        hoverBg = { 0.16, 0.12, 0.22, 0.95 },
-        normalEdge = { 0.60, 0.40, 0.85, 0.80 },
-        hoverEdge = { 0.80, 0.50, 1.00, 1.00 },
-        normalTextColor = { 0.85, 0.70, 1, 1 },
-        hoverTextColor = { 1, 0.85, 1, 1 },
-        tooltipTitle = "Rank Filter",
-        tooltipText = "Filter table by specific guild rank (click to cycle through ranks).",
-    })
-    rankBtn:SetHandler("OnClicked", function()
-        self:CycleAuditRankFilter()
-    end)
-    self.auditRankFilterBtn = rankBtn
-
-    -- Permanent Void / Exclusions Manager Button
-    local exclusionsBtn = wm:CreateControl("$(parent)_ExclusionsBtn", card, CT_BUTTON)
-    exclusionsBtn:SetAnchor(TOPLEFT, card, TOPLEFT, 546, 7)
-    exclusionsBtn:SetDimensions(80, 22)
-    exclusionsBtn:SetFont("ZoFontGameSmall")
-    exclusionsBtn:SetText("Void (0)")
-    self:StyleTactileButton(exclusionsBtn, {
-        normalBg = { 0.10, 0.06, 0.16, 0.85 },
-        hoverBg = { 0.16, 0.10, 0.24, 0.95 },
-        normalEdge = { 0.60, 0.35, 0.85, 0.80 },
-        hoverEdge = { 0.80, 0.50, 1.00, 1.00 },
-        normalTextColor = { 0.75, 0.55, 1, 1 },
-        hoverTextColor = { 0.90, 0.75, 1, 1 },
-        tooltipTitle = "Permanent Void Registry",
-        tooltipText = "View and unhide members permanently excluded from inactivity auditing.",
-    })
-    exclusionsBtn:SetHandler("OnClicked", function()
-        self:ToggleAuditExclusionsDrawer()
-    end)
-    self.auditExclusionsBtn = exclusionsBtn
-
-    -- Batch Auto-Processor Button
-    local batchBtn = wm:CreateControl("$(parent)_BatchBtn", card, CT_BUTTON)
-    batchBtn:SetAnchor(TOPLEFT, card, TOPLEFT, 632, 7)
-    batchBtn:SetDimensions(85, 22)
-    batchBtn:SetFont("ZoFontGameBold")
-    batchBtn:SetText("⚡ Batch")
-    self:StyleTactileButton(batchBtn, {
-        normalBg = { 0.18, 0.10, 0.04, 0.90 },
-        hoverBg = { 0.26, 0.15, 0.06, 0.98 },
-        normalEdge = { 0.90, 0.55, 0.15, 0.90 },
-        hoverEdge = { 1.00, 0.75, 0.20, 1.00 },
-        normalTextColor = { 1, 0.85, 0.20, 1 },
-        hoverTextColor = { 1, 0.95, 0.50, 1 },
-        tooltipTitle = "⚡ Batch Auto-Process",
-        tooltipText = "Sequentially execute all selected/staged actions with safe 1.5s pacing and live progress.",
-    })
-    batchBtn:SetHandler("OnClicked", function()
-        self:StartAuditBatch()
-    end)
-    self.auditBatchBtn = batchBtn
-
-    -- Search Box Container
+    -- Search Box Container (anchored top right)
     local searchBg = wm:CreateControlFromVirtual("$(parent)_SearchBg", card, "ZO_EditBackdrop")
     searchBg:SetAnchor(TOPRIGHT, card, TOPRIGHT, -12, 6)
-    searchBg:SetDimensions(130, 24)
+    searchBg:SetDimensions(115, 24)
 
     local searchBox = wm:CreateControlFromVirtual("$(parent)_Search", searchBg, "ZO_DefaultEditForBackdrop")
     searchBox:SetAnchorFill()
@@ -540,6 +478,69 @@ function FR:BuildAuditorUI(parent)
     end)
     self.auditSearchBox = searchBox
 
+    -- Batch Auto-Processor Button (anchored left of search box)
+    local batchBtn = wm:CreateControl("$(parent)_BatchBtn", card, CT_BUTTON)
+    batchBtn:SetAnchor(RIGHT, searchBg, LEFT, -6, 0)
+    batchBtn:SetDimensions(80, 22)
+    batchBtn:SetFont("ZoFontGameBold")
+    batchBtn:SetText("Batch Run")
+    self:StyleTactileButton(batchBtn, {
+        normalBg = { 0.18, 0.10, 0.04, 0.90 },
+        hoverBg = { 0.26, 0.15, 0.06, 0.98 },
+        normalEdge = { 0.90, 0.55, 0.15, 0.90 },
+        hoverEdge = { 1.00, 0.75, 0.20, 1.00 },
+        normalTextColor = { 1, 0.85, 0.20, 1 },
+        hoverTextColor = { 1, 0.95, 0.50, 1 },
+        tooltipTitle = "Batch Auto-Process",
+        tooltipText = "Sequentially execute all selected/staged actions with safe 1.5s pacing and live progress.",
+    })
+    batchBtn:SetHandler("OnClicked", function()
+        self:StartAuditBatch()
+    end)
+    self.auditBatchBtn = batchBtn
+
+    -- Permanent Void / Exclusions Manager Button (anchored left of batch button)
+    local exclusionsBtn = wm:CreateControl("$(parent)_ExclusionsBtn", card, CT_BUTTON)
+    exclusionsBtn:SetAnchor(RIGHT, batchBtn, LEFT, -6, 0)
+    exclusionsBtn:SetDimensions(75, 22)
+    exclusionsBtn:SetFont("ZoFontGameSmall")
+    exclusionsBtn:SetText("Void (0)")
+    self:StyleTactileButton(exclusionsBtn, {
+        normalBg = { 0.10, 0.06, 0.16, 0.85 },
+        hoverBg = { 0.16, 0.10, 0.24, 0.95 },
+        normalEdge = { 0.60, 0.35, 0.85, 0.80 },
+        hoverEdge = { 0.80, 0.50, 1.00, 1.00 },
+        normalTextColor = { 0.75, 0.55, 1, 1 },
+        hoverTextColor = { 0.90, 0.75, 1, 1 },
+        tooltipTitle = "Permanent Void Registry",
+        tooltipText = "View and unhide members permanently excluded from inactivity auditing.",
+    })
+    exclusionsBtn:SetHandler("OnClicked", function()
+        self:ToggleAuditExclusionsDrawer()
+    end)
+    self.auditExclusionsBtn = exclusionsBtn
+
+    -- Rank Filter Cycle Button (anchored left of void button)
+    local rankBtn = wm:CreateControl("$(parent)_RankFilterBtn", card, CT_BUTTON)
+    rankBtn:SetAnchor(RIGHT, exclusionsBtn, LEFT, -6, 0)
+    rankBtn:SetDimensions(95, 22)
+    rankBtn:SetFont("ZoFontGameSmall")
+    rankBtn:SetText("Rank: All")
+    self:StyleTactileButton(rankBtn, {
+        normalBg = { 0.10, 0.08, 0.14, 0.85 },
+        hoverBg = { 0.16, 0.12, 0.22, 0.95 },
+        normalEdge = { 0.60, 0.40, 0.85, 0.80 },
+        hoverEdge = { 0.80, 0.50, 1.00, 1.00 },
+        normalTextColor = { 0.85, 0.70, 1, 1 },
+        hoverTextColor = { 1, 0.85, 1, 1 },
+        tooltipTitle = "Rank Filter",
+        tooltipText = "Filter table by specific guild rank (click to cycle through ranks).",
+    })
+    rankBtn:SetHandler("OnClicked", function()
+        self:CycleAuditRankFilter()
+    end)
+    self.auditRankFilterBtn = rankBtn
+
     -- 3. Table Column Headers
     local headerY = 36
     local colHeader = wm:CreateControl("$(parent)_Header", card, CT_BACKDROP)
@@ -549,6 +550,7 @@ function FR:BuildAuditorUI(parent)
     colHeader:SetCenterColor(0.10, 0.10, 0.14, 0.90)
     colHeader:SetEdgeColor(0.25, 0.20, 0.15, 0.60)
     colHeader:SetEdgeTexture("", 8, 1, 0)
+    self.auditColHeader = colHeader
 
     local h1 = wm:CreateControl("$(parent)_H1", colHeader, CT_LABEL)
     h1:SetAnchor(LEFT, colHeader, LEFT, 10, 0)
@@ -558,42 +560,46 @@ function FR:BuildAuditorUI(parent)
     local h2 = wm:CreateControl("$(parent)_H2", colHeader, CT_LABEL)
     h2:SetAnchor(LEFT, colHeader, LEFT, 190, 0)
     h2:SetFont("ZoFontGameBold")
-    h2:SetText(ColorText("RANK ↕", "00FFCC"))
+    h2:SetText(ColorText("RANK", "00FFCC"))
     h2:SetMouseEnabled(true)
     h2:SetHandler("OnMouseDown", function()
         if self.auditSortBy == "rank" then self.auditSortAsc = not self.auditSortAsc else self.auditSortBy = "rank"; self.auditSortAsc = true end
         self:UpdateAuditorUI()
     end)
+    self.auditHdrRank = h2
 
     local h3 = wm:CreateControl("$(parent)_H3", colHeader, CT_LABEL)
     h3:SetAnchor(LEFT, colHeader, LEFT, 300, 0)
     h3:SetFont("ZoFontGameBold")
-    h3:SetText(ColorText("OFFLINE ↕", "FFD700"))
+    h3:SetText(ColorText("OFFLINE", "FFD700"))
     h3:SetMouseEnabled(true)
     h3:SetHandler("OnMouseDown", function()
         if self.auditSortBy == "days" then self.auditSortAsc = not self.auditSortAsc else self.auditSortBy = "days"; self.auditSortAsc = false end
         self:UpdateAuditorUI()
     end)
+    self.auditHdrOffline = h3
 
     local h4 = wm:CreateControl("$(parent)_H4", colHeader, CT_LABEL)
     h4:SetAnchor(LEFT, colHeader, LEFT, 370, 0)
     h4:SetFont("ZoFontGameBold")
-    h4:SetText(ColorText("SALES ↕", "59E08A"))
+    h4:SetText(ColorText("SALES", "59E08A"))
     h4:SetMouseEnabled(true)
     h4:SetHandler("OnMouseDown", function()
         if self.auditSortBy == "sales" then self.auditSortAsc = not self.auditSortAsc else self.auditSortBy = "sales"; self.auditSortAsc = false end
         self:UpdateAuditorUI()
     end)
+    self.auditHdrSales = h4
 
     local h5 = wm:CreateControl("$(parent)_H5", colHeader, CT_LABEL)
     h5:SetAnchor(LEFT, colHeader, LEFT, 450, 0)
     h5:SetFont("ZoFontGameBold")
-    h5:SetText(ColorText("DUES ↕", "59E08A"))
+    h5:SetText(ColorText("DUES", "59E08A"))
     h5:SetMouseEnabled(true)
     h5:SetHandler("OnMouseDown", function()
         if self.auditSortBy == "dues" then self.auditSortAsc = not self.auditSortAsc else self.auditSortBy = "dues"; self.auditSortAsc = false end
         self:UpdateAuditorUI()
     end)
+    self.auditHdrDues = h5
 
     local h6 = wm:CreateControl("$(parent)_H6", colHeader, CT_LABEL)
     h6:SetAnchor(LEFT, colHeader, LEFT, 525, 0)
@@ -807,6 +813,7 @@ function FR:BuildAuditorUI(parent)
     exportBtn:SetHandler("OnClicked", function()
         self:ExportAuditToChat()
     end)
+    self.auditExportBtn = exportBtn
 
     self:BuildAuditBatchProgressPanel(card)
     self:BuildAuditExclusionsDrawer(card)
@@ -838,10 +845,24 @@ end
 ========================================================================= ]]--
 
 function FR:UpdateAuditorUI()
+    if self.auditExclusionsDrawer and not self.auditExclusionsDrawer:IsHidden() then
+        return
+    end
+
     self:RunRosterAudit()
 
     local gIdx = self.selectedGuildIndex or 1
     local guildId = GetGuildId(gIdx)
+
+    -- Dynamic ASCII sort indicators
+    local rankSort = (self.auditSortBy == "rank") and (self.auditSortAsc and " ^" or " v") or ""
+    local daysSort = (self.auditSortBy == "days") and (self.auditSortAsc and " ^" or " v") or ""
+    local salesSort = (self.auditSortBy == "sales") and (self.auditSortAsc and " ^" or " v") or ""
+    local duesSort = (self.auditSortBy == "dues") and (self.auditSortAsc and " ^" or " v") or ""
+    if self.auditHdrRank then self.auditHdrRank:SetText(ColorText("RANK" .. rankSort, "00FFCC")) end
+    if self.auditHdrOffline then self.auditHdrOffline:SetText(ColorText("OFFLINE" .. daysSort, "FFD700")) end
+    if self.auditHdrSales then self.auditHdrSales:SetText(ColorText("SALES" .. salesSort, "59E08A")) end
+    if self.auditHdrDues then self.auditHdrDues:SetText(ColorText("DUES" .. duesSort, "59E08A")) end
 
     -- Update filter button visual states
     for d, btn in pairs(self.auditDayBtns or {}) do
@@ -912,7 +933,7 @@ function FR:UpdateAuditorUI()
         else
             local rName = GetGuildRankCustomName(guildId, tonumber(self.auditRankFilter) or 1)
             if not rName or rName == "" then rName = string.format("Rank %s", tostring(self.auditRankFilter)) end
-            if #rName > 10 then rName = rName:sub(1, 8) .. ".." end
+            if #rName > 8 then rName = rName:sub(1, 6) .. ".." end
             self.auditRankFilterBtn:SetText("Rank: " .. rName)
             if self.auditRankFilterBtn.bg then
                 self.auditRankFilterBtn.bg:SetCenterColor(0.18, 0.10, 0.25, 0.95)
@@ -1159,13 +1180,23 @@ end
 function FR:BuildAuditExclusionsDrawer(card)
     local wm = WINDOW_MANAGER
     local drawer = wm:CreateControl("$(parent)_ExclusionsDrawer", card, CT_BACKDROP)
-    drawer:SetAnchor(TOPLEFT, card, TOPLEFT, 15, 10)
-    drawer:SetAnchor(BOTTOMRIGHT, card, BOTTOMRIGHT, -15, -10)
-    drawer:SetCenterColor(0.04, 0.04, 0.07, 0.98)
+    drawer:SetAnchor(TOPLEFT, card, TOPLEFT, 8, 30)
+    drawer:SetAnchor(BOTTOMRIGHT, card, BOTTOMRIGHT, -8, -8)
+    drawer:SetCenterColor(0.04, 0.04, 0.07, 1.0)
     drawer:SetEdgeColor(0.60, 0.35, 0.85, 0.95)
     drawer:SetEdgeTexture("", 8, 1, 0)
+    drawer:SetDrawTier(DT_HIGH)
+    drawer:SetMouseEnabled(true)
+    drawer:SetHandler("OnMouseWheel", function() end)
     drawer:SetHidden(true)
     self.auditExclusionsDrawer = drawer
+
+    -- Dedicated opaque plate guaranteeing zero label or texture bleed-through
+    local solidBg = wm:CreateControl("$(parent)_SolidBg", drawer, CT_TEXTURE)
+    solidBg:SetAnchorFill()
+    solidBg:SetColor(0.04, 0.03, 0.07, 1.0)
+    solidBg:SetDrawLayer(DL_BACKGROUND)
+    solidBg:SetDrawLevel(0)
 
     local titleLbl = wm:CreateControl("$(parent)_Title", drawer, CT_LABEL)
     titleLbl:SetAnchor(TOPLEFT, drawer, TOPLEFT, 16, 12)
@@ -1192,7 +1223,7 @@ function FR:BuildAuditExclusionsDrawer(card)
         tooltipTitle = "Close Exclusions Registry",
     })
     closeBtn:SetHandler("OnClicked", function()
-        drawer:SetHidden(true)
+        self:CloseAuditExclusionsDrawer()
     end)
 
     local headerY = 48
@@ -1336,14 +1367,40 @@ function FR:BuildAuditExclusionsDrawer(card)
     self.auditExclPrevBtn = prevBtn
 end
 
+function FR:SetAuditTableHidden(hidden)
+    if self.auditColHeader then self.auditColHeader:SetHidden(hidden) end
+    if self.auditRows then
+        for _, r in ipairs(self.auditRows) do
+            if r.row then r.row:SetHidden(hidden) end
+        end
+    end
+    if self.auditExportBtn then self.auditExportBtn:SetHidden(hidden) end
+    if self.auditPrevBtn then self.auditPrevBtn:SetHidden(hidden) end
+    if self.auditPageLbl then self.auditPageLbl:SetHidden(hidden) end
+    if self.auditNextBtn then self.auditNextBtn:SetHidden(hidden) end
+end
+
+function FR:OpenAuditExclusionsDrawer()
+    if not self.auditExclusionsDrawer then return end
+    self.auditExclPage = 1
+    self:SetAuditTableHidden(true)
+    self:RefreshAuditExclusionsDrawer()
+    self.auditExclusionsDrawer:SetHidden(false)
+end
+
+function FR:CloseAuditExclusionsDrawer()
+    if not self.auditExclusionsDrawer then return end
+    self.auditExclusionsDrawer:SetHidden(true)
+    self:SetAuditTableHidden(false)
+    self:UpdateAuditorUI()
+end
+
 function FR:ToggleAuditExclusionsDrawer()
     if not self.auditExclusionsDrawer then return end
     if self.auditExclusionsDrawer:IsHidden() then
-        self.auditExclPage = 1
-        self:RefreshAuditExclusionsDrawer()
-        self.auditExclusionsDrawer:SetHidden(false)
+        self:OpenAuditExclusionsDrawer()
     else
-        self.auditExclusionsDrawer:SetHidden(true)
+        self:CloseAuditExclusionsDrawer()
     end
 end
 
@@ -1436,7 +1493,7 @@ function FR:BuildAuditBatchProgressPanel(card)
     local statusLbl = wm:CreateControl("$(parent)_StatusLbl", batchPanel, CT_LABEL)
     statusLbl:SetAnchor(LEFT, batchPanel, LEFT, 12, 0)
     statusLbl:SetFont("ZoFontGameBold")
-    statusLbl:SetText("⚡ Batch Processing: Initializing...")
+    statusLbl:SetText("[BATCH] Processing: Initializing...")
     self.auditBatchStatusLbl = statusLbl
 
     local abortBtn = wm:CreateControl("$(parent)_AbortBtn", batchPanel, CT_BUTTON)
@@ -1545,7 +1602,7 @@ function FR:ExecuteAuditBatchQueue(guildId, queue)
         local item = self.auditBatchQueue[self.auditBatchIndex]
         if item and item.member then
             if self.auditBatchStatusLbl then
-                self.auditBatchStatusLbl:SetText(string.format("⚡ Batch Processing (%d/%d): |c00FFCC%s|r [%s]...",
+                self.auditBatchStatusLbl:SetText(string.format("[BATCH] Processing (%d/%d): |c00FFCC%s|r [%s]...",
                     self.auditBatchIndex, self.auditBatchTotal, item.member.name, item.action))
             end
             self:ApplyAuditAction(item.member, item.action, true)

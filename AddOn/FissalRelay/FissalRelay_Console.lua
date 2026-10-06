@@ -929,6 +929,11 @@ function FR:SelectConsoleTab(tabId)
         end
     end
 
+    -- Close any open modal drawers when navigating between tabs
+    if self.CloseRankConfigDrawer then self:CloseRankConfigDrawer() end
+    if self.CloseAutoWelcomeDrawer then self:CloseAutoWelcomeDrawer() end
+    if self.CloseAuditExclusionsDrawer then self:CloseAuditExclusionsDrawer() end
+
     -- Switch visible panel
     for id, panel in pairs(self.consoleTabs or {}) do
         if id == tabId then

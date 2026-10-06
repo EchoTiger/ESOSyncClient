@@ -676,14 +676,15 @@ function FR:BuildAutoRanksUI(parent)
     controlRow:SetAnchor(TOPLEFT, card, TOPLEFT, 12, 32)
     controlRow:SetAnchor(TOPRIGHT, card, TOPRIGHT, -12, 32)
     controlRow:SetHeight(28)
+    self.autoRanksControlRow = controlRow
 
-    -- Filter Buttons: All (48), Changes (65), Promote (75), Demote (75), Exempt (65)
+    -- Filter Buttons: All (38), Changes (56), Promote (68), Demote (68), Exempt (58)
     local filters = {
-        { id = "all", label = "All", width = 48 },
-        { id = "changes", label = "Changes", width = 65 },
-        { id = "promote", label = "|t14:14:EsoUI/Art/Buttons/pointsplus_up.dds|t Promote", width = 75 },
-        { id = "demote", label = "|t14:14:EsoUI/Art/Buttons/pointsplus_down.dds|t Demote", width = 75 },
-        { id = "exempt", label = "|t14:14:EsoUI/Art/Campaign/overview_guildOwner_icon.dds|t Exempt", width = 65 },
+        { id = "all", label = "All", width = 38 },
+        { id = "changes", label = "Changes", width = 56 },
+        { id = "promote", label = "|t14:14:EsoUI/Art/Buttons/pointsplus_up.dds|t Promote", width = 68 },
+        { id = "demote", label = "|t14:14:EsoUI/Art/Buttons/pointsplus_down.dds|t Demote", width = 68 },
+        { id = "exempt", label = "|t14:14:EsoUI/Art/Campaign/overview_guildOwner_icon.dds|t Exempt", width = 58 },
     }
     self.autoRankFilterBtns = {}
 
@@ -707,13 +708,13 @@ function FR:BuildAutoRanksUI(parent)
             self:RefreshAutoRanksGrid()
         end)
         self.autoRankFilterBtns[f.id] = btn
-        curX = curX + f.width + 4
+        curX = curX + f.width + 3
     end
 
-    -- Lookback Window cycle button (width 65)
+    -- Lookback Window cycle button (width 54)
     local windowBtn = wm:CreateControl("$(parent)_WindowBtn", controlRow, CT_BUTTON)
-    windowBtn:SetAnchor(TOPLEFT, controlRow, TOPLEFT, curX, 2)
-    windowBtn:SetDimensions(65, 24)
+    windowBtn:SetAnchor(TOPLEFT, controlRow, TOPLEFT, curX + 3, 2)
+    windowBtn:SetDimensions(54, 24)
     windowBtn:SetFont("ZoFontGameSmall")
     windowBtn:SetText("10 Days")
     self:StyleTactileButton(windowBtn, {
@@ -744,54 +745,11 @@ function FR:BuildAutoRanksUI(parent)
         self:UpdateAutoRanksUI()
     end)
     self.autoRanksWindowBtn = windowBtn
-    curX = curX + 65 + 4
 
-    -- [⚙ Rank Dues] Button (width 110)
-    local configBtn = wm:CreateControl("$(parent)_ConfigBtn", controlRow, CT_BUTTON)
-    configBtn:SetAnchor(TOPLEFT, controlRow, TOPLEFT, curX, 2)
-    configBtn:SetDimensions(110, 24)
-    configBtn:SetFont("ZoFontGameBold")
-    configBtn:SetText("⚙ Rank Dues")
-    self:StyleTactileButton(configBtn, {
-        normalBg = { 0.06, 0.12, 0.18, 0.90 },
-        hoverBg = { 0.10, 0.20, 0.28, 0.98 },
-        normalEdge = { 0.20, 0.60, 0.90, 0.85 },
-        hoverEdge = { 0.40, 0.80, 1.00, 1.00 },
-        normalTextColor = { 0.4, 0.85, 1, 1 },
-        hoverTextColor = { 0.7, 0.95, 1, 1 },
-        tooltipTitle = "Configure Rank Dues",
-        tooltipText = "Open the rank threshold setup drawer to customize sales and bank dues requirements for each guild rank.",
-    })
-    configBtn:SetHandler("OnClicked", function()
-        self:ToggleRankConfigDrawer()
-    end)
-    self.autoRanksConfigBtn = configBtn
-    curX = curX + 110 + 4
-
-    -- [✉ Auto-Welcome] Button (width 115)
-    local welcomeBtn = wm:CreateControl("$(parent)_WelcomeBtn", controlRow, CT_BUTTON)
-    welcomeBtn:SetAnchor(TOPLEFT, controlRow, TOPLEFT, curX, 2)
-    welcomeBtn:SetDimensions(115, 24)
-    welcomeBtn:SetFont("ZoFontGameBold")
-    welcomeBtn:SetText("✉ Auto-Welcome")
-    self:StyleTactileButton(welcomeBtn, {
-        normalBg = { 0.08, 0.08, 0.12, 0.85 },
-        hoverBg = { 0.12, 0.18, 0.22, 0.95 },
-        normalEdge = { 0.30, 0.30, 0.35, 0.65 },
-        hoverEdge = { 0, 0.85, 0.75, 1.0 },
-        normalTextColor = { 0.7, 0.8, 0.85, 1 },
-        tooltipTitle = "Auto-Welcome Recruits",
-        tooltipText = "View pending guild recruits, configure onboarding welcome letter, and dispatch welcome mails.",
-    })
-    welcomeBtn:SetHandler("OnClicked", function()
-        self:ToggleAutoWelcomeDrawer()
-    end)
-    self.autoRanksWelcomeBtn = welcomeBtn
-
-    -- Right Action Buttons: Apply Changes (125), Evaluate (75)
+    -- Right Action Buttons: Right-to-Left chained to guarantee zero intra-cluster collision
     local applyBtn = wm:CreateControl("$(parent)_ApplyBtn", controlRow, CT_BUTTON)
     applyBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, 0, 2)
-    applyBtn:SetDimensions(125, 24)
+    applyBtn:SetDimensions(110, 24)
     applyBtn:SetFont("ZoFontGameBold")
     applyBtn:SetText("Apply Changes")
     self:StyleTactileButton(applyBtn, {
@@ -809,7 +767,7 @@ function FR:BuildAutoRanksUI(parent)
 
     local abortBtn = wm:CreateControl("$(parent)_AbortBtn", controlRow, CT_BUTTON)
     abortBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, 0, 2)
-    abortBtn:SetDimensions(125, 24)
+    abortBtn:SetDimensions(110, 24)
     abortBtn:SetFont("ZoFontGameBold")
     abortBtn:SetText("|cFF5555[STOP / ABORT]|r")
     abortBtn:SetHidden(true)
@@ -827,7 +785,7 @@ function FR:BuildAutoRanksUI(parent)
 
     local evalBtn = wm:CreateControl("$(parent)_EvalBtn", controlRow, CT_BUTTON)
     evalBtn:SetAnchor(RIGHT, applyBtn, LEFT, -6, 0)
-    evalBtn:SetDimensions(75, 24)
+    evalBtn:SetDimensions(68, 24)
     evalBtn:SetFont("ZoFontGameBold")
     evalBtn:SetText("Evaluate")
     self:StyleTactileButton(evalBtn, {
@@ -843,8 +801,49 @@ function FR:BuildAutoRanksUI(parent)
         self:UpdateAutoRanksUI()
     end)
 
+    -- [✉ Auto-Welcome] Button (width 100, anchored left of Evaluate with 8px margin)
+    local welcomeBtn = wm:CreateControl("$(parent)_WelcomeBtn", controlRow, CT_BUTTON)
+    welcomeBtn:SetAnchor(RIGHT, evalBtn, LEFT, -8, 0)
+    welcomeBtn:SetDimensions(100, 24)
+    welcomeBtn:SetFont("ZoFontGameBold")
+    welcomeBtn:SetText("✉ Auto-Welcome")
+    self:StyleTactileButton(welcomeBtn, {
+        normalBg = { 0.08, 0.08, 0.12, 0.85 },
+        hoverBg = { 0.12, 0.18, 0.22, 0.95 },
+        normalEdge = { 0.30, 0.30, 0.35, 0.65 },
+        hoverEdge = { 0, 0.85, 0.75, 1.0 },
+        normalTextColor = { 0.7, 0.8, 0.85, 1 },
+        tooltipTitle = "Auto-Welcome Recruits",
+        tooltipText = "View pending guild recruits, configure onboarding welcome letter, and dispatch welcome mails.",
+    })
+    welcomeBtn:SetHandler("OnClicked", function()
+        self:ToggleAutoWelcomeDrawer()
+    end)
+    self.autoRanksWelcomeBtn = welcomeBtn
+
+    -- [⚙ Rank Dues] Button (width 92, anchored left of Auto-Welcome with 6px margin)
+    local configBtn = wm:CreateControl("$(parent)_ConfigBtn", controlRow, CT_BUTTON)
+    configBtn:SetAnchor(RIGHT, welcomeBtn, LEFT, -6, 0)
+    configBtn:SetDimensions(92, 24)
+    configBtn:SetFont("ZoFontGameBold")
+    configBtn:SetText("⚙ Rank Dues")
+    self:StyleTactileButton(configBtn, {
+        normalBg = { 0.06, 0.12, 0.18, 0.90 },
+        hoverBg = { 0.10, 0.20, 0.28, 0.98 },
+        normalEdge = { 0.20, 0.60, 0.90, 0.85 },
+        hoverEdge = { 0.40, 0.80, 1.00, 1.00 },
+        normalTextColor = { 0.4, 0.85, 1, 1 },
+        hoverTextColor = { 0.7, 0.95, 1, 1 },
+        tooltipTitle = "Configure Rank Dues",
+        tooltipText = "Open the rank threshold setup drawer to customize sales and bank dues requirements for each guild rank.",
+    })
+    configBtn:SetHandler("OnClicked", function()
+        self:ToggleRankConfigDrawer()
+    end)
+    self.autoRanksConfigBtn = configBtn
+
     local progLbl = wm:CreateControl("$(parent)_ProgLbl", controlRow, CT_LABEL)
-    progLbl:SetAnchor(RIGHT, evalBtn, LEFT, -8, 0)
+    progLbl:SetAnchor(RIGHT, configBtn, LEFT, -8, 0)
     progLbl:SetFont("ZoFontGameSmall")
     progLbl:SetText("")
     self.autoRanksProgressLbl = progLbl
@@ -857,6 +856,7 @@ function FR:BuildAutoRanksUI(parent)
     headerRow:SetCenterColor(0.08, 0.08, 0.12, 0.95)
     headerRow:SetEdgeColor(0.25, 0.25, 0.30, 0.65)
     headerRow:SetEdgeTexture("", 8, 1, 0)
+    self.autoRanksHeaderRow = headerRow
 
     -- Master Checkbox
     local masterCheck = wm:CreateControl("$(parent)_MasterCheck", headerRow, CT_BUTTON)
@@ -1073,13 +1073,23 @@ end
 function FR:BuildRankConfigDrawer(parent)
     local wm = WINDOW_MANAGER
     local drawer = wm:CreateControl("$(parent)_RankDrawer", parent, CT_BACKDROP)
-    drawer:SetAnchor(TOPLEFT, parent, TOPLEFT, 15, 60)
-    drawer:SetAnchor(BOTTOMRIGHT, parent, BOTTOMRIGHT, -15, -35)
-    drawer:SetCenterColor(0.04, 0.04, 0.06, 0.98)
+    drawer:SetAnchor(TOPLEFT, parent, TOPLEFT, 8, 30)
+    drawer:SetAnchor(BOTTOMRIGHT, parent, BOTTOMRIGHT, -8, -8)
+    drawer:SetCenterColor(0.04, 0.04, 0.07, 1.0)
     drawer:SetEdgeColor(0.95, 0.70, 0.20, 0.95)
     drawer:SetEdgeTexture("", 8, 1, 0)
+    drawer:SetDrawTier(DT_HIGH)
+    drawer:SetMouseEnabled(true)
+    drawer:SetHandler("OnMouseWheel", function() end)
     drawer:SetHidden(true)
     self.rankConfigDrawer = drawer
+
+    -- Dedicated opaque plate guaranteeing zero label or texture bleed-through
+    local solidBg = wm:CreateControl("$(parent)_SolidBg", drawer, CT_TEXTURE)
+    solidBg:SetAnchorFill()
+    solidBg:SetColor(0.04, 0.03, 0.07, 1.0)
+    solidBg:SetDrawLayer(DL_BACKGROUND)
+    solidBg:SetDrawLevel(0)
 
     -- Drawer Header
     local dTitle = wm:CreateControl("$(parent)_Title", drawer, CT_LABEL)
@@ -1091,9 +1101,18 @@ function FR:BuildRankConfigDrawer(parent)
     closeBtn:SetAnchor(TOPRIGHT, drawer, TOPRIGHT, -14, 10)
     closeBtn:SetDimensions(26, 26)
     closeBtn:SetFont("ZoFontGameBold")
-    closeBtn:SetText("|cFF5555✕|r")
+    closeBtn:SetText("X")
+    self:StyleTactileButton(closeBtn, {
+        normalBg = { 0.15, 0.05, 0.05, 0.85 },
+        hoverBg = { 0.30, 0.08, 0.08, 0.95 },
+        normalEdge = { 0.60, 0.20, 0.20, 0.80 },
+        hoverEdge = { 1.00, 0.30, 0.30, 1.00 },
+        normalTextColor = { 1, 0.5, 0.5, 1 },
+        hoverTextColor = { 1, 0.8, 0.8, 1 },
+        tooltipTitle = "Close Rank Dues Setup",
+    })
     closeBtn:SetHandler("OnClicked", function()
-        drawer:SetHidden(true)
+        self:CloseRankConfigDrawer()
     end)
 
     local dSub = wm:CreateControl("$(parent)_Sub", drawer, CT_LABEL)
@@ -1126,7 +1145,7 @@ function FR:BuildRankConfigDrawer(parent)
         sDecBtn:SetAnchor(LEFT, rNameLbl, RIGHT, 8, 0)
         sDecBtn:SetDimensions(22, 22)
         sDecBtn:SetFont("ZoFontGameBold")
-        sDecBtn:SetText("◀")
+        sDecBtn:SetText("<")
         self:StyleTactileButton(sDecBtn, { normalBg = { 0.1, 0.1, 0.15, 0.8 } })
 
         local sValLbl = wm:CreateControl("$(parent)_SVal", rCtrl, CT_LABEL)
@@ -1141,7 +1160,7 @@ function FR:BuildRankConfigDrawer(parent)
         sIncBtn:SetAnchor(LEFT, sValLbl, RIGHT, 4, 0)
         sIncBtn:SetDimensions(22, 22)
         sIncBtn:SetFont("ZoFontGameBold")
-        sIncBtn:SetText("▶")
+        sIncBtn:SetText(">")
         self:StyleTactileButton(sIncBtn, { normalBg = { 0.1, 0.1, 0.15, 0.8 } })
 
         -- Dues Threshold Stepper
@@ -1149,7 +1168,7 @@ function FR:BuildRankConfigDrawer(parent)
         dDecBtn:SetAnchor(LEFT, sIncBtn, RIGHT, 16, 0)
         dDecBtn:SetDimensions(22, 22)
         dDecBtn:SetFont("ZoFontGameBold")
-        dDecBtn:SetText("◀")
+        dDecBtn:SetText("<")
         self:StyleTactileButton(dDecBtn, { normalBg = { 0.1, 0.1, 0.15, 0.8 } })
 
         local dValLbl = wm:CreateControl("$(parent)_DVal", rCtrl, CT_LABEL)
@@ -1164,7 +1183,7 @@ function FR:BuildRankConfigDrawer(parent)
         dIncBtn:SetAnchor(LEFT, dValLbl, RIGHT, 4, 0)
         dIncBtn:SetDimensions(22, 22)
         dIncBtn:SetFont("ZoFontGameBold")
-        dIncBtn:SetText("▶")
+        dIncBtn:SetText(">")
         self:StyleTactileButton(dIncBtn, { normalBg = { 0.1, 0.1, 0.15, 0.8 } })
 
         -- Mode Stepper (OR, SUM, AND)
@@ -1227,7 +1246,7 @@ function FR:BuildRankConfigDrawer(parent)
         normalTextColor = { 0, 1, 0.85, 1 },
     })
     saveBtn:SetHandler("OnClicked", function()
-        drawer:SetHidden(true)
+        self:CloseRankConfigDrawer()
         local gId = self:ResolveGuildId(self.selectedGuildIndex or 1)
         self:EvaluateAutoRanks(gId)
         self:UpdateAutoRanksUI()
@@ -1235,12 +1254,45 @@ function FR:BuildRankConfigDrawer(parent)
     end)
 end
 
+function FR:SetAutoRanksTableHidden(hidden)
+    if self.autoRanksControlRow then self.autoRanksControlRow:SetHidden(hidden) end
+    if self.autoRanksHeaderRow then self.autoRanksHeaderRow:SetHidden(hidden) end
+    if self.autoRanksGridRows then
+        for _, r in ipairs(self.autoRanksGridRows) do
+            if r.row then r.row:SetHidden(hidden) end
+        end
+    end
+    if self.autoRanksFooterLbl then self.autoRanksFooterLbl:SetHidden(hidden) end
+    if self.autoRanksPageLbl then self.autoRanksPageLbl:SetHidden(hidden) end
+    if self.autoRanksPrevBtn then self.autoRanksPrevBtn:SetHidden(hidden) end
+    if self.autoRanksNextBtn then self.autoRanksNextBtn:SetHidden(hidden) end
+end
+
+function FR:OpenRankConfigDrawer()
+    if not self.rankConfigDrawer then return end
+    if self.autoWelcomeDrawer and not self.autoWelcomeDrawer:IsHidden() then
+        self:CloseAutoWelcomeDrawer()
+    end
+    self:SetAutoRanksTableHidden(true)
+    self:RefreshRankConfigDrawer()
+    self.rankConfigDrawer:SetHidden(false)
+end
+
+function FR:CloseRankConfigDrawer()
+    if not self.rankConfigDrawer then return end
+    self.rankConfigDrawer:SetHidden(true)
+    if not self.autoWelcomeDrawer or self.autoWelcomeDrawer:IsHidden() then
+        self:SetAutoRanksTableHidden(false)
+        self:RenderAutoRanksRows()
+    end
+end
+
 function FR:ToggleRankConfigDrawer()
     if not self.rankConfigDrawer then return end
-    local show = self.rankConfigDrawer:IsHidden()
-    self.rankConfigDrawer:SetHidden(not show)
-    if show then
-        self:RefreshRankConfigDrawer()
+    if self.rankConfigDrawer:IsHidden() then
+        self:OpenRankConfigDrawer()
+    else
+        self:CloseRankConfigDrawer()
     end
 end
 
@@ -1521,6 +1573,10 @@ function FR:RenderAutoRanksRows()
 end
 
 function FR:UpdateAutoRanksUI()
+    if (self.rankConfigDrawer and not self.rankConfigDrawer:IsHidden()) or
+       (self.autoWelcomeDrawer and not self.autoWelcomeDrawer:IsHidden()) then
+        return
+    end
     local gId = self:ResolveGuildId(self.selectedGuildIndex or 1)
     if not self.autoRankResults or #self.autoRankResults == 0 then
         self:EvaluateAutoRanks(gId)
@@ -1642,16 +1698,27 @@ end
 function FR:BuildAutoWelcomeDrawer(parent)
     local wm = WINDOW_MANAGER
     local drawer = wm:CreateControl("$(parent)_WelcomeDrawer", parent, CT_BACKDROP)
-    drawer:SetAnchor(TOPLEFT, parent, TOPLEFT, 15, 60)
-    drawer:SetAnchor(BOTTOMRIGHT, parent, BOTTOMRIGHT, -15, -35)
-    drawer:SetCenterColor(0.04, 0.04, 0.07, 0.98)
+    drawer:SetAnchor(TOPLEFT, parent, TOPLEFT, 8, 30)
+    drawer:SetAnchor(BOTTOMRIGHT, parent, BOTTOMRIGHT, -8, -8)
+    drawer:SetCenterColor(0.04, 0.04, 0.07, 1.0)
     drawer:SetEdgeColor(0.0, 0.85, 0.75, 0.95)
     drawer:SetEdgeTexture("", 8, 1, 0)
+    drawer:SetDrawTier(DT_HIGH)
+    drawer:SetMouseEnabled(true)
+    drawer:SetHandler("OnMouseWheel", function() end)
     drawer:SetHidden(true)
     self.autoWelcomeDrawer = drawer
 
+    -- Dedicated opaque plate guaranteeing zero label or texture bleed-through
+    local solidBg = wm:CreateControl("$(parent)_SolidBg", drawer, CT_TEXTURE)
+    solidBg:SetAnchorFill()
+    solidBg:SetColor(0.04, 0.03, 0.07, 1.0)
+    solidBg:SetDrawLayer(DL_BACKGROUND)
+    solidBg:SetDrawLevel(0)
+
     -- Title & Subtitle
     local titleLbl = wm:CreateControl("$(parent)_Title", drawer, CT_LABEL)
+    dTitle = titleLbl
     titleLbl:SetAnchor(TOPLEFT, drawer, TOPLEFT, 16, 12)
     titleLbl:SetFont("ZoFontGameBold")
     titleLbl:SetText("|cFF9900AUTO-WELCOME RECRUIT ENGINE|r • |c00FFCCOnboarding & Letter Studio|r")
@@ -1676,7 +1743,7 @@ function FR:BuildAutoWelcomeDrawer(parent)
         tooltipTitle = "Close AutoWelcome Studio",
     })
     closeBtn:SetHandler("OnClicked", function()
-        drawer:SetHidden(true)
+        self:CloseAutoWelcomeDrawer()
     end)
 
     -- LEFT COLUMN: Pending Recruits List (Width 360)
@@ -1749,7 +1816,7 @@ function FR:BuildAutoWelcomeDrawer(parent)
     dispatchBtn:SetAnchor(TOPLEFT, listCard, BOTTOMLEFT, 0, 10)
     dispatchBtn:SetDimensions(175, 26)
     dispatchBtn:SetFont("ZoFontGameBold")
-    dispatchBtn:SetText("⚡ Dispatch Welcomes")
+    dispatchBtn:SetText("Dispatch Welcomes")
     self:StyleTactileButton(dispatchBtn, {
         normalBg = { 0.18, 0.12, 0.04, 0.90 },
         hoverBg = { 0.26, 0.16, 0.06, 0.98 },
@@ -1947,14 +2014,31 @@ function FR:BuildAutoWelcomeDrawer(parent)
     self.autoWelcomeSaveBtn = saveBtn
 end
 
+function FR:OpenAutoWelcomeDrawer()
+    if not self.autoWelcomeDrawer then return end
+    if self.rankConfigDrawer and not self.rankConfigDrawer:IsHidden() then
+        self:CloseRankConfigDrawer()
+    end
+    self:SetAutoRanksTableHidden(true)
+    self:RefreshAutoWelcomeDrawer()
+    self.autoWelcomeDrawer:SetHidden(false)
+end
+
+function FR:CloseAutoWelcomeDrawer()
+    if not self.autoWelcomeDrawer then return end
+    self.autoWelcomeDrawer:SetHidden(true)
+    if not self.rankConfigDrawer or self.rankConfigDrawer:IsHidden() then
+        self:SetAutoRanksTableHidden(false)
+        self:RenderAutoRanksRows()
+    end
+end
+
 function FR:ToggleAutoWelcomeDrawer()
     if not self.autoWelcomeDrawer then return end
-    local isHidden = self.autoWelcomeDrawer:IsHidden()
-    if isHidden then
-        self:RefreshAutoWelcomeDrawer()
-        self.autoWelcomeDrawer:SetHidden(false)
+    if self.autoWelcomeDrawer:IsHidden() then
+        self:OpenAutoWelcomeDrawer()
     else
-        self.autoWelcomeDrawer:SetHidden(true)
+        self:CloseAutoWelcomeDrawer()
     end
 end
 
