@@ -166,7 +166,7 @@ namespace RedfurSync
         internal TimeSpan StartupUpdateDelay { get; set; } = TimeSpan.FromSeconds(8);
 
         /// <summary>Cadence of the background raffle manifest sync timer.</summary>
-        internal TimeSpan RaffleSyncInterval { get; set; } = TimeSpan.FromMinutes(5);
+        internal TimeSpan RaffleSyncInterval { get; set; } = TimeSpan.FromHours(1);
 
         /// <summary>Delay before the one-shot startup raffle manifest check.</summary>
         internal TimeSpan StartupRaffleDelay { get; set; } = TimeSpan.FromSeconds(5);
@@ -770,6 +770,14 @@ namespace RedfurSync
             {
                 Console.WriteLine($"[RedfurSync] ✦ {job.FileName} uploaded successfully.");
                 _onStatus($"{job.FileName} delivered!");
+                if (_raffleSyncScheduled)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        try { await SyncRaffleManifestAsync(); }
+                        catch { /* best-effort event-driven sync */ }
+                    });
+                }
             }
             else if (job.Status == UploadStatus.Cancelled)
             {
