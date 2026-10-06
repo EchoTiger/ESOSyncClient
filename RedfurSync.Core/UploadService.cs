@@ -653,6 +653,44 @@ namespace RedfurSync
             }
         }
 
+        public async Task<(bool ok, string? luaContent, string? weekLabel, long? weekStart, string? error)> FetchLatestRaffleManifestAsync(CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                cts.CancelAfter(TimeSpan.FromSeconds(15));
+                using var request = CreateSyncRequest(HttpMethod.Get, BuildRelayUri("/raffle/manifest"));
+                using var response = await _syncHttp.SendAsync(request, cts.Token);
+                if (!response.IsSuccessStatusCode)
+                {
+                    return (false, null, null, null, $"HTTP {(int)response.StatusCode}: {response.ReasonPhrase}");
+                }
+
+                var json = await response.Content.ReadAsStringAsync(cts.Token);
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("ok", out var okProp) && okProp.GetBoolean())
+                {
+                    string? lua = doc.RootElement.TryGetProperty("lua", out var luaProp) ? luaProp.GetString() : null;
+                    string? label = doc.RootElement.TryGetProperty("weekLabel", out var labelProp) ? labelProp.GetString() : null;
+                    long? weekStart = null;
+                    if (doc.RootElement.TryGetProperty("weekStart", out var wsProp) && wsProp.TryGetInt64(out var wsVal))
+                    {
+                        weekStart = wsVal;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(lua))
+                    {
+                        return (true, lua, label, weekStart, null);
+                    }
+                }
+                return (false, null, null, null, "Invalid manifest payload received from server.");
+            }
+            catch (Exception ex)
+            {
+                return (false, null, null, null, ex.Message);
+            }
+        }
+
         public void Dispose()
         {
             _syncHttp.Dispose();

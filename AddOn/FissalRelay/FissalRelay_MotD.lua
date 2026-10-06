@@ -181,11 +181,7 @@ function FR:GetRaffleDateInfo(guildId)
 
     local curRange
     if startMonth ~= "" and endMonth ~= "" then
-        if startMonth == endMonth then
-            curRange = string.format("%s %s – %s", startMonth, tostring(startDay), tostring(endDay))
-        else
-            curRange = string.format("%s %s – %s %s", startMonth, tostring(startDay), endMonth, tostring(endDay))
-        end
+        curRange = string.format("%s %s – %s %s", startMonth, tostring(startDay), endMonth, tostring(endDay))
     else
         curRange = "Active Cycle"
     end
@@ -229,6 +225,8 @@ function FR:GetRaffleDateInfo(guildId)
         drawingDate = drawingStr,
         drawDay = drawWeekday,
         sealedLabel = sealedLabel,
+        guildKey = gKey,
+        sealedData = sealedData,
     }
 end
 
@@ -251,19 +249,20 @@ function FR:ReplaceMotDDateRange(text, dateInfo)
     local targetRange = isWinnerAnnouncement and dateInfo.previousRange or dateInfo.currentRange
     local resolved = text
 
-    -- 1. Surgical Legacy Date Range (e.g. "Sep 20 - 27", "Sep 20 – 27", "Sep 27 – Oct 4", "Sept 27 - Oct 4")
+    -- 1. Surgical Legacy Date Range (e.g. "Sep 20 - 27", "Sep 20 – 27", "Sep 27 – Oct 4", "Sept 27th - Oct 4th", "9/27 - 10/4")
     local norm = self.NormalizeDashesBytePreserving and self:NormalizeDashesBytePreserving(resolved)
         or resolved:gsub("\xE2\x80\x93", "---"):gsub("\xE2\x80\x94", "---")
 
-    -- Priority 1: Cross-month range e.g. "Sep 27 - Oct 4", "Sept 27 - Oct 4", "Sep 27 – Oct 4"
-    local patA = "([A-Za-z]+%.?%s+%d+%s*[%-]+%s*[A-Za-z]+%.?%s+%d+)"
-    -- Priority 2: Same-month range e.g. "Sep 20 - 27", "Sep 20 – 27", "Sept 20 - 27"
-    local patB = "([A-Za-z]+%.?%s+%d+%s*[%-]+%s*%d+)"
+    -- Priority 1: Cross-month range e.g. "Sep 27 - Oct 4", "Sept 27th - Oct 4th", "September 27 - October 4"
+    local patA = "([A-Za-z]+%.?%s+%d+[%a]*%s*[%-]+%s*[A-Za-z]+%.?%s+%d+[%a]*)"
+    -- Priority 2: Same-month range e.g. "Oct 4 - 11", "Oct 4th - 11th", "Sep 20 - 27"
+    local patB = "([A-Za-z]+%.?%s+%d+[%a]*%s*[%-]+%s*%d+[%a]*)"
+    -- Priority 3: Numeric M/D - M/D e.g. "9/27 - 10/4" or "10/4 - 10/11"
+    local patC = "(%d%d?/%d%d?%s*[%-]+%s*%d%d?/%d%d?)"
 
     local s, e = norm:find(patA)
-    if not s then
-        s, e = norm:find(patB)
-    end
+    if not s then s, e = norm:find(patB) end
+    if not s then s, e = norm:find(patC) end
 
     if s and e then
         resolved = resolved:sub(1, s - 1) .. targetRange .. resolved:sub(e + 1)
@@ -273,13 +272,13 @@ function FR:ReplaceMotDDateRange(text, dateInfo)
     if not isWinnerAnnouncement and dateInfo.drawingDate and dateInfo.drawingDate ~= "" then
         local normDraw = self.NormalizeDashesBytePreserving and self:NormalizeDashesBytePreserving(resolved)
             or resolved:gsub("\xE2\x80\x93", "---"):gsub("\xE2\x80\x94", "---")
-        local drawPat1 = "([Dd]rawing%s+[%a,]-%s*[A-Za-z]+%.?%s+%d+%s*%(?[%d:%s%a]*%)?)"
+        local drawPat1 = "([Dd]rawing%s+[%a,]-%s*[A-Za-z]+%.?%s+%d+[%a]*%s*%(?[%d:%s%a]*%)?)"
         local ds, de, matchStr = normDraw:find(drawPat1)
         if ds and de then
             local trailingPeriod = matchStr:match("%.$") and "." or ""
             resolved = resolved:sub(1, ds - 1) .. "Drawing " .. dateInfo.drawingDate .. trailingPeriod .. resolved:sub(de + 1)
         else
-            local drawPat2 = "([Dd]rawing%s+[%a,]-%s*[A-Za-z]+%.?%s+%d+)"
+            local drawPat2 = "([Dd]rawing%s+[%a,]-%s*[A-Za-z]+%.?%s+%d+[%a]*)"
             local ds2, de2 = normDraw:find(drawPat2)
             if ds2 and de2 then
                 resolved = resolved:sub(1, ds2 - 1) .. "Drawing " .. dateInfo.drawingDate .. resolved:sub(de2 + 1)
@@ -424,6 +423,12 @@ function FR:BuildMotDStudio(parent)
     title:SetFont("ZoFontGameBold")
     title:SetText("|cFF9900MOTD BROADCAST STUDIO|r • |c00FFCCDynamic Token Interpolation|r")
 
+    local sourceBadge = wm:CreateControl("$(parent)_SourceBadge", card, CT_LABEL)
+    sourceBadge:SetAnchor(LEFT, title, RIGHT, 14, 0)
+    sourceBadge:SetFont("ZoFontGameBold")
+    sourceBadge:SetText("|c59E08A[LEDGER: Loading...]|r")
+    self.motdSourceBadge = sourceBadge
+
     local authLbl = wm:CreateControl("$(parent)_AuthLbl", card, CT_LABEL)
     authLbl:SetAnchor(TOPRIGHT, card, TOPRIGHT, -12, 10)
     authLbl:SetFont("ZoFontGameSmall")
@@ -513,7 +518,7 @@ function FR:BuildMotDStudio(parent)
     -- 4. Multi-line EditBox Container (Comfortably seated below dual-row chip bar)
     local editBg = wm:CreateControlFromVirtual("$(parent)_EditBackdrop", card, "ZO_EditBackdrop")
     editBg:SetAnchor(TOPLEFT, card, TOPLEFT, 12, 86)
-    editBg:SetAnchor(BOTTOMRIGHT, card, BOTTOMRIGHT, -12, -96)
+    editBg:SetAnchor(BOTTOMRIGHT, card, BOTTOMRIGHT, -12, -108)
 
     local editbox = wm:CreateControlFromVirtual("$(parent)_Edit", editBg, "ZO_DefaultEditMultiLineForBackdrop")
     editbox:SetAnchor(TOPLEFT, editBg, TOPLEFT, 8, 6)
@@ -529,15 +534,23 @@ function FR:BuildMotDStudio(parent)
 
     -- 5. Character & Byte Gauge Bar (Dedicated Full-Width Status Line)
     local gaugeLbl = wm:CreateControl("$(parent)_GaugeLbl", card, CT_LABEL)
-    gaugeLbl:SetAnchor(TOPLEFT, editBg, BOTTOMLEFT, 4, 6)
-    gaugeLbl:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -4, 6)
+    gaugeLbl:SetAnchor(TOPLEFT, editBg, BOTTOMLEFT, 4, 4)
+    gaugeLbl:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -4, 4)
     gaugeLbl:SetFont("ZoFontGameBold")
     gaugeLbl:SetText(string.format("Length: 0 / %d characters (0 bytes)", MAX_MOTD_CHARS))
     self.motdStudioGaugeLbl = gaugeLbl
 
+    -- 5b. Active Ledger & Token Telemetry Ribbon
+    local telemetryBar = wm:CreateControl("$(parent)_TelemetryBar", card, CT_LABEL)
+    telemetryBar:SetAnchor(TOPLEFT, editBg, BOTTOMLEFT, 4, 22)
+    telemetryBar:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -4, 22)
+    telemetryBar:SetFont("ZoFontGameSmall")
+    telemetryBar:SetText("|c888888Active Ledger Telemetry: Initializing...|r")
+    self.motdTelemetryBar = telemetryBar
+
     -- 6. Preset Selector Buttons (Dedicated Mid Tier)
     local presetLbl = wm:CreateControl("$(parent)_PresetLbl", card, CT_LABEL)
-    presetLbl:SetAnchor(TOPLEFT, editBg, BOTTOMLEFT, 4, 30)
+    presetLbl:SetAnchor(TOPLEFT, editBg, BOTTOMLEFT, 4, 44)
     presetLbl:SetFont("ZoFontGameSmall")
     presetLbl:SetText("|c888888Load Template:|r")
 
@@ -599,7 +612,7 @@ function FR:BuildMotDStudio(parent)
     end)
 
     local undoBtn = wm:CreateControl("$(parent)_UndoBtn", card, CT_BUTTON)
-    undoBtn:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -170, 28)
+    undoBtn:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -170, 42)
     undoBtn:SetDimensions(62, 24)
     undoBtn:SetFont("ZoFontGameSmall")
     undoBtn:SetText("↶ Undo")
@@ -618,7 +631,7 @@ function FR:BuildMotDStudio(parent)
     end)
 
     local redoBtn = wm:CreateControl("$(parent)_RedoBtn", card, CT_BUTTON)
-    redoBtn:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -104, 28)
+    redoBtn:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -104, 42)
     redoBtn:SetDimensions(62, 24)
     redoBtn:SetFont("ZoFontGameSmall")
     redoBtn:SetText("Redo ↷")
@@ -637,7 +650,7 @@ function FR:BuildMotDStudio(parent)
     end)
 
     local clearBtn = wm:CreateControl("$(parent)_ClearBtn", card, CT_BUTTON)
-    clearBtn:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -4, 28)
+    clearBtn:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -4, 42)
     clearBtn:SetDimensions(95, 24)
     clearBtn:SetFont("ZoFontGameSmall")
     clearBtn:SetText("Clear Text")
@@ -789,6 +802,53 @@ function FR:RedoMotD()
     self.PrintChat("MotD action redone.")
 end
 
+function FR:UpdateMotDTelemetryBar(guildId)
+    if not self.motdTelemetryBar and not self.motdSourceBadge then return end
+    guildId = guildId or GetGuildId(self.selectedGuildIndex or 1)
+    local guildName = GetGuildName(guildId)
+    local isPost = string.find(guildName, "Post") ~= nil
+    local isDealers = string.find(guildName, "Dealer") ~= nil
+    local isCaravan = string.find(guildName, "Caravan") ~= nil
+    local gKey = isPost and "post" or (isDealers and "dealers" or (isCaravan and "caravan" or nil))
+
+    local raffleData = gKey and self.GetRaffleData and self:GetRaffleData(gKey)
+    local liveMetrics = self.CalculateRaffleMetrics and self:CalculateRaffleMetrics(guildId, 7, 1000)
+    local dateInfo = self:GetRaffleDateInfo(guildId)
+
+    local isLiveBank = (liveMetrics and liveMetrics.totalGold > 0)
+    local pot = isLiveBank and liveMetrics.totalGold or (raffleData and raffleData.pot or 0)
+    local tickets = isLiveBank and liveMetrics.totalTickets or (raffleData and raffleData.tickets or 0)
+    local entrants = isLiveBank and liveMetrics.entrants or (raffleData and raffleData.entrants or 0)
+
+    local FormatGold = function(n)
+        return ZO_LocalizeDecimalNumber and ZO_LocalizeDecimalNumber(n or 0) or tostring(n or 0)
+    end
+
+    local isSynced = (raffleData and raffleData.isSynced)
+    local srcBadge = isSynced and "|c59E08A[DISCORD SYNCED ✓]|r" or "|cFFD700[LIVE BANK]|r"
+    local weekRead = raffleData and (raffleData.weekLabel or (raffleData.weekStart and ("Week " .. raffleData.weekStart))) or "Active Cycle"
+
+    local winnersSummary = ""
+    if raffleData and raffleData.winners and #raffleData.winners > 0 then
+        local wParts = {}
+        for _, w in ipairs(raffleData.winners) do
+            table.insert(wParts, string.format("#%d %s", w.place or 1, tostring(w.name or "@winner")))
+        end
+        winnersSummary = " • |c888888Winners:|r " .. table.concat(wParts, ", ")
+    end
+
+    if self.motdTelemetryBar then
+        local text = string.format("%s |c00FFCC%s|r: Reading |cFFFFFF%s|r • Pot: |cFFD700%sg|r (%s tix, %s entrants) • Dates: |c00FFCC%s|r (Prev: |cFFD700%s|r)%s",
+            srcBadge, guildName ~= "" and guildName or "Guild", weekRead, FormatGold(pot), FormatGold(tickets), tostring(entrants),
+            dateInfo.currentRange or "Active", dateInfo.previousRange or "Prior", winnersSummary)
+        self.motdTelemetryBar:SetText(text)
+    end
+
+    if self.motdSourceBadge then
+        self.motdSourceBadge:SetText(string.format("%s |cFFFFFF%s|r", srcBadge, weekRead))
+    end
+end
+
 function FR:UpdateMotDStudioGauge()
     if not self.motdStudioEditBox or not self.motdStudioGaugeLbl then return end
     local text = self.motdStudioEditBox:GetText() or ""
@@ -827,6 +887,8 @@ function FR:UpdateMotDStudioGauge()
         self.motdStudioGaugeLbl:SetText(string.format("Length: |c%s%d / %d characters|r (|c888888%s bytes|r) • %s",
             colorCode, charCount, MAX_MOTD_CHARS, ZO_LocalizeDecimalNumber(byteCount), statusNote))
     end
+
+    self:UpdateMotDTelemetryBar(guildId)
 end
 
 function FR:InsertTokenIntoMotDEditBox(token)

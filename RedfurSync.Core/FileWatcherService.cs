@@ -141,7 +141,9 @@ namespace RedfurSync
         private readonly object _jobLock   = new();
         private readonly object _hashLock  = new();
         private readonly System.Timers.Timer _updateTimer = new();
+        private readonly System.Timers.Timer _raffleTimer = new();
         private readonly SemaphoreSlim _updateCheckLock = new SemaphoreSlim(1, 1);
+        private readonly SemaphoreSlim _raffleSyncLock = new SemaphoreSlim(1, 1);
         private readonly SemaphoreSlim _uploadThrottle = new SemaphoreSlim(3, 3); // Max 3 concurrent uploads
         private readonly SemaphoreSlim _diskScanThrottle = new SemaphoreSlim(1, 1); // Max 1 concurrent file scan/snapshot on HDD
         private readonly SemaphoreSlim _startLock = new SemaphoreSlim(1, 1);
@@ -163,12 +165,19 @@ namespace RedfurSync
         /// observe the update HTTP call count deterministically.</summary>
         internal TimeSpan StartupUpdateDelay { get; set; } = TimeSpan.FromSeconds(8);
 
+        /// <summary>Cadence of the background raffle manifest sync timer.</summary>
+        internal TimeSpan RaffleSyncInterval { get; set; } = TimeSpan.FromMinutes(5);
+
+        /// <summary>Delay before the one-shot startup raffle manifest check.</summary>
+        internal TimeSpan StartupRaffleDelay { get; set; } = TimeSpan.FromSeconds(5);
+
         /// <summary>Number of live <see cref="FileSystemWatcher"/> instances. Lets tests assert
         /// a single watcher set survives repeated StartAsync calls.</summary>
         internal int ActiveWatcherCount => _watchers.Count;
 
         // Guarded by _startLock so only the first StartAsync arms the update machinery.
         private bool _updateCheckScheduled;
+        private bool _raffleSyncScheduled;
 
         public FileWatcherService(Action<string> onStatus)
             : this(
@@ -201,6 +210,14 @@ namespace RedfurSync
             {
                 try { await CheckForUpdatesAsync(); }
                 finally { if (!_disposed) _updateTimer.Start(); }
+            };
+
+            _raffleTimer.Interval = RaffleSyncInterval.TotalMilliseconds;
+            _raffleTimer.AutoReset = false;
+            _raffleTimer.Elapsed += async (_, _) =>
+            {
+                try { await SyncRaffleManifestAsync(); }
+                finally { if (!_disposed) _raffleTimer.Start(); }
             };
         }
 
@@ -325,6 +342,19 @@ namespace RedfurSync
                     {
                         await Task.Delay(StartupUpdateDelay);
                         await CheckForUpdatesAsync();
+                    });
+                }
+
+                if (!_raffleSyncScheduled)
+                {
+                    _raffleSyncScheduled = true;
+                    _raffleTimer.Interval = RaffleSyncInterval.TotalMilliseconds;
+                    _raffleTimer.Stop();
+                    _raffleTimer.Start();
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(StartupRaffleDelay);
+                        await SyncRaffleManifestAsync();
                     });
                 }
             }
@@ -822,6 +852,25 @@ namespace RedfurSync
             JobsChanged?.Invoke();
         }
 
+        public async Task<bool> SyncRaffleManifestAsync(CancellationToken ct = default)
+        {
+            if (!await _raffleSyncLock.WaitAsync(0, ct)) return false;
+            try
+            {
+                var esoBase = WatchRootProvider();
+                return await AddonInstallerService.SyncRaffleManifestAsync(_uploader, esoBase, _onStatus, ct);
+            }
+            catch (Exception ex)
+            {
+                _onStatus($"[Raffle] Sync error: {ex.Message}");
+                return false;
+            }
+            finally
+            {
+                _raffleSyncLock.Release();
+            }
+        }
+
         public void Dispose()
         {
             if (_disposed) return;
@@ -829,6 +878,9 @@ namespace RedfurSync
 
             _updateTimer.Stop();
             _updateTimer.Dispose();
+            _raffleTimer.Stop();
+            _raffleTimer.Dispose();
+            _raffleSyncLock.Dispose();
             foreach (var w in _watchers) w.Dispose();
             _watchers.Clear();
             lock (_timerLock)

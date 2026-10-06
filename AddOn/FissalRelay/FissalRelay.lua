@@ -10,7 +10,7 @@ FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
 FR.name = "FissalRelay"
-FR.version = "1.6.1"
+FR.version = "1.7.0"
 FR.author = "Echo & Fissal"
 
 -- Defaults for SavedVariables
@@ -197,6 +197,12 @@ function FR:AddSale(event, guildId)
     local price = info.price or 0
     local quantity = info.quantity or 1
     local itemLink = info.itemLink or ""
+    if itemLink ~= "" then
+        local linkName = GetItemLinkName(itemLink)
+        if linkName and linkName ~= "" and not itemLink:find("%[") then
+            itemLink = itemLink:gsub("|h|h", "|h[" .. linkName .. "]|h")
+        end
+    end
     local eventTime = event:GetEventTimestampS() or GetTimeStamp()
 
     -- Check if buyer was an outsider (kiosk sale)

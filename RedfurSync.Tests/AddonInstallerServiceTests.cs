@@ -1,4 +1,5 @@
 using System.IO;
+using System.Threading.Tasks;
 using RedfurSync;
 using Xunit;
 
@@ -246,4 +247,33 @@ public sealed class AddonInstallerServiceTests
         }
     }
 
+    [Fact]
+    public async Task SyncRaffleManifestAsync_WritesRaffleDataLuaWhenReturnedByServer()
+    {
+        using var tempDir = new TemporaryDirectory();
+        var liveDir = Path.Combine(tempDir.Path, "live");
+        var addonDir = Path.Combine(liveDir, "AddOns", "FissalRelay");
+        Directory.CreateDirectory(addonDir);
+
+        var config = new AppConfig
+        {
+            ServerUrl = "https://relay.invalid/upload",
+            ApiKey = "fixture-key",
+            DisplayName = "Fixture"
+        };
+        var manifestJson = "{\"ok\":true,\"weekStart\":1790550000,\"weekLabel\":\"Sep 27 - Oct 4\",\"lua\":\"-- Test Raffle Data\"}";
+        var syncHandler = new FakeHttpMessageHandler((_, _) =>
+            Task.FromResult(new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
+            {
+                Content = new System.Net.Http.StringContent(manifestJson, System.Text.Encoding.UTF8, "application/json")
+            }));
+        using var uploader = new UploadService(config, syncHandler, FakeHttpMessageHandler.Returning(System.Net.HttpStatusCode.OK));
+
+        var success = await AddonInstallerService.SyncRaffleManifestAsync(uploader, liveDir, cancellationToken: TestContext.Current.CancellationToken);
+
+        Assert.True(success);
+        var targetFile = Path.Combine(addonDir, "FissalRelay_RaffleData.lua");
+        Assert.True(File.Exists(targetFile));
+        Assert.Equal("-- Test Raffle Data", File.ReadAllText(targetFile).Trim());
+    }
 }

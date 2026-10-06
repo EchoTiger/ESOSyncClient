@@ -40,8 +40,8 @@ namespace RedfurSync
         public const string AddonDirectoryName = "FissalRelay";
         public const string ClientDirectoryName = "Client";
         public const string TargetExeName = "RedfurSync.exe";
-        public const string LatestAddonVersion = "1.6.1";
-        public const int LatestAddonVersionCode = 10601;
+        public const string LatestAddonVersion = "1.7.0";
+        public const int LatestAddonVersionCode = 10700;
         public static readonly string[] AddonFiles = new[]
         {
             "FissalRelay.txt",
@@ -628,6 +628,55 @@ namespace RedfurSync
             catch (Exception ex)
             {
                 Debug.WriteLine($"[AddonInstaller] TTC price table download failed: {ex.Message}");
+                return false;
+            }
+        }
+
+        public static async Task<bool> SyncRaffleManifestAsync(UploadService uploader, string? esoLiveDir = null, Action<string>? log = null, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                var liveDir = !string.IsNullOrWhiteSpace(esoLiveDir) ? esoLiveDir : FindEsoLiveDirectory();
+                if (string.IsNullOrWhiteSpace(liveDir))
+                {
+                    log?.Invoke("[Raffle Sync] ESO live directory not found.");
+                    return false;
+                }
+
+                var addonDir = Path.Combine(liveDir, "AddOns", AddonDirectoryName);
+                if (!Directory.Exists(addonDir))
+                {
+                    Directory.CreateDirectory(addonDir);
+                }
+
+                var manifestFilePath = Path.Combine(addonDir, "FissalRelay_RaffleData.lua");
+
+                var (ok, luaContent, weekLabel, _, err) = await uploader.FetchLatestRaffleManifestAsync(cancellationToken);
+                if (!ok || string.IsNullOrWhiteSpace(luaContent))
+                {
+                    log?.Invoke($"[Raffle Sync] Could not fetch raffle manifest: {err ?? "Empty payload"}");
+                    return false;
+                }
+
+                if (File.Exists(manifestFilePath))
+                {
+                    var existingContent = await File.ReadAllTextAsync(manifestFilePath, cancellationToken);
+                    if (string.Equals(existingContent.Trim(), luaContent.Trim(), StringComparison.Ordinal))
+                    {
+                        return true;
+                    }
+                }
+
+                var tmpPath = manifestFilePath + ".tmp";
+                await File.WriteAllTextAsync(tmpPath, luaContent, System.Text.Encoding.UTF8, cancellationToken);
+                File.Move(tmpPath, manifestFilePath, overwrite: true);
+
+                log?.Invoke($"[Raffle Sync] ✓ Updated in-game raffle manifest ({weekLabel ?? "latest"}) at {manifestFilePath}");
+                return true;
+            }
+            catch (Exception ex)
+            {
+                log?.Invoke($"[Raffle Sync] Error updating manifest: {ex.Message}");
                 return false;
             }
         }
