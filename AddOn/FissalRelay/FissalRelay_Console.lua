@@ -78,12 +78,15 @@ function FR:StyleTactileButton(btn, opts)
     btn:SetMouseOverFontColor(unpack(hoverText))
 
     btn:SetHandler("OnMouseEnter", function(control)
+        local theme = control.tactileTheme
+        local curHoverBg = (theme and theme.hoverBg) or hoverBg
+        local curHoverEdge = (theme and theme.hoverEdge) or hoverEdge
         if not btn.isCustomActive then
-            bg:SetCenterColor(unpack(hoverBg))
-            bg:SetEdgeColor(unpack(hoverEdge))
+            bg:SetCenterColor(unpack(curHoverBg))
+            bg:SetEdgeColor(unpack(curHoverEdge))
         end
-        local titleVal = type(opts.tooltipTitle) == "function" and opts.tooltipTitle(control) or opts.tooltipTitle
-        local textVal = type(opts.tooltipText) == "function" and opts.tooltipText(control) or opts.tooltipText
+        local titleVal = (theme and theme.tipTitle) or (type(opts.tooltipTitle) == "function" and opts.tooltipTitle(control) or opts.tooltipTitle)
+        local textVal = (theme and theme.tipText) or (type(opts.tooltipText) == "function" and opts.tooltipText(control) or opts.tooltipText)
         if titleVal or textVal then
             InitializeTooltip(InformationTooltip, control, TOP, 0, -4)
             local tip = ""
@@ -99,17 +102,31 @@ function FR:StyleTactileButton(btn, opts)
     end)
 
     btn:SetHandler("OnMouseExit", function(control)
+        local theme = control.tactileTheme
+        local curNormalBg = (theme and theme.normalBg) or normalBg
+        local curNormalEdge = (theme and theme.normalEdge) or normalEdge
         if not btn.isCustomActive then
-            bg:SetCenterColor(unpack(normalBg))
-            bg:SetEdgeColor(unpack(normalEdge))
+            bg:SetCenterColor(unpack(curNormalBg))
+            bg:SetEdgeColor(unpack(curNormalEdge))
         end
-        if opts.tooltipTitle or opts.tooltipText then
+        if opts.tooltipTitle or opts.tooltipText or (theme and (theme.tipTitle or theme.tipText)) then
             ClearTooltip(InformationTooltip)
         end
         if opts.onMouseExit then opts.onMouseExit(control) end
     end)
 
     return bg
+end
+
+function FR:UpdateTactileTheme(btn, theme)
+    if not btn or not theme then return end
+    btn.tactileTheme = theme
+    if btn.bg then
+        if theme.normalBg then btn.bg:SetCenterColor(unpack(theme.normalBg)) end
+        if theme.normalEdge then btn.bg:SetEdgeColor(unpack(theme.normalEdge)) end
+    end
+    if theme.normalTextColor then btn:SetNormalFontColor(unpack(theme.normalTextColor)) end
+    if theme.hoverTextColor then btn:SetMouseOverFontColor(unpack(theme.hoverTextColor)) end
 end
 
 --[[ =========================================================================
@@ -819,9 +836,20 @@ function FR:BuildTTCBumperTab(parent)
     end)
 
     local bumpStatus = wm:CreateControl("$(parent)_Status", card, CT_LABEL)
-    bumpStatus:SetAnchor(TOPLEFT, card, TOPLEFT, 14, 238)
+    bumpStatus:SetAnchor(TOPLEFT, card, TOPLEFT, 14, 236)
     bumpStatus:SetFont("ZoFontGameSmall")
-    bumpStatus:SetText("TTC Addon Status: " .. (TamrielTradeCentre and ColorText("Detected & Active", "59E08A") or ColorText("Not Installed", "FF5555")))
+    bumpStatus:SetText("TTC Addon Status: " .. (TamrielTradeCentre and ColorText("Detected & Active", "59E08A") or ColorText("Not Installed (Optional)", "FFCC00")))
+
+    local bumpNotice = wm:CreateControl("$(parent)_Notice", card, CT_LABEL)
+    bumpNotice:SetAnchor(TOPLEFT, bumpStatus, BOTTOMLEFT, 0, 8)
+    bumpNotice:SetAnchor(TOPRIGHT, card, TOPRIGHT, -14, 258)
+    bumpNotice:SetFont("ZoFontGameSmall")
+    bumpNotice:SetWrapMode(TEXT_WRAP_MODE_TRUNCATE)
+    if not TamrielTradeCentre then
+        bumpNotice:SetText("|cFF9900Notice:|r TamrielTradeCentre addon is not installed. Bumping refreshes TTC web listings and requires the TTC client to function. You can still browse sales data recorded by Fissal Relay.")
+    else
+        bumpNotice:SetText("|c59E08ATTC Active:|r TamrielTradeCentre client is linked. Bumping will refresh web listings on next reload.")
+    end
 end
 
 --[[ =========================================================================

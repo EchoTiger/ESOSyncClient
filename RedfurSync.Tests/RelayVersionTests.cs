@@ -65,6 +65,6 @@ public sealed class RelayVersionTests
         var current = RelayVersion.Current;
         Assert.False(string.IsNullOrWhiteSpace(current));
         Assert.NotEqual("1.0.0", current);
-        Assert.StartsWith("1.4.", current);
+        Assert.StartsWith("1.8.", current);
     }
 }

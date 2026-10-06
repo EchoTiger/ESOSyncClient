@@ -657,13 +657,18 @@ function FR:BuildAutoRanksUI(parent)
     -- 2. Title & Status
     local title = wm:CreateControl("$(parent)_Title", card, CT_LABEL)
     title:SetAnchor(TOPLEFT, card, TOPLEFT, 12, 8)
+    title:SetDimensions(360, 22)
     title:SetFont("ZoFontGameBold")
-    title:SetText("|cFF9900AUTO-RANK LEADERBOARD|r  |c00FFCC(Dues & Performance Automation)|r")
+    title:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+    title:SetText("|cFF9900AUTO-RANK LEADERBOARD|r • |c00FFCCDues & Performance|r")
 
     local statSummaryLbl = wm:CreateControl("$(parent)_Stats", card, CT_LABEL)
     statSummaryLbl:SetAnchor(TOPRIGHT, card, TOPRIGHT, -12, 8)
+    statSummaryLbl:SetDimensions(480, 22)
+    statSummaryLbl:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
+    statSummaryLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
     statSummaryLbl:SetFont("ZoFontGameSmall")
-    statSummaryLbl:SetText("Evaluated: --  |  ▲ Promote: --  |  ▼ Demote: --  |  ● Kept: --")
+    statSummaryLbl:SetText("Evaluated: --  |  Promote: --  |  Demote: --  |  Kept: --")
     self.autoRanksSummaryLbl = statSummaryLbl
 
     -- 3. Filter Bar & Action Buttons
@@ -672,13 +677,13 @@ function FR:BuildAutoRanksUI(parent)
     controlRow:SetAnchor(TOPRIGHT, card, TOPRIGHT, -12, 32)
     controlRow:SetHeight(28)
 
-    -- Filter Buttons: All, Changes Only, Promotes, Demotes, Exempt
+    -- Filter Buttons: All (48), Changes (65), Promote (75), Demote (75), Exempt (65)
     local filters = {
-        { id = "all", label = "All", width = 60 },
-        { id = "changes", label = "Changes", width = 75 },
-        { id = "promote", label = "▲ Promote", width = 85 },
-        { id = "demote", label = "▼ Demote", width = 85 },
-        { id = "exempt", label = "🛡 Exempt", width = 80 },
+        { id = "all", label = "All", width = 48 },
+        { id = "changes", label = "Changes", width = 65 },
+        { id = "promote", label = "|t14:14:EsoUI/Art/Buttons/pointsplus_up.dds|t Promote", width = 75 },
+        { id = "demote", label = "|t14:14:EsoUI/Art/Buttons/pointsplus_down.dds|t Demote", width = 75 },
+        { id = "exempt", label = "|t14:14:EsoUI/Art/Campaign/overview_guildOwner_icon.dds|t Exempt", width = 65 },
     }
     self.autoRankFilterBtns = {}
 
@@ -702,13 +707,13 @@ function FR:BuildAutoRanksUI(parent)
             self:RefreshAutoRanksGrid()
         end)
         self.autoRankFilterBtns[f.id] = btn
-        curX = curX + f.width + 6
+        curX = curX + f.width + 4
     end
 
-    -- Lookback Window cycle button
+    -- Lookback Window cycle button (width 65)
     local windowBtn = wm:CreateControl("$(parent)_WindowBtn", controlRow, CT_BUTTON)
-    windowBtn:SetAnchor(TOPLEFT, controlRow, TOPLEFT, curX + 4, 2)
-    windowBtn:SetDimensions(76, 24)
+    windowBtn:SetAnchor(TOPLEFT, controlRow, TOPLEFT, curX, 2)
+    windowBtn:SetDimensions(65, 24)
     windowBtn:SetFont("ZoFontGameSmall")
     windowBtn:SetText("10 Days")
     self:StyleTactileButton(windowBtn, {
@@ -739,13 +744,14 @@ function FR:BuildAutoRanksUI(parent)
         self:UpdateAutoRanksUI()
     end)
     self.autoRanksWindowBtn = windowBtn
+    curX = curX + 65 + 4
 
-    -- [⚙ Configure Rank Dues] Button
+    -- [⚙ Rank Dues] Button (width 110)
     local configBtn = wm:CreateControl("$(parent)_ConfigBtn", controlRow, CT_BUTTON)
-    configBtn:SetAnchor(TOPLEFT, controlRow, TOPLEFT, curX + 86, 2)
-    configBtn:SetDimensions(135, 24)
+    configBtn:SetAnchor(TOPLEFT, controlRow, TOPLEFT, curX, 2)
+    configBtn:SetDimensions(110, 24)
     configBtn:SetFont("ZoFontGameBold")
-    configBtn:SetText("⚙ Rank Dues Setup")
+    configBtn:SetText("⚙ Rank Dues")
     self:StyleTactileButton(configBtn, {
         normalBg = { 0.06, 0.12, 0.18, 0.90 },
         hoverBg = { 0.10, 0.20, 0.28, 0.98 },
@@ -760,11 +766,32 @@ function FR:BuildAutoRanksUI(parent)
         self:ToggleRankConfigDrawer()
     end)
     self.autoRanksConfigBtn = configBtn
+    curX = curX + 110 + 4
 
-    -- Right Action Buttons: Apply Changes, Evaluate, Abort
+    -- [✉ Auto-Welcome] Button (width 115)
+    local welcomeBtn = wm:CreateControl("$(parent)_WelcomeBtn", controlRow, CT_BUTTON)
+    welcomeBtn:SetAnchor(TOPLEFT, controlRow, TOPLEFT, curX, 2)
+    welcomeBtn:SetDimensions(115, 24)
+    welcomeBtn:SetFont("ZoFontGameBold")
+    welcomeBtn:SetText("✉ Auto-Welcome")
+    self:StyleTactileButton(welcomeBtn, {
+        normalBg = { 0.08, 0.08, 0.12, 0.85 },
+        hoverBg = { 0.12, 0.18, 0.22, 0.95 },
+        normalEdge = { 0.30, 0.30, 0.35, 0.65 },
+        hoverEdge = { 0, 0.85, 0.75, 1.0 },
+        normalTextColor = { 0.7, 0.8, 0.85, 1 },
+        tooltipTitle = "Auto-Welcome Recruits",
+        tooltipText = "View pending guild recruits, configure onboarding welcome letter, and dispatch welcome mails.",
+    })
+    welcomeBtn:SetHandler("OnClicked", function()
+        self:ToggleAutoWelcomeDrawer()
+    end)
+    self.autoRanksWelcomeBtn = welcomeBtn
+
+    -- Right Action Buttons: Apply Changes (125), Evaluate (75)
     local applyBtn = wm:CreateControl("$(parent)_ApplyBtn", controlRow, CT_BUTTON)
     applyBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, 0, 2)
-    applyBtn:SetDimensions(140, 24)
+    applyBtn:SetDimensions(125, 24)
     applyBtn:SetFont("ZoFontGameBold")
     applyBtn:SetText("Apply Changes")
     self:StyleTactileButton(applyBtn, {
@@ -782,7 +809,7 @@ function FR:BuildAutoRanksUI(parent)
 
     local abortBtn = wm:CreateControl("$(parent)_AbortBtn", controlRow, CT_BUTTON)
     abortBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, 0, 2)
-    abortBtn:SetDimensions(140, 24)
+    abortBtn:SetDimensions(125, 24)
     abortBtn:SetFont("ZoFontGameBold")
     abortBtn:SetText("|cFF5555[STOP / ABORT]|r")
     abortBtn:SetHidden(true)
@@ -799,8 +826,8 @@ function FR:BuildAutoRanksUI(parent)
     self.autoRanksAbortBtn = abortBtn
 
     local evalBtn = wm:CreateControl("$(parent)_EvalBtn", controlRow, CT_BUTTON)
-    evalBtn:SetAnchor(RIGHT, applyBtn, LEFT, -8, 0)
-    evalBtn:SetDimensions(80, 24)
+    evalBtn:SetAnchor(RIGHT, applyBtn, LEFT, -6, 0)
+    evalBtn:SetDimensions(75, 24)
     evalBtn:SetFont("ZoFontGameBold")
     evalBtn:SetText("Evaluate")
     self:StyleTactileButton(evalBtn, {
@@ -817,7 +844,7 @@ function FR:BuildAutoRanksUI(parent)
     end)
 
     local progLbl = wm:CreateControl("$(parent)_ProgLbl", controlRow, CT_LABEL)
-    progLbl:SetAnchor(RIGHT, evalBtn, LEFT, -10, 0)
+    progLbl:SetAnchor(RIGHT, evalBtn, LEFT, -8, 0)
     progLbl:SetFont("ZoFontGameSmall")
     progLbl:SetText("")
     self.autoRanksProgressLbl = progLbl
@@ -836,12 +863,12 @@ function FR:BuildAutoRanksUI(parent)
     masterCheck:SetAnchor(LEFT, headerRow, LEFT, 8, 0)
     masterCheck:SetDimensions(20, 20)
     masterCheck:SetFont("ZoFontGameBold")
-    masterCheck:SetText("[✓]")
+    masterCheck:SetText("[X]")
     masterCheck:SetNormalFontColor(0, 1, 0.8, 1)
     masterCheck.allSelected = true
     masterCheck:SetHandler("OnClicked", function()
         masterCheck.allSelected = not masterCheck.allSelected
-        masterCheck:SetText(masterCheck.allSelected and "[✓]" or "[  ]")
+        masterCheck:SetText(masterCheck.allSelected and "[X]" or "[ ]")
         for _, item in ipairs(self.autoRankFilteredResults or {}) do
             if item.action ~= "KEEP" then
                 item.selected = masterCheck.allSelected
@@ -889,7 +916,7 @@ function FR:BuildAutoRanksUI(parent)
         checkBtn:SetAnchor(LEFT, row, LEFT, 8, 0)
         checkBtn:SetDimensions(20, 20)
         checkBtn:SetFont("ZoFontGameSmall")
-        checkBtn:SetText("[✓]")
+        checkBtn:SetText("[X]")
 
         local memberLbl = wm:CreateControl("$(parent)_Member", row, CT_LABEL)
         memberLbl:SetAnchor(LEFT, checkBtn, RIGHT, 8, 0)
@@ -933,6 +960,8 @@ function FR:BuildAutoRanksUI(parent)
         local noteLbl = wm:CreateControl("$(parent)_Note", row, CT_LABEL)
         noteLbl:SetAnchor(LEFT, depLbl, RIGHT, 6, 0)
         noteLbl:SetAnchor(RIGHT, row, RIGHT, -8, 0)
+        noteLbl:SetHeight(20)
+        noteLbl:SetMaxLineCount(1)
         noteLbl:SetFont("ZoFontGameSmall")
         noteLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
         noteLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
@@ -1034,6 +1063,7 @@ function FR:BuildAutoRanksUI(parent)
 
     -- 7. Rank Dues Configuration Drawer Modal
     self:BuildRankConfigDrawer(card)
+    self:BuildAutoWelcomeDrawer(card)
 end
 
 --[[ =========================================================================
@@ -1376,7 +1406,7 @@ function FR:RefreshAutoRanksGrid()
     self.autoRankFilteredResults = filtered
 
     if self.autoRanksSummaryLbl then
-        self.autoRanksSummaryLbl:SetText(string.format("Evaluated: |cFFFFFF%d|r  |  |c59E08A▲ Promote: %d|r  |  |cFF6666▼ Demote: %d|r  |  |c888888● Kept: %d|r  |  |cE6C387🛡 Exempt: %d|r",
+        self.autoRanksSummaryLbl:SetText(string.format("Evaluated: |cFFFFFF%d|r  |  |t12:12:EsoUI/Art/Buttons/pointsplus_up.dds|t |c59E08A%d|r  |  |t12:12:EsoUI/Art/Buttons/pointsplus_down.dds|t |cFF6666%d|r  |  |c888888Kept: %d|r  |  |t12:12:EsoUI/Art/Campaign/overview_guildOwner_icon.dds|t |c00FFCC%d|r",
             #self.autoRankResults, pCount, dCount, kCount, xCount))
     end
 
@@ -1424,7 +1454,7 @@ function FR:RenderAutoRanksRows()
                     rCtrl.check:SetHidden(true)
                 else
                     rCtrl.check:SetHidden(false)
-                    rCtrl.check:SetText(item.selected and "|c00FFCC[✓]|r" or "|c555555[  ]|r")
+                    rCtrl.check:SetText(item.selected and "|c00FFCC[X]|r" or "|c555555[ ]|r")
                     rCtrl.check:SetHandler("OnClicked", function()
                         item.selected = not item.selected
                         self:RefreshAutoRanksGrid()
@@ -1434,24 +1464,46 @@ function FR:RenderAutoRanksRows()
                 rCtrl.member:SetText(string.format("|cFFFFFF%s|r", item.displayName))
                 rCtrl.curRank:SetText(string.format("|cCCCCCC%s|r", item.currentRankName))
 
-                local tgtColor = (item.action == "PROMOTE" and "|c59E08A▲ ")
-                    or (item.action == "DEMOTE" and "|cFF6666▼ ")
-                    or "|c888888● "
+                local tgtColor = (item.action == "PROMOTE" and "|t14:14:EsoUI/Art/Buttons/pointsplus_up.dds|t |c59E08A")
+                    or (item.action == "DEMOTE" and "|t14:14:EsoUI/Art/Buttons/pointsplus_down.dds|t |cFF6666")
+                    or "|c888888"
                 rCtrl.tgtRank:SetText(string.format("%s%s|r", tgtColor, item.targetRankName))
 
-                local actBadge = "|c888888● KEEP|r"
+                local actBadge = "|c888888KEPT|r"
                 if item.isExempt then
-                    actBadge = "|cE6C387🛡 EXEMPT|r"
+                    actBadge = "|t14:14:EsoUI/Art/Campaign/overview_guildOwner_icon.dds|t |c00FFCCEXEMPT|r"
                 elseif item.action == "PROMOTE" then
-                    actBadge = "|c59E08A▲ PROMOTE|r"
+                    actBadge = "|t14:14:EsoUI/Art/Buttons/pointsplus_up.dds|t |c59E08APROMOTE|r"
                 elseif item.action == "DEMOTE" then
-                    actBadge = "|cFF6666▼ DEMOTE|r"
+                    actBadge = "|t14:14:EsoUI/Art/Buttons/pointsplus_down.dds|t |cFF6666DEMOTE|r"
                 end
                 rCtrl.action:SetText(actBadge)
 
                 rCtrl.sales:SetText(item.salesGold > 0 and string.format("|cFFD700%sg|r", ZO_LocalizeDecimalNumber(item.salesGold)) or "|c555555--|r")
                 rCtrl.dep:SetText(item.donations > 0 and string.format("|c59E08A%sg|r", ZO_LocalizeDecimalNumber(item.donations)) or "|c555555--|r")
-                rCtrl.note:SetText(string.format("|c999999%s|r", item.status or ""))
+
+                local rawStatus = item.status or ""
+                local compactStatus = "|c888888Base Rank|r"
+                if item.isExempt then
+                    compactStatus = "|cE6C387Shielded|r"
+                elseif string.find(rawStatus, "Probation") then
+                    compactStatus = "|c00FFCCProbation|r"
+                elseif string.find(rawStatus, "Qualified") then
+                    if item.salesGold > 0 and item.donations > 0 then
+                        compactStatus = "|c59E08AMet (Sales & Dues)|r"
+                    elseif item.salesGold > 0 then
+                        compactStatus = "|cFFD700Met (Sales)|r"
+                    else
+                        compactStatus = "|c59E08AMet (Dues)|r"
+                    end
+                elseif string.find(rawStatus, "Missing") or string.find(rawStatus, "Demote") or item.action == "DEMOTE" then
+                    compactStatus = "|cFF6666Missing Dues|r"
+                elseif item.action == "PROMOTE" then
+                    compactStatus = "|c59E08APromotion Target|r"
+                elseif rawStatus ~= "" then
+                    compactStatus = string.format("|c999999%s|r", rawStatus)
+                end
+                rCtrl.note:SetText(compactStatus)
             else
                 rCtrl.row:SetHidden(true)
                 rCtrl.row.memberData = nil
@@ -1478,6 +1530,7 @@ function FR:UpdateAutoRanksUI()
     end
     self:UpdateAutoRanksFilterButtons()
     self:RefreshAutoRanksGrid()
+    self:UpdateAutoWelcomeButtonBadge()
 end
 
 --[[ =========================================================================
@@ -1495,3 +1548,677 @@ end
 
 SLASH_COMMANDS["/autoranks"] = function() FR:OpenAutoRanksConsole() end
 SLASH_COMMANDS["/ar"] = function() FR:OpenAutoRanksConsole() end
+
+--[[ =========================================================================
+     AUTOWELCOME RECRUIT ENGINE & LETTER STUDIO MODAL
+========================================================================= ]]--
+
+function FR:EnsureAutoWelcomeState()
+    if not self.savedVars then return end
+    if not self.savedVars.autoWelcome then
+        self.savedVars.autoWelcome = {
+            welcomed = {},
+            pending = {},
+            guildSettings = {},
+            autoSendWhenMailOpen = false,
+            initialized = false,
+            mailDelay = 2500,
+        }
+    end
+    local aw = self.savedVars.autoWelcome
+    if aw.welcomed == nil then aw.welcomed = {} end
+    if aw.pending == nil then aw.pending = {} end
+    if aw.guildSettings == nil then aw.guildSettings = {} end
+    if aw.autoSendWhenMailOpen == nil then aw.autoSendWhenMailOpen = false end
+    if aw.mailDelay == nil then aw.mailDelay = 2500 end
+end
+
+function FR:GetAutoWelcomePendingCount(guildId)
+    if not self.savedVars or not self.savedVars.autoWelcome then return 0 end
+    local aw = self.savedVars.autoWelcome
+    if not aw.pending or not aw.pending[guildId] then return 0 end
+    local count = 0
+    for _ in pairs(aw.pending[guildId]) do
+        count = count + 1
+    end
+    return count
+end
+
+function FR:UpdateAutoWelcomeButtonBadge()
+    if not self.autoRanksWelcomeBtn then return end
+    local gIdx = self.selectedGuildIndex or 1
+    local guildId = self:ResolveGuildId(gIdx)
+    local count = self:GetAutoWelcomePendingCount(guildId)
+    if count > 0 then
+        self.autoRanksWelcomeBtn:SetText(string.format("✉ Welcome (%d)", count))
+        self:UpdateTactileTheme(self.autoRanksWelcomeBtn, {
+            normalBg = { 0.16, 0.10, 0.04, 0.90 },
+            hoverBg = { 0.24, 0.15, 0.06, 0.98 },
+            normalEdge = { 0.90, 0.60, 0.15, 0.90 },
+            hoverEdge = { 1.00, 0.80, 0.20, 1.00 },
+            normalTextColor = { 1, 0.85, 0.20, 1 },
+        })
+    else
+        self.autoRanksWelcomeBtn:SetText("✉ Auto-Welcome")
+        self:UpdateTactileTheme(self.autoRanksWelcomeBtn, {
+            normalBg = { 0.08, 0.08, 0.12, 0.85 },
+            hoverBg = { 0.12, 0.18, 0.22, 0.95 },
+            normalEdge = { 0.30, 0.30, 0.35, 0.65 },
+            hoverEdge = { 0, 0.85, 0.75, 1.0 },
+            normalTextColor = { 0.7, 0.8, 0.85, 1 },
+        })
+    end
+end
+
+function FR:InterpolateWelcomeLetter(template, guildId, memberName)
+    if not template or template == "" then return "" end
+    local guildName = GetGuildName(guildId) or "our guild"
+    local kiosk = "Guild Kiosk"
+    if GetGuildKiosk and GetGuildKiosk(guildId) then
+        local kName = GetGuildKiosk(guildId)
+        if kName and kName ~= "" then kiosk = kName end
+    end
+
+    local rafflePot = "Active"
+    if self.savedVars and self.savedVars.raffle and self.savedVars.raffle.pot then
+        rafflePot = ZO_LocalizeDecimalNumber(self.savedVars.raffle.pot)
+    end
+
+    local discord = "discord.gg/redfur"
+    if self.savedVars and self.savedVars.settings and self.savedVars.settings.discordLink then
+        discord = self.savedVars.settings.discordLink
+    end
+
+    local text = template
+    text = string.gsub(text, "{name}", memberName or "@Recruit")
+    text = string.gsub(text, "{guild_name}", guildName)
+    text = string.gsub(text, "{kiosk}", kiosk)
+    text = string.gsub(text, "{kiosk_location}", kiosk)
+    text = string.gsub(text, "{raffle_pot}", rafflePot)
+    text = string.gsub(text, "{discord}", discord)
+    return text
+end
+
+function FR:BuildAutoWelcomeDrawer(parent)
+    local wm = WINDOW_MANAGER
+    local drawer = wm:CreateControl("$(parent)_WelcomeDrawer", parent, CT_BACKDROP)
+    drawer:SetAnchor(TOPLEFT, parent, TOPLEFT, 15, 60)
+    drawer:SetAnchor(BOTTOMRIGHT, parent, BOTTOMRIGHT, -15, -35)
+    drawer:SetCenterColor(0.04, 0.04, 0.07, 0.98)
+    drawer:SetEdgeColor(0.0, 0.85, 0.75, 0.95)
+    drawer:SetEdgeTexture("", 8, 1, 0)
+    drawer:SetHidden(true)
+    self.autoWelcomeDrawer = drawer
+
+    -- Title & Subtitle
+    local titleLbl = wm:CreateControl("$(parent)_Title", drawer, CT_LABEL)
+    titleLbl:SetAnchor(TOPLEFT, drawer, TOPLEFT, 16, 12)
+    titleLbl:SetFont("ZoFontGameBold")
+    titleLbl:SetText("|cFF9900AUTO-WELCOME RECRUIT ENGINE|r • |c00FFCCOnboarding & Letter Studio|r")
+
+    local subLbl = wm:CreateControl("$(parent)_Subtitle", drawer, CT_LABEL)
+    subLbl:SetAnchor(TOPLEFT, titleLbl, BOTTOMLEFT, 0, 4)
+    subLbl:SetFont("ZoFontGameSmall")
+    subLbl:SetText("|cAAAAAAMonitor newly joined recruits, customize onboarding letters, and dispatch welcome mails.|r")
+
+    local closeBtn = wm:CreateControl("$(parent)_CloseBtn", drawer, CT_BUTTON)
+    closeBtn:SetAnchor(TOPRIGHT, drawer, TOPRIGHT, -12, 10)
+    closeBtn:SetDimensions(28, 22)
+    closeBtn:SetFont("ZoFontGameBold")
+    closeBtn:SetText("X")
+    self:StyleTactileButton(closeBtn, {
+        normalBg = { 0.15, 0.05, 0.05, 0.85 },
+        hoverBg = { 0.30, 0.08, 0.08, 0.95 },
+        normalEdge = { 0.60, 0.20, 0.20, 0.80 },
+        hoverEdge = { 1.00, 0.30, 0.30, 1.00 },
+        normalTextColor = { 1, 0.5, 0.5, 1 },
+        hoverTextColor = { 1, 0.8, 0.8, 1 },
+        tooltipTitle = "Close AutoWelcome Studio",
+    })
+    closeBtn:SetHandler("OnClicked", function()
+        drawer:SetHidden(true)
+    end)
+
+    -- LEFT COLUMN: Pending Recruits List (Width 360)
+    local leftCol = wm:CreateControl("$(parent)_LeftCol", drawer, CT_CONTROL)
+    leftCol:SetAnchor(TOPLEFT, drawer, TOPLEFT, 14, 52)
+    leftCol:SetDimensions(360, 430)
+
+    local pendingHdr = wm:CreateControl("$(parent)_PendingHdr", leftCol, CT_LABEL)
+    pendingHdr:SetAnchor(TOPLEFT, leftCol, TOPLEFT, 0, 0)
+    pendingHdr:SetFont("ZoFontGameBold")
+    pendingHdr:SetText("Pending Recruits (0)")
+    self.autoWelcomePendingHdr = pendingHdr
+
+    -- Recruits List Box
+    local listCard = wm:CreateControl("$(parent)_ListCard", leftCol, CT_BACKDROP)
+    listCard:SetAnchor(TOPLEFT, pendingHdr, BOTTOMLEFT, 0, 6)
+    listCard:SetDimensions(360, 310)
+    listCard:SetCenterColor(0.03, 0.03, 0.05, 0.85)
+    listCard:SetEdgeColor(0.25, 0.25, 0.30, 0.50)
+    listCard:SetEdgeTexture("", 8, 1, 0)
+
+    self.autoWelcomeRecruitRows = {}
+    local RECRUIT_ROWS = 9
+    for i = 1, RECRUIT_ROWS do
+        local r = wm:CreateControl("$(parent)_R_" .. i, listCard, CT_BACKDROP)
+        r:SetAnchor(TOPLEFT, listCard, TOPLEFT, 6, 6 + (i - 1) * 33)
+        r:SetAnchor(TOPRIGHT, listCard, TOPRIGHT, -6, 6 + (i - 1) * 33)
+        r:SetHeight(30)
+        r:SetCenterColor(0.05, 0.05, 0.08, 0.60)
+        r:SetEdgeColor(0.20, 0.18, 0.25, 0.40)
+        r:SetEdgeTexture("", 8, 1, 0)
+
+        local nameLbl = wm:CreateControl("$(parent)_Name", r, CT_LABEL)
+        nameLbl:SetAnchor(LEFT, r, LEFT, 8, 0)
+        nameLbl:SetDimensions(220, 20)
+        nameLbl:SetFont("ZoFontGameMedium")
+        nameLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+        nameLbl:SetText("@Recruit")
+        r.nameLbl = nameLbl
+
+        local statusLbl = wm:CreateControl("$(parent)_Status", r, CT_LABEL)
+        statusLbl:SetAnchor(LEFT, nameLbl, RIGHT, 4, 0)
+        statusLbl:SetDimensions(75, 20)
+        statusLbl:SetFont("ZoFontGameSmall")
+        statusLbl:SetText("|cFFD700Pending|r")
+        r.statusLbl = statusLbl
+
+        local delBtn = wm:CreateControl("$(parent)_DelBtn", r, CT_BUTTON)
+        delBtn:SetAnchor(RIGHT, r, RIGHT, -6, 0)
+        delBtn:SetDimensions(22, 20)
+        delBtn:SetFont("ZoFontGameBold")
+        delBtn:SetText("X")
+        self:StyleTactileButton(delBtn, {
+            normalBg = { 0.15, 0.05, 0.05, 0.80 },
+            hoverBg = { 0.25, 0.08, 0.08, 0.95 },
+            normalEdge = { 0.50, 0.20, 0.20, 0.70 },
+            hoverEdge = { 0.90, 0.30, 0.30, 1.00 },
+            normalTextColor = { 1, 0.5, 0.5, 1 },
+            hoverTextColor = { 1, 0.8, 0.8, 1 },
+            tooltipTitle = "Dismiss Recruit",
+            tooltipText = "Mark this recruit as welcomed without sending mail.",
+        })
+        r.delBtn = delBtn
+
+        self.autoWelcomeRecruitRows[i] = r
+    end
+
+    -- Left Column Bottom Buttons: Dispatch & Mark All Welcomed
+    local dispatchBtn = wm:CreateControl("$(parent)_DispatchBtn", leftCol, CT_BUTTON)
+    dispatchBtn:SetAnchor(TOPLEFT, listCard, BOTTOMLEFT, 0, 10)
+    dispatchBtn:SetDimensions(175, 26)
+    dispatchBtn:SetFont("ZoFontGameBold")
+    dispatchBtn:SetText("⚡ Dispatch Welcomes")
+    self:StyleTactileButton(dispatchBtn, {
+        normalBg = { 0.18, 0.12, 0.04, 0.90 },
+        hoverBg = { 0.26, 0.16, 0.06, 0.98 },
+        normalEdge = { 0.90, 0.60, 0.15, 0.90 },
+        hoverEdge = { 1.00, 0.80, 0.20, 1.00 },
+        normalTextColor = { 1, 0.85, 0.20, 1 },
+        hoverTextColor = { 1, 0.95, 0.50, 1 },
+        tooltipTitle = "Dispatch Welcomes",
+        tooltipText = "Sequentially send personalized welcome mails to all pending recruits with safe 2.5s pacing.",
+    })
+    dispatchBtn:SetHandler("OnClicked", function()
+        local gId = self:ResolveGuildId(self.selectedGuildIndex or 1)
+        self:DispatchWelcomeMails(gId)
+    end)
+    self.autoWelcomeDispatchBtn = dispatchBtn
+
+    local markAllBtn = wm:CreateControl("$(parent)_MarkAllBtn", leftCol, CT_BUTTON)
+    markAllBtn:SetAnchor(TOPLEFT, dispatchBtn, TOPRIGHT, 10, 0)
+    markAllBtn:SetDimensions(175, 26)
+    markAllBtn:SetFont("ZoFontGameBold")
+    markAllBtn:SetText("Mark All Welcomed")
+    self:StyleTactileButton(markAllBtn, {
+        normalBg = { 0.04, 0.14, 0.10, 0.85 },
+        hoverBg = { 0.06, 0.20, 0.14, 0.95 },
+        normalEdge = { 0.20, 0.70, 0.35, 0.80 },
+        hoverEdge = { 0.30, 1.00, 0.50, 1.00 },
+        normalTextColor = { 0.3, 1, 0.5, 1 },
+        hoverTextColor = { 0.6, 1, 0.7, 1 },
+        tooltipTitle = "Mark All Welcomed",
+        tooltipText = "Clear all pending recruits and mark them as welcomed (prevents mailing existing roster).",
+    })
+    markAllBtn:SetHandler("OnClicked", function()
+        local gId = self:ResolveGuildId(self.selectedGuildIndex or 1)
+        self:MarkAllCurrentWelcomed(gId)
+    end)
+    self.autoWelcomeMarkAllBtn = markAllBtn
+
+    local welcomeStatLbl = wm:CreateControl("$(parent)_StatLbl", leftCol, CT_LABEL)
+    welcomeStatLbl:SetAnchor(TOPLEFT, dispatchBtn, BOTTOMLEFT, 2, 8)
+    welcomeStatLbl:SetFont("ZoFontGameSmall")
+    welcomeStatLbl:SetText("Status: Ready")
+    self.autoWelcomeStatusLbl = welcomeStatLbl
+
+    -- RIGHT COLUMN: Welcome Letter Template Editor (Width 450)
+    local rightCol = wm:CreateControl("$(parent)_RightCol", drawer, CT_CONTROL)
+    rightCol:SetAnchor(TOPLEFT, leftCol, TOPRIGHT, 20, 0)
+    rightCol:SetAnchor(BOTTOMRIGHT, drawer, BOTTOMRIGHT, -14, -10)
+
+    local editorHdr = wm:CreateControl("$(parent)_EditorHdr", rightCol, CT_LABEL)
+    editorHdr:SetAnchor(TOPLEFT, rightCol, TOPLEFT, 0, 0)
+    editorHdr:SetFont("ZoFontGameBold")
+    editorHdr:SetText("Welcome Letter Template")
+    self.autoWelcomeEditorHdr = editorHdr
+
+    -- Guild Enable Toggle
+    local enableBtn = wm:CreateControl("$(parent)_EnableBtn", rightCol, CT_BUTTON)
+    enableBtn:SetAnchor(TOPLEFT, editorHdr, BOTTOMLEFT, 0, 8)
+    enableBtn:SetDimensions(215, 22)
+    enableBtn:SetFont("ZoFontGameSmall")
+    enableBtn:SetText("[X] Enable for Guild")
+    self:StyleTactileButton(enableBtn, {
+        normalBg = { 0.05, 0.12, 0.08, 0.85 },
+        hoverBg = { 0.08, 0.18, 0.12, 0.95 },
+        normalEdge = { 0.20, 0.75, 0.35, 0.80 },
+        hoverEdge = { 0.30, 1.00, 0.50, 1.00 },
+        normalTextColor = { 0.3, 1, 0.5, 1 },
+    })
+    enableBtn:SetHandler("OnClicked", function()
+        local gId = self:ResolveGuildId(self.selectedGuildIndex or 1)
+        local aw = self.savedVars and self.savedVars.autoWelcome
+        if aw then
+            aw.guildSettings[gId] = aw.guildSettings[gId] or {}
+            local cur = aw.guildSettings[gId].enabled
+            aw.guildSettings[gId].enabled = not cur
+            self:RefreshAutoWelcomeDrawer()
+        end
+    end)
+    self.autoWelcomeEnableBtn = enableBtn
+
+    -- Auto-Send When Mail Opens Toggle
+    local autoSendBtn = wm:CreateControl("$(parent)_AutoSendBtn", rightCol, CT_BUTTON)
+    autoSendBtn:SetAnchor(LEFT, enableBtn, RIGHT, 10, 0)
+    autoSendBtn:SetDimensions(220, 22)
+    autoSendBtn:SetFont("ZoFontGameSmall")
+    autoSendBtn:SetText("[ ] Auto-Send on Mail Open")
+    self:StyleTactileButton(autoSendBtn, {
+        normalBg = { 0.08, 0.08, 0.12, 0.85 },
+        hoverBg = { 0.12, 0.16, 0.22, 0.95 },
+        normalEdge = { 0.30, 0.40, 0.55, 0.70 },
+        hoverEdge = { 0.50, 0.70, 0.90, 1.00 },
+        normalTextColor = { 0.7, 0.8, 0.9, 1 },
+    })
+    autoSendBtn:SetHandler("OnClicked", function()
+        local aw = self.savedVars and self.savedVars.autoWelcome
+        if aw then
+            aw.autoSendWhenMailOpen = not aw.autoSendWhenMailOpen
+            self:RefreshAutoWelcomeDrawer()
+        end
+    end)
+    self.autoWelcomeAutoSendBtn = autoSendBtn
+
+    -- Subject Field
+    local subjLbl = wm:CreateControl("$(parent)_SubjLbl", rightCol, CT_LABEL)
+    subjLbl:SetAnchor(TOPLEFT, enableBtn, BOTTOMLEFT, 0, 10)
+    subjLbl:SetFont("ZoFontGameSmall")
+    subjLbl:SetText("Mail Subject (Max 50 characters):")
+
+    local subjBg = wm:CreateControlFromVirtual("$(parent)_SubjBg", rightCol, "ZO_EditBackdrop")
+    subjBg:SetAnchor(TOPLEFT, subjLbl, BOTTOMLEFT, 0, 4)
+    subjBg:SetDimensions(440, 24)
+
+    local subjBox = wm:CreateControlFromVirtual("$(parent)_SubjBox", subjBg, "ZO_DefaultEditForBackdrop")
+    subjBox:SetAnchorFill()
+    subjBox:SetFont("ZoFontGameSmall")
+    subjBox:SetMaxInputChars(50)
+    self.autoWelcomeSubjBox = subjBox
+
+    -- Body Field
+    local bodyLbl = wm:CreateControl("$(parent)_BodyLbl", rightCol, CT_LABEL)
+    bodyLbl:SetAnchor(TOPLEFT, subjBg, BOTTOMLEFT, 0, 10)
+    bodyLbl:SetFont("ZoFontGameSmall")
+    bodyLbl:SetText("Mail Body (Max 700 characters):")
+
+    local bodyBg = wm:CreateControlFromVirtual("$(parent)_BodyBg", rightCol, "ZO_EditBackdrop")
+    bodyBg:SetAnchor(TOPLEFT, bodyLbl, BOTTOMLEFT, 0, 4)
+    bodyBg:SetDimensions(440, 175)
+
+    local bodyBox = wm:CreateControlFromVirtual("$(parent)_BodyBox", bodyBg, "ZO_DefaultEditForBackdrop")
+    bodyBox:SetAnchorFill()
+    bodyBox:SetFont("ZoFontGameSmall")
+    bodyBox:SetMaxInputChars(700)
+    bodyBox:SetMultiLine(true)
+    self.autoWelcomeBodyBox = bodyBox
+
+    -- Token Chips Row
+    local tokenLbl = wm:CreateControl("$(parent)_TokenLbl", rightCol, CT_LABEL)
+    tokenLbl:SetAnchor(TOPLEFT, bodyBg, BOTTOMLEFT, 0, 8)
+    tokenLbl:SetFont("ZoFontGameSmall")
+    tokenLbl:SetText("Insert Token Chips:")
+
+    local tokens = {
+        { id = "{name}", label = "{name}", tip = "Inserts the recruit's account name." },
+        { id = "{guild_name}", label = "{guild_name}", tip = "Inserts the active guild name." },
+        { id = "{kiosk}", label = "{kiosk}", tip = "Inserts the guild's current kiosk trader location." },
+        { id = "{raffle_pot}", label = "{raffle_pot}", tip = "Inserts the active weekly raffle pot amount." },
+        { id = "{discord}", label = "{discord}", tip = "Inserts the guild Discord invite link." },
+    }
+    local tX = 0
+    for _, t in ipairs(tokens) do
+        local tBtn = wm:CreateControl("$(parent)_T_" .. t.label, rightCol, CT_BUTTON)
+        tBtn:SetAnchor(TOPLEFT, tokenLbl, BOTTOMLEFT, tX, 4)
+        tBtn:SetDimensions(82, 20)
+        tBtn:SetFont("ZoFontGameSmall")
+        tBtn:SetText(t.label)
+        self:StyleTactileButton(tBtn, {
+            normalBg = { 0.10, 0.08, 0.14, 0.85 },
+            hoverBg = { 0.16, 0.12, 0.22, 0.95 },
+            normalEdge = { 0.50, 0.35, 0.70, 0.70 },
+            hoverEdge = { 0.80, 0.50, 1.00, 1.00 },
+            normalTextColor = { 0.8, 0.7, 1, 1 },
+            tooltipTitle = "Insert Token: " .. t.id,
+            tooltipText = t.tip,
+        })
+        tBtn:SetHandler("OnClicked", function()
+            local cur = bodyBox:GetText() or ""
+            bodyBox:SetText(cur .. " " .. t.id)
+            bodyBox:TakeFocus()
+        end)
+        tX = tX + 86
+    end
+
+    -- Save Letter Button
+    local saveBtn = wm:CreateControl("$(parent)_SaveBtn", rightCol, CT_BUTTON)
+    saveBtn:SetAnchor(BOTTOMLEFT, rightCol, BOTTOMLEFT, 0, 0)
+    saveBtn:SetDimensions(150, 24)
+    saveBtn:SetFont("ZoFontGameBold")
+    saveBtn:SetText("Save Letter Template")
+    self:StyleTactileButton(saveBtn, {
+        normalBg = { 0.04, 0.14, 0.14, 0.90 },
+        hoverBg = { 0.06, 0.22, 0.20, 0.98 },
+        normalEdge = { 0, 0.80, 0.70, 0.85 },
+        hoverEdge = { 0, 1.00, 0.90, 1.00 },
+        normalTextColor = { 0, 1, 0.85, 1 },
+    })
+    saveBtn:SetHandler("OnClicked", function()
+        local gId = self:ResolveGuildId(self.selectedGuildIndex or 1)
+        local aw = self.savedVars and self.savedVars.autoWelcome
+        if aw then
+            aw.guildSettings[gId] = aw.guildSettings[gId] or {}
+            aw.guildSettings[gId].subject = subjBox:GetText() or ""
+            aw.guildSettings[gId].message = bodyBox:GetText() or ""
+            self.PrintChat("|c59E08AAutoWelcome:|r Saved welcome letter template for " .. GetGuildName(gId))
+        end
+    end)
+    self.autoWelcomeSaveBtn = saveBtn
+end
+
+function FR:ToggleAutoWelcomeDrawer()
+    if not self.autoWelcomeDrawer then return end
+    local isHidden = self.autoWelcomeDrawer:IsHidden()
+    if isHidden then
+        self:RefreshAutoWelcomeDrawer()
+        self.autoWelcomeDrawer:SetHidden(false)
+    else
+        self.autoWelcomeDrawer:SetHidden(true)
+    end
+end
+
+function FR:RefreshAutoWelcomeDrawer()
+    if not self.autoWelcomeDrawer then return end
+    local gId = self:ResolveGuildId(self.selectedGuildIndex or 1)
+    local gName = GetGuildName(gId)
+    local aw = self.savedVars and self.savedVars.autoWelcome
+
+    if self.autoWelcomeEditorHdr then
+        self.autoWelcomeEditorHdr:SetText(string.format("Welcome Letter: |c00FFCC%s|r", gName))
+    end
+
+    local gCfg = aw and aw.guildSettings and aw.guildSettings[gId] or {}
+    local isEnabled = gCfg.enabled == true
+    if self.autoWelcomeEnableBtn then
+        self.autoWelcomeEnableBtn:SetText(isEnabled and "|c59E08A[X] Enabled for Guild|r" or "|c888888[ ] Disabled for Guild|r")
+    end
+
+    if self.autoWelcomeAutoSendBtn and aw then
+        self.autoWelcomeAutoSendBtn:SetText(aw.autoSendWhenMailOpen and "|c00FFCC[X] Auto-Send on Mail Open|r" or "|c888888[ ] Auto-Send on Mail Open|r")
+    end
+
+    if self.autoWelcomeSubjBox then
+        self.autoWelcomeSubjBox:SetText(gCfg.subject or string.format("Welcome to %s!", gName))
+    end
+
+    if self.autoWelcomeBodyBox then
+        local defBody = string.format("Greetings {name},\n\nWelcome to %s! We are thrilled to have you in our trading family.\n\nGuild Kiosk: {kiosk}\nWeekly Raffle Pot: {raffle_pot} gold\nCommunity Discord: {discord}\n\nWarm regards,\n%s Staff", gName, gName)
+        self.autoWelcomeBodyBox:SetText((gCfg.message and gCfg.message ~= "") and gCfg.message or defBody)
+    end
+
+    -- Populate Pending Recruits
+    local pending = (aw and aw.pending and aw.pending[gId]) or {}
+    local recList = {}
+    for lowerName, dispName in pairs(pending) do
+        table.insert(recList, { lower = lowerName, display = dispName })
+    end
+    table.sort(recList, function(a, b) return a.display < b.display end)
+
+    if self.autoWelcomePendingHdr then
+        self.autoWelcomePendingHdr:SetText(string.format("Pending Recruits (|c00FFCC%d|r)", #recList))
+    end
+
+    local RECRUIT_ROWS = 9
+    for i = 1, RECRUIT_ROWS do
+        local r = self.autoWelcomeRecruitRows and self.autoWelcomeRecruitRows[i]
+        if r then
+            if i <= #recList then
+                local rec = recList[i]
+                r:SetHidden(false)
+                r.nameLbl:SetText(rec.display)
+                r.delBtn:SetHandler("OnClicked", function()
+                    if aw and aw.pending and aw.pending[gId] then
+                        aw.pending[gId][rec.lower] = nil
+                        aw.welcomed[gId] = aw.welcomed[gId] or {}
+                        aw.welcomed[gId][rec.lower] = true
+                        self:RefreshAutoWelcomeDrawer()
+                        self:UpdateAutoWelcomeButtonBadge()
+                    end
+                end)
+            else
+                r:SetHidden(true)
+            end
+        end
+    end
+
+    if self.autoWelcomeDispatchBtn then
+        self.autoWelcomeDispatchBtn:SetEnabled(#recList > 0)
+    end
+
+    self:UpdateAutoWelcomeButtonBadge()
+end
+
+function FR:DispatchWelcomeMails(guildId)
+    if not self.savedVars or not self.savedVars.autoWelcome then return end
+    local aw = self.savedVars.autoWelcome
+    local pending = aw.pending and aw.pending[guildId]
+    if not pending or next(pending) == nil then
+        self.PrintChat("|cFFCC00AutoWelcome:|r No pending recruits to welcome for this guild.")
+        return
+    end
+
+    local gCfg = aw.guildSettings and aw.guildSettings[guildId]
+    local subjectTpl = (gCfg and gCfg.subject ~= "") and gCfg.subject or "Welcome to {guild_name}!"
+    local bodyTpl = (gCfg and gCfg.message ~= "") and gCfg.message or "Welcome {name} to {guild_name}!"
+
+    local queue = {}
+    for lowerName, dispName in pairs(pending) do
+        table.insert(queue, { lower = lowerName, display = dispName })
+    end
+
+    if #queue == 0 then return end
+
+    if not SCENE_MANAGER:IsShowing("mailSend") then
+        SCENE_MANAGER:Show("mailSend")
+    end
+
+    local mailDelay = aw.mailDelay or 2500
+    local total = #queue
+    local sentCount = 0
+
+    self.PrintChat(string.format("✉ |c00FFCCAutoWelcome:|r Dispatching welcome letters to %d recruit(s) with %dms pacing...", total, mailDelay))
+
+    local function SendNext(idx)
+        if idx > total then
+            self.PrintChat(string.format("✓ |c59E08AAutoWelcome Complete:|r Dispatched %d welcome letter(s).", sentCount))
+            if self.autoWelcomeStatusLbl then
+                self.autoWelcomeStatusLbl:SetText(string.format("Dispatched %d / %d", sentCount, total))
+            end
+            self:RefreshAutoWelcomeDrawer()
+            self:UpdateAutoWelcomeButtonBadge()
+            return
+        end
+
+        local item = queue[idx]
+        local subject = FR:InterpolateWelcomeLetter(subjectTpl, guildId, item.display)
+        local body = FR:InterpolateWelcomeLetter(bodyTpl, guildId, item.display)
+
+        if self.autoWelcomeStatusLbl then
+            self.autoWelcomeStatusLbl:SetText(string.format("Sending (%d/%d): %s...", idx, total, item.display))
+        end
+
+        pcall(function()
+            SendMail(item.display, subject, body)
+        end)
+
+        aw.welcomed[guildId] = aw.welcomed[guildId] or {}
+        aw.welcomed[guildId][item.lower] = true
+        aw.pending[guildId][item.lower] = nil
+        sentCount = sentCount + 1
+
+        zo_callLater(function()
+            SendNext(idx + 1)
+        end, mailDelay)
+    end
+
+    SendNext(1)
+end
+
+function FR:MarkAllCurrentWelcomed(guildId)
+    if not self.savedVars or not self.savedVars.autoWelcome then return end
+    local aw = self.savedVars.autoWelcome
+    aw.welcomed[guildId] = aw.welcomed[guildId] or {}
+    aw.pending[guildId] = aw.pending[guildId] or {}
+
+    local count = 0
+    for lower, _ in pairs(aw.pending[guildId]) do
+        aw.welcomed[guildId][lower] = true
+        count = count + 1
+    end
+    aw.pending[guildId] = {}
+
+    local numM = GetNumGuildMembers(guildId)
+    for m = 1, numM do
+        local displayName = select(1, GetGuildMemberInfo(guildId, m))
+        if displayName then
+            aw.welcomed[guildId][string.lower(displayName)] = true
+        end
+    end
+
+    self.PrintChat(string.format("|c59E08AAutoWelcome:|r Marked all %d active and pending members of %s as welcomed.", numM, GetGuildName(guildId)))
+    self:RefreshAutoWelcomeDrawer()
+    self:UpdateAutoWelcomeButtonBadge()
+end
+
+function FR:ScanRosterForNewRecruits()
+    if not self.savedVars or not self.savedVars.autoWelcome then return {} end
+    local aw = self.savedVars.autoWelcome
+    if not aw.initialized then
+        self:CaptureInitialWelcomeRoster()
+        return {}
+    end
+
+    local found = {}
+    for i = 1, GetNumGuilds() do
+        local guildId = GetGuildId(i)
+        aw.welcomed[guildId] = aw.welcomed[guildId] or {}
+        aw.pending[guildId] = aw.pending[guildId] or {}
+        local gCfg = aw.guildSettings and aw.guildSettings[guildId]
+        local isEnabled = gCfg and gCfg.enabled
+
+        if isEnabled then
+            local numM = GetNumGuildMembers(guildId)
+            for m = 1, numM do
+                local displayName = select(1, GetGuildMemberInfo(guildId, m))
+                if displayName then
+                    local lower = string.lower(displayName)
+                    if not aw.welcomed[guildId][lower] and not aw.pending[guildId][lower] then
+                        aw.pending[guildId][lower] = displayName
+                        table.insert(found, { guildId = guildId, displayName = displayName })
+                    end
+                end
+            end
+        end
+    end
+
+    self:UpdateAutoWelcomeButtonBadge()
+    return found
+end
+
+function FR:CaptureInitialWelcomeRoster()
+    if not self.savedVars or not self.savedVars.autoWelcome then return end
+    local aw = self.savedVars.autoWelcome
+    aw.welcomed = aw.welcomed or {}
+    aw.pending = aw.pending or {}
+
+    for i = 1, GetNumGuilds() do
+        local guildId = GetGuildId(i)
+        aw.welcomed[guildId] = aw.welcomed[guildId] or {}
+        aw.pending[guildId] = aw.pending[guildId] or {}
+        local numM = GetNumGuildMembers(guildId)
+        for m = 1, numM do
+            local displayName = select(1, GetGuildMemberInfo(guildId, m))
+            if displayName then
+                aw.welcomed[guildId][string.lower(displayName)] = true
+            end
+        end
+    end
+    aw.initialized = true
+    self:UpdateAutoWelcomeButtonBadge()
+end
+
+function FR:OnGuildMemberAdded(guildId, displayName)
+    if not self.savedVars or not self.savedVars.autoWelcome then return end
+    local aw = self.savedVars.autoWelcome
+    aw.welcomed = aw.welcomed or {}
+    aw.pending = aw.pending or {}
+    aw.welcomed[guildId] = aw.welcomed[guildId] or {}
+    aw.pending[guildId] = aw.pending[guildId] or {}
+
+    local lower = string.lower(displayName)
+    if not aw.welcomed[guildId][lower] then
+        aw.pending[guildId][lower] = displayName
+        self.PrintChat(string.format("✉ |c00FFCCAutoWelcome:|r New recruit queued for %s: %s", GetGuildName(guildId), displayName))
+        self:UpdateAutoWelcomeButtonBadge()
+        if self.autoWelcomeDrawer and not self.autoWelcomeDrawer:IsHidden() then
+            self:RefreshAutoWelcomeDrawer()
+        end
+
+        if aw.autoSendWhenMailOpen and SCENE_MANAGER:IsShowing("mailSend") then
+            self:DispatchWelcomeMails(guildId)
+        end
+    end
+end
+
+-- Event & Hook registrations
+EVENT_MANAGER:RegisterForEvent("FissalRelay_AutoWelcome_MemberAdded", EVENT_GUILD_MEMBER_ADDED, function(_, guildId, displayName)
+    FR:OnGuildMemberAdded(guildId, displayName)
+end)
+
+EVENT_MANAGER:RegisterForEvent("FissalRelay_AutoWelcome_PlayerActivated", EVENT_PLAYER_ACTIVATED, function()
+    local recruits = FR:ScanRosterForNewRecruits()
+    if recruits and #recruits > 0 then
+        FR.PrintChat(string.format("✉ |c00FFCCAutoWelcome:|r Detected %d new recruit(s) joined while offline.", #recruits))
+    end
+end)
+
+if SCENE_MANAGER and SCENE_MANAGER:GetScene("mailSend") then
+    SCENE_MANAGER:GetScene("mailSend"):RegisterCallback("StateChange", function(oldState, newState)
+        if (newState == SCENE_SHOWING or newState == SCENE_SHOWN) and FR.savedVars and FR.savedVars.autoWelcome and FR.savedVars.autoWelcome.autoSendWhenMailOpen then
+            local gIdx = FR.selectedGuildIndex or 1
+            local gId = FR:ResolveGuildId(gIdx)
+            FR:DispatchWelcomeMails(gId)
+        end
+    end)
+end

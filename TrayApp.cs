@@ -34,7 +34,6 @@ namespace RedfurSync
         private ToolStripMenuItem _perfHighItem = null!;
 
         private readonly SynchronizationContext? _uiContext;
-        private UploadProgressForm? _progressForm;
         private RelayMainWindow?    _mainWindow;
         private EventWaitHandle?    _wakeEvent;
         private RegisteredWaitHandle? _wakeRegistration;
@@ -177,6 +176,16 @@ namespace RedfurSync
             OpenMainWindow("sync");
         }
 
+        public void ActivateMainWindow()
+        {
+            if (_mainWindow == null || _mainWindow.IsDisposed) return;
+            if (!_mainWindow.Visible) _mainWindow.Show();
+            if (_mainWindow.WindowState == FormWindowState.Minimized)
+                _mainWindow.WindowState = FormWindowState.Normal;
+            _mainWindow.Activate();
+            _mainWindow.BringToFront();
+        }
+
         private void OpenMainWindow(string tabId = "sync")
         {
             TraceLog("OpenMainWindow tab: " + tabId);
@@ -192,6 +201,7 @@ namespace RedfurSync
             }
 
             _mainWindow.NavigateToTab(tabId);
+            ActivateMainWindow();
         }
         
         private void OnJobsChanged()
@@ -212,11 +222,6 @@ namespace RedfurSync
 
         private void HandleJobsChangedOnUI()
         {
-            if (_progressForm != null && !_progressForm.IsDisposed)
-            {
-                _progressForm.Invalidate();
-            }
-
             // [Req 1 & Req 5] Delay slightly to group alerts together and prevent spam
             if (_batchAlertTimer == null)
             {
@@ -260,7 +265,7 @@ private void CheckBatchCompletion()
                     string names = activeJobs.Count == 1 ? activeJobs[0].FileName : $"{activeJobs.Count} files";
                     if (!AppConfig.Instance.SilentSync)
                     {
-                        ShowCustomAlert("Transmission Initiated", $"Fissal is syncing {names} to the Redfur lattice!", Color.FromArgb(200, 160, 60), 6, 4000, OpenProgressForm);
+                        ShowCustomAlert("Transmission Initiated", $"Fissal is syncing {names} to the Redfur lattice!", Color.FromArgb(200, 160, 60), 6, 4000, () => OpenMainWindow("sync"));
                     }
                 }
 
@@ -276,13 +281,13 @@ private void CheckBatchCompletion()
                     {
                         ShowCustomAlert("Update Prepared!", 
                             "A new module has been received from Redfur!\n\nOpen the terminal to apply the upgrade.", 
-                            Color.FromArgb(180, 100, 220), 4, 10000, OpenProgressForm);
+                            Color.FromArgb(180, 100, 220), 4, 10000, () => OpenMainWindow("sync"));
                     }
                     else if (hasFailedUpdate)
                     {
                         ShowAlert("Update Interrupted", 
                             "Fissal's claws slipped while pulling the new module!\n\nCheck diagnostics for details!", 
-                            FissalAlert.AlertLevel.TotalError, 9000, OpenProgressForm);
+                            FissalAlert.AlertLevel.TotalError, 9000, () => OpenMainWindow("diagnostics"));
                     }
                     else if (_batchHadSuccess || _batchHadError)
                     {
@@ -294,7 +299,7 @@ private void CheckBatchCompletion()
                                          $"Interference detected! Open diagnostics to review log anomalies.";
                             if (!AppConfig.Instance.SilentSync)
                             {
-                                ShowAlert("Sync Completed With Errors", msg, FissalAlert.AlertLevel.TotalError, 10000, OpenProgressForm);
+                                ShowAlert("Sync Completed With Errors", msg, FissalAlert.AlertLevel.TotalError, 10000, () => OpenMainWindow("diagnostics"));
                             }
                         }
                         else if (_batchHadSuccess)
@@ -305,7 +310,7 @@ private void CheckBatchCompletion()
                                          $"All data securely delivered to the lattice!";
                             if (!AppConfig.Instance.SilentSync)
                             {
-                                ShowCustomAlert("Sync Complete!", msg, Color.FromArgb(60, 180, 220), 6, 6000, OpenProgressForm);
+                                ShowCustomAlert("Sync Complete!", msg, Color.FromArgb(60, 180, 220), 6, 6000, () => OpenMainWindow("sync"));
                             }
                         }
                     }
@@ -391,7 +396,10 @@ private void CheckBatchCompletion()
             menu.Items.Add(new ToolStripSeparator());
 
             menu.Items.Add("⚡  Open Relay Terminal",     null, (_, _) => OpenMainWindow("sync"));
-            menu.Items.Add("💬  Ask Fissal",              null, (_, _) => OpenMainWindow("assistant"));
+            menu.Items.Add("◱  Toggle Compact Mode",     null, (_, _) => {
+                OpenMainWindow("sync");
+                _mainWindow?.ToggleCompactMode();
+            });
             menu.Items.Add("🛠️  Setup & Pairing",         null, (_, _) => OpenMainWindow("setup"));
             menu.Items.Add("🎨  Terminal Themes",         null, (_, _) => OpenMainWindow("themes"));
             menu.Items.Add("⚙️  Diagnostics",             null, (_, _) => OpenMainWindow("diagnostics"));
@@ -414,12 +422,6 @@ private void CheckBatchCompletion()
                 var config = AppConfig.Instance;
                 config.VisualFidelity = mode;
                 config.Save();
-            }
-
-            if (_progressForm != null && !_progressForm.IsDisposed)
-            {
-                _progressForm.ApplyAnimationInterval();
-                _progressForm.Invalidate();
             }
         }
 
@@ -544,23 +546,7 @@ private void CheckBatchCompletion()
         private void OpenProgressForm()
         {
             if (_menu.InvokeRequired) { _menu.BeginInvoke(OpenProgressForm); return; }
-
-            // If it's already open, just bring it to the front so your eyes can lock onto it
-            if (_progressForm != null && !_progressForm.IsDisposed)
-            {
-                _progressForm.Activate();
-                return;
-            }
-
-            _progressForm = new UploadProgressForm(
-                _watcher.Jobs,
-                j => _watcher.RetryJob(j),
-                j => _watcher.CancelJob(j),
-                j => ApplyUpdate(j)); 
-            _progressForm.FormClosed += (_, _) => _progressForm = null;
-            _progressForm.PositionAboveTray();
-            _progressForm.Show();
-            _progressForm.Activate();
+            OpenMainWindow("sync");
         }
         
         private static Icon BuildFissalIcon()
@@ -620,7 +606,6 @@ private void CheckBatchCompletion()
 
             _batchAlertTimer?.Stop();
             _batchAlertTimer?.Dispose();
-            _progressForm?.Dispose();
             _mainWindow?.Dispose();
             _watcher.Dispose();
             _trayIcon.Dispose();

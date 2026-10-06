@@ -36,6 +36,68 @@ FR.auditSearchQuery = ""
 FR.auditCurrentPage = 1
 FR.auditFilteredMembers = {}
 
+local AUDIT_ACTIONS = { "Warn Mail", "Kick & Mail", "Kick Only", "Exempt [LOA]", "Void / Hide" }
+
+local AUDIT_ACTION_THEMES = {
+    ["Warn Mail"] = {
+        normalBg = { 0.14, 0.10, 0.04, 0.90 },
+        hoverBg = { 0.22, 0.16, 0.06, 0.98 },
+        normalEdge = { 0.85, 0.65, 0.15, 0.90 },
+        hoverEdge = { 1.00, 0.85, 0.25, 1.00 },
+        normalTextColor = { 1, 0.85, 0.2, 1 },
+        hoverTextColor = { 1, 0.95, 0.5, 1 },
+        tipTitle = "Action: Warn Mail",
+        tipText = "Stage a friendly inactivity notice mail to check in before taking roster action.",
+    },
+    ["Kick & Mail"] = {
+        normalBg = { 0.16, 0.08, 0.04, 0.90 },
+        hoverBg = { 0.24, 0.12, 0.06, 0.98 },
+        normalEdge = { 0.95, 0.45, 0.15, 0.95 },
+        hoverEdge = { 1.00, 0.60, 0.20, 1.00 },
+        normalTextColor = { 1, 0.55, 0.1, 1 },
+        hoverTextColor = { 1, 0.75, 0.3, 1 },
+        tipTitle = "Action: Kick & Mail",
+        tipText = "Send courtesy removal notification with invite-back link, then remove from roster.",
+    },
+    ["Kick Only"] = {
+        normalBg = { 0.20, 0.05, 0.05, 0.95 },
+        hoverBg = { 0.30, 0.08, 0.08, 1.00 },
+        normalEdge = { 0.95, 0.20, 0.20, 1.00 },
+        hoverEdge = { 1.00, 0.35, 0.35, 1.00 },
+        normalTextColor = { 1, 0.25, 0.25, 1 },
+        hoverTextColor = { 1, 0.50, 0.50, 1 },
+        tipTitle = "Action: Kick Only",
+        tipText = "Immediately remove from guild roster without sending in-game mail.",
+    },
+    ["Exempt [LOA]"] = {
+        normalBg = { 0.04, 0.14, 0.12, 0.90 },
+        hoverBg = { 0.06, 0.22, 0.18, 0.98 },
+        normalEdge = { 0.00, 0.85, 0.75, 0.90 },
+        hoverEdge = { 0.20, 1.00, 0.90, 1.00 },
+        normalTextColor = { 0, 1, 0.8, 1 },
+        hoverTextColor = { 0.4, 1, 0.9, 1 },
+        tipTitle = "Action: Exempt [LOA]",
+        tipText = "Mark member with Leave of Absence tag in guild note to prevent future audit flagging.",
+    },
+    ["Void / Hide"] = {
+        normalBg = { 0.12, 0.06, 0.18, 0.90 },
+        hoverBg = { 0.18, 0.10, 0.26, 0.98 },
+        normalEdge = { 0.70, 0.40, 0.95, 0.90 },
+        hoverEdge = { 0.85, 0.55, 1.00, 1.00 },
+        normalTextColor = { 0.7, 0.5, 1, 1 },
+        hoverTextColor = { 0.85, 0.7, 1, 1 },
+        tipTitle = "Action: Void / Hide",
+        tipText = "Permanently exclude this member (@Account) from audit lists across all sessions.",
+    },
+}
+
+local function ApplyAuditActionStyle(btn, actionName)
+    if not btn then return end
+    local theme = AUDIT_ACTION_THEMES[actionName] or AUDIT_ACTION_THEMES["Warn Mail"]
+    FR:UpdateTactileTheme(btn, theme)
+    btn:SetText(actionName .. " ▾")
+end
+
 --[[ =========================================================================
      AUDITOR DATA ENGINE
 ========================================================================= ]]--
@@ -138,6 +200,12 @@ function FR:RunRosterAudit()
             local memberIsGM = (IsGuildRankGuildMaster and IsGuildRankGuildMaster(guildId, rankIndex)) or (rankIndex == 1)
 
             local passFilter = true
+            -- Permanent Void / Exclusion Guard
+            local exclusions = self.savedVars and self.savedVars.auditExclusions and self.savedVars.auditExclusions[guildId]
+            if exclusions and (exclusions[lowerName] or exclusions["@" .. lowerName]) then
+                passFilter = false
+            end
+
             -- Unconditional Guard (Fable 5.1 B1): Never list GM, executing staff account, or members at/above executor rank for kick
             if lowerName == myDisplayName or memberIsGM or (rankIndex <= myRankIndex) then
                 passFilter = false
@@ -246,6 +314,17 @@ function FR:RunRosterAudit()
         }
     end
 
+    local voidedCount = 0
+    if self.savedVars and self.savedVars.auditExclusions and self.savedVars.auditExclusions[guildId] then
+        for _ in pairs(self.savedVars.auditExclusions[guildId]) do
+            voidedCount = voidedCount + 1
+        end
+    end
+    self.auditVoidedCount = voidedCount
+    if self.auditExclusionsBtn then
+        self.auditExclusionsBtn:SetText(string.format("Void (%d)", voidedCount))
+    end
+
     local maxPages = math.max(1, math.ceil(#rawInactives / ROWS_PER_PAGE))
     if self.auditCurrentPage > maxPages then
         self.auditCurrentPage = maxPages
@@ -310,8 +389,8 @@ function FR:BuildAuditorUI(parent)
 
     -- Toggle: Exclude Officers
     local offToggle = wm:CreateControl("$(parent)_OffToggle", card, CT_BUTTON)
-    offToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 260, 7)
-    offToggle:SetDimensions(90, 22)
+    offToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 182, 7)
+    offToggle:SetDimensions(82, 22)
     offToggle:SetFont("ZoFontGameSmall")
     offToggle:SetText("No Officers")
     self:StyleTactileButton(offToggle, {
@@ -333,8 +412,8 @@ function FR:BuildAuditorUI(parent)
 
     -- Toggle: Exclude LOA
     local loaToggle = wm:CreateControl("$(parent)_LoaToggle", card, CT_BUTTON)
-    loaToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 356, 7)
-    loaToggle:SetDimensions(82, 22)
+    loaToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 270, 7)
+    loaToggle:SetDimensions(75, 22)
     loaToggle:SetFont("ZoFontGameSmall")
     loaToggle:SetText("No [LOA]")
     self:StyleTactileButton(loaToggle, {
@@ -356,8 +435,8 @@ function FR:BuildAuditorUI(parent)
 
     -- Toggle: Shield Active Sellers (Invisible Players)
     local shieldToggle = wm:CreateControl("$(parent)_ShieldToggle", card, CT_BUTTON)
-    shieldToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 444, 7)
-    shieldToggle:SetDimensions(102, 22)
+    shieldToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 351, 7)
+    shieldToggle:SetDimensions(95, 22)
     shieldToggle:SetFont("ZoFontGameSmall")
     shieldToggle:SetText("Shield Sellers")
     self:StyleTactileButton(shieldToggle, {
@@ -379,8 +458,8 @@ function FR:BuildAuditorUI(parent)
 
     -- Rank Filter Cycle Button
     local rankBtn = wm:CreateControl("$(parent)_RankFilterBtn", card, CT_BUTTON)
-    rankBtn:SetAnchor(TOPLEFT, card, TOPLEFT, 552, 7)
-    rankBtn:SetDimensions(110, 22)
+    rankBtn:SetAnchor(TOPLEFT, card, TOPLEFT, 452, 7)
+    rankBtn:SetDimensions(88, 22)
     rankBtn:SetFont("ZoFontGameSmall")
     rankBtn:SetText("Rank: All")
     self:StyleTactileButton(rankBtn, {
@@ -398,10 +477,52 @@ function FR:BuildAuditorUI(parent)
     end)
     self.auditRankFilterBtn = rankBtn
 
+    -- Permanent Void / Exclusions Manager Button
+    local exclusionsBtn = wm:CreateControl("$(parent)_ExclusionsBtn", card, CT_BUTTON)
+    exclusionsBtn:SetAnchor(TOPLEFT, card, TOPLEFT, 546, 7)
+    exclusionsBtn:SetDimensions(80, 22)
+    exclusionsBtn:SetFont("ZoFontGameSmall")
+    exclusionsBtn:SetText("Void (0)")
+    self:StyleTactileButton(exclusionsBtn, {
+        normalBg = { 0.10, 0.06, 0.16, 0.85 },
+        hoverBg = { 0.16, 0.10, 0.24, 0.95 },
+        normalEdge = { 0.60, 0.35, 0.85, 0.80 },
+        hoverEdge = { 0.80, 0.50, 1.00, 1.00 },
+        normalTextColor = { 0.75, 0.55, 1, 1 },
+        hoverTextColor = { 0.90, 0.75, 1, 1 },
+        tooltipTitle = "Permanent Void Registry",
+        tooltipText = "View and unhide members permanently excluded from inactivity auditing.",
+    })
+    exclusionsBtn:SetHandler("OnClicked", function()
+        self:ToggleAuditExclusionsDrawer()
+    end)
+    self.auditExclusionsBtn = exclusionsBtn
+
+    -- Batch Auto-Processor Button
+    local batchBtn = wm:CreateControl("$(parent)_BatchBtn", card, CT_BUTTON)
+    batchBtn:SetAnchor(TOPLEFT, card, TOPLEFT, 632, 7)
+    batchBtn:SetDimensions(85, 22)
+    batchBtn:SetFont("ZoFontGameBold")
+    batchBtn:SetText("⚡ Batch")
+    self:StyleTactileButton(batchBtn, {
+        normalBg = { 0.18, 0.10, 0.04, 0.90 },
+        hoverBg = { 0.26, 0.15, 0.06, 0.98 },
+        normalEdge = { 0.90, 0.55, 0.15, 0.90 },
+        hoverEdge = { 1.00, 0.75, 0.20, 1.00 },
+        normalTextColor = { 1, 0.85, 0.20, 1 },
+        hoverTextColor = { 1, 0.95, 0.50, 1 },
+        tooltipTitle = "⚡ Batch Auto-Process",
+        tooltipText = "Sequentially execute all selected/staged actions with safe 1.5s pacing and live progress.",
+    })
+    batchBtn:SetHandler("OnClicked", function()
+        self:StartAuditBatch()
+    end)
+    self.auditBatchBtn = batchBtn
+
     -- Search Box Container
     local searchBg = wm:CreateControlFromVirtual("$(parent)_SearchBg", card, "ZO_EditBackdrop")
     searchBg:SetAnchor(TOPRIGHT, card, TOPRIGHT, -12, 6)
-    searchBg:SetDimensions(145, 24)
+    searchBg:SetDimensions(130, 24)
 
     local searchBox = wm:CreateControlFromVirtual("$(parent)_Search", searchBg, "ZO_DefaultEditForBackdrop")
     searchBox:SetAnchorFill()
@@ -487,7 +608,6 @@ function FR:BuildAuditorUI(parent)
     -- 4. Table Rows (9 Rows)
     self.auditRows = {}
     local rowY = headerY + 24
-    local AUDIT_ACTIONS = { "Warn Mail", "Kick & Mail", "Kick Only", "Exempt [LOA]" }
 
     for r = 1, ROWS_PER_PAGE do
         local row = wm:CreateControl("$(parent)_Row_" .. r, card, CT_BACKDROP)
@@ -529,7 +649,7 @@ function FR:BuildAuditorUI(parent)
         salesLbl:SetDimensions(75, 22)
         salesLbl:SetFont("ZoFontGameSmall")
         salesLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-        salesLbl:SetText("0")
+        salesLbl:SetText("0g")
         row.salesLbl = salesLbl
 
         local duesLbl = wm:CreateControl("$(parent)_Dues", row, CT_LABEL)
@@ -549,37 +669,23 @@ function FR:BuildAuditorUI(parent)
         noteLbl:SetText("--")
         row.noteLbl = noteLbl
 
-        -- Action Selector Button (Cycles actions)
+        -- Action Selector Button (Cycles actions across 5 color themes)
         local actionBtn = wm:CreateControl("$(parent)_ActionBtn", row, CT_BUTTON)
         actionBtn:SetAnchor(LEFT, row, LEFT, 640, 0)
         actionBtn:SetDimensions(125, 22)
         actionBtn:SetFont("ZoFontGameSmall")
-        actionBtn:SetText("Warn Mail ▾")
         row.actionIndex = 1
         row.selectedAction = "Warn Mail"
 
-        self:StyleTactileButton(actionBtn, {
-            normalBg = { 0.12, 0.10, 0.04, 0.90 },
-            hoverBg = { 0.18, 0.14, 0.06, 0.98 },
-            normalEdge = { 0.75, 0.55, 0.10, 0.80 },
-            hoverEdge = { 1.00, 0.85, 0.20, 1.00 },
-            normalTextColor = { 1, 0.85, 0.2, 1 },
-            hoverTextColor = { 1, 0.95, 0.5, 1 },
-            tooltipTitle = "Select Action",
-            tooltipText = "Click to cycle: Warn Mail, Kick & Mail, Kick Only, Exempt [LOA]",
-        })
+        self:StyleTactileButton(actionBtn, AUDIT_ACTION_THEMES["Warn Mail"])
+        ApplyAuditActionStyle(actionBtn, "Warn Mail")
+
         actionBtn:SetHandler("OnClicked", function()
             row.actionIndex = (row.actionIndex % #AUDIT_ACTIONS) + 1
             row.selectedAction = AUDIT_ACTIONS[row.actionIndex]
-            actionBtn:SetText(row.selectedAction .. " ▾")
-            if row.selectedAction == "Warn Mail" then
-                actionBtn:SetNormalFontColor(1, 0.85, 0.2, 1)
-            elseif row.selectedAction == "Kick & Mail" then
-                actionBtn:SetNormalFontColor(1, 0.55, 0.2, 1)
-            elseif row.selectedAction == "Kick Only" then
-                actionBtn:SetNormalFontColor(1, 0.35, 0.35, 1)
-            else
-                actionBtn:SetNormalFontColor(0, 1, 0.85, 1)
+            ApplyAuditActionStyle(actionBtn, row.selectedAction)
+            if row.memberData then
+                row.memberData.stagedAction = row.selectedAction
             end
         end)
         row.actionBtn = actionBtn
@@ -701,6 +807,9 @@ function FR:BuildAuditorUI(parent)
     exportBtn:SetHandler("OnClicked", function()
         self:ExportAuditToChat()
     end)
+
+    self:BuildAuditBatchProgressPanel(card)
+    self:BuildAuditExclusionsDrawer(card)
 end
 
 function FR:CycleAuditRankFilter()
@@ -869,120 +978,583 @@ local function RegisterAuditorCustomDialogs()
             },
         }
     end
+
+    if ESO_Dialogs and not ESO_Dialogs["FISSAL_CONFIRM_AUDIT_BATCH"] then
+        ESO_Dialogs["FISSAL_CONFIRM_AUDIT_BATCH"] = {
+            title = { text = "Confirm Batch Inactivity Processing" },
+            mainText = { text = "<<1>>" },
+            buttons = {
+                {
+                    text = SI_DIALOG_CONFIRM,
+                    callback = function(dialog)
+                        if dialog.data and dialog.data.onConfirm then dialog.data.onConfirm() end
+                    end,
+                },
+                { text = SI_DIALOG_CANCEL },
+            },
+        }
+    end
 end
 
-function FR:ApplyAuditAction(m, action)
+function FR:CheckAuditActionPermission(guildId, targetName, action)
+    local playerDisplayName = GetDisplayName()
+    if string.lower(targetName) == string.lower(playerDisplayName) then
+        return false, "Cannot target yourself!"
+    end
+
+    local mIdx = GetGuildMemberIndexFromDisplayName and GetGuildMemberIndexFromDisplayName(guildId, targetName)
+    if not mIdx or mIdx <= 0 then
+        local numM = GetNumGuildMembers(guildId)
+        for i = 1, numM do
+            local dName = GetGuildMemberInfo(guildId, i)
+            if string.lower(dName) == string.lower(targetName) then
+                mIdx = i
+                break
+            end
+        end
+    end
+
+    if action == "Kick Only" or action == "Kick & Mail" then
+        if not DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_REMOVE) then
+            return false, "Missing guild permission: Remove Member."
+        end
+
+        local myIdx = GetGuildMemberIndexFromDisplayName and GetGuildMemberIndexFromDisplayName(guildId, playerDisplayName)
+        local myRank = myIdx and select(3, GetGuildMemberInfo(guildId, myIdx))
+        local targetRank = mIdx and select(3, GetGuildMemberInfo(guildId, mIdx))
+        if myRank and targetRank then
+            -- Lower rank number = higher rank (1 is Guild Leader)
+            if targetRank <= myRank then
+                return false, "Cannot remove member with equal or higher guild rank!"
+            end
+        end
+    elseif action == "Exempt [LOA]" then
+        if not DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_NOTE_EDIT) then
+            return false, "Missing guild permission: Edit Member Notes."
+        end
+    end
+
+    return true, nil, mIdx
+end
+
+function FR:ApplyAuditAction(m, action, isBatch)
     if not m or not m.name then return end
     local gIdx = self.selectedGuildIndex or 1
     local guildId = GetGuildId(gIdx)
     local guildName = GetGuildName(guildId)
     action = action or "Warn Mail"
 
+    local allowed, errMsg, mIdx = self:CheckAuditActionPermission(guildId, m.name, action)
+    if not allowed then
+        self.PrintChat(string.format("|cFF5555Error:|r Cannot perform '%s' on %s: %s", action, m.name, errMsg or "Not allowed."))
+        return
+    end
+
     if action == "Warn Mail" then
         self:RecordMemberMailSent(m.name, "warn")
         self:TriggerInactivityMailHandoff(m.name, m.days)
         self.PrintChat(string.format("Staged warning mail for %s. (Recorded in mail history)", ColorText(m.name, "00FFCC")))
-        self:RenderAuditorRows()
+        if not isBatch then
+            self:RenderAuditorRows()
+        end
 
     elseif action == "Kick & Mail" then
-        RegisterAuditorCustomDialogs()
-        ZO_Dialogs_ShowDialog("FISSAL_CONFIRM_KICK_AND_MAIL", {
-            onConfirm = function()
-                SCENE_MANAGER:Show("mailSend")
-                zo_callLater(function()
-                    ZO_MailSendToField:SetText(m.name)
-                    ZO_MailSendSubjectField:SetText(string.format("[%s] Roster Space Update", guildName))
-                    ZO_MailSendBodyField:SetText(string.format("Greetings %s,\n\nThank you for being part of %s! As our trading roster is currently full, we had to open up your space to keep trades flowing while you take a break. You are always warmly welcome back whenever you return to Tamriel—simply message any officer or re-apply!\n\nWarm regards,\n%s Staff",
-                        m.name, guildName, guildName))
-                    ZO_MailSendBodyField:TakeFocus()
-                end, 200)
+        local function DoKickAndMail()
+            SCENE_MANAGER:Show("mailSend")
+            zo_callLater(function()
+                ZO_MailSendToField:SetText(m.name)
+                ZO_MailSendSubjectField:SetText(string.format("[%s] Roster Space Update", guildName))
+                ZO_MailSendBodyField:SetText(string.format("Greetings %s,\n\nThank you for being part of %s! As our trading roster is currently full, we had to open up your space to keep trades flowing while you take a break. You are always warmly welcome back whenever you return to Tamriel—simply message any officer or re-apply!\n\nWarm regards,\n%s Staff",
+                    m.name, guildName, guildName))
+                ZO_MailSendBodyField:TakeFocus()
+            end, 200)
 
-                FR:RecordMemberMailSent(m.name, "kick_mail")
+            FR:RecordMemberMailSent(m.name, "kick_mail")
+            GuildRemove(guildId, m.name)
+            FR.PrintChat(string.format("|c59E08ARemoved:|r %s from %s and staged courtesy mail.", ColorText(m.name, "00FFCC"), ColorText(guildName, "FF9900")))
 
-                local mIdx = GetGuildMemberIndexFromDisplayName and GetGuildMemberIndexFromDisplayName(guildId, m.name)
-                if not mIdx or mIdx <= 0 then
-                    local numM = GetNumGuildMembers(guildId)
-                    for i = 1, numM do
-                        local dName = GetGuildMemberInfo(guildId, i)
-                        if string.lower(dName) == string.lower(m.name) then
-                            mIdx = i
-                            break
-                        end
-                    end
-                end
-
-                if mIdx and mIdx > 0 then
-                    GuildRemove(guildId, mIdx)
-                    FR.PrintChat(string.format("|c59E08ARemoved:|r %s from %s and staged courtesy mail.", ColorText(m.name, "00FFCC"), ColorText(guildName, "FF9900")))
-                else
-                    FR.PrintChat(string.format("|cFF5555Error:|r Could not find member index for %s in guild.", m.name))
-                end
-
+            if not isBatch then
                 zo_callLater(function()
                     FR:RunRosterAudit()
                     FR:UpdateAuditorUI()
                 end, 500)
-            end,
-        }, {
-            mainTextParams = { m.name, guildName }
-        })
-
-    elseif action == "Kick Only" then
-        RegisterAuditorCustomDialogs()
-        ZO_Dialogs_ShowDialog("FISSAL_CONFIRM_KICK_MEMBER", {
-            onConfirm = function()
-                local mIdx = GetGuildMemberIndexFromDisplayName and GetGuildMemberIndexFromDisplayName(guildId, m.name)
-                if not mIdx or mIdx <= 0 then
-                    local numM = GetNumGuildMembers(guildId)
-                    for i = 1, numM do
-                        local dName = GetGuildMemberInfo(guildId, i)
-                        if string.lower(dName) == string.lower(m.name) then
-                            mIdx = i
-                            break
-                        end
-                    end
-                end
-
-                if mIdx and mIdx > 0 then
-                    GuildRemove(guildId, mIdx)
-                    FR.PrintChat(string.format("|c59E08ARemoved:|r %s from %s.", ColorText(m.name, "00FFCC"), ColorText(guildName, "FF9900")))
-                else
-                    FR.PrintChat(string.format("|cFF5555Error:|r Could not find member index for %s in guild.", m.name))
-                end
-
-                zo_callLater(function()
-                    FR:RunRosterAudit()
-                    FR:UpdateAuditorUI()
-                end, 500)
-            end,
-        }, {
-            mainTextParams = { m.name, guildName }
-        })
-
-    elseif action == "Exempt [LOA]" then
-        local mIdx = GetGuildMemberIndexFromDisplayName and GetGuildMemberIndexFromDisplayName(guildId, m.name)
-        if not mIdx or mIdx <= 0 then
-            local numM = GetNumGuildMembers(guildId)
-            for i = 1, numM do
-                local dName = GetGuildMemberInfo(guildId, i)
-                if string.lower(dName) == string.lower(m.name) then
-                    mIdx = i
-                    break
-                end
             end
         end
 
+        if isBatch then
+            DoKickAndMail()
+        else
+            RegisterAuditorCustomDialogs()
+            ZO_Dialogs_ShowDialog("FISSAL_CONFIRM_KICK_AND_MAIL", {
+                onConfirm = DoKickAndMail,
+            }, {
+                mainTextParams = { m.name, guildName }
+            })
+        end
+
+    elseif action == "Kick Only" then
+        local function DoKickOnly()
+            GuildRemove(guildId, m.name)
+            FR.PrintChat(string.format("|c59E08ARemoved:|r %s from %s.", ColorText(m.name, "00FFCC"), ColorText(guildName, "FF9900")))
+
+            if not isBatch then
+                zo_callLater(function()
+                    FR:RunRosterAudit()
+                    FR:UpdateAuditorUI()
+                end, 500)
+            end
+        end
+
+        if isBatch then
+            DoKickOnly()
+        else
+            RegisterAuditorCustomDialogs()
+            ZO_Dialogs_ShowDialog("FISSAL_CONFIRM_KICK_MEMBER", {
+                onConfirm = DoKickOnly,
+            }, {
+                mainTextParams = { m.name, guildName }
+            })
+        end
+
+    elseif action == "Exempt [LOA]" then
         if mIdx and mIdx > 0 then
             local curNote = m.note or ""
             local newNote = curNote ~= "" and (curNote .. " [LOA]") or "[LOA]"
             SetGuildMemberNote(guildId, mIdx, newNote)
             self.PrintChat(string.format("Added [LOA] exemption tag to %s's note.", ColorText(m.name, "00FFCC")))
-            zo_callLater(function()
-                FR:RunRosterAudit()
-                FR:UpdateAuditorUI()
-            end, 500)
+            if not isBatch then
+                zo_callLater(function()
+                    FR:RunRosterAudit()
+                    FR:UpdateAuditorUI()
+                end, 500)
+            end
+        else
+            self.PrintChat(string.format("|cFF5555Error:|r Could not find member index for %s to edit note.", m.name))
+        end
+
+    elseif action == "Void / Hide" then
+        if not self.savedVars.auditExclusions then self.savedVars.auditExclusions = {} end
+        if not self.savedVars.auditExclusions[guildId] then self.savedVars.auditExclusions[guildId] = {} end
+        local clean = string.gsub(string.lower(m.name), "^@", "")
+        self.savedVars.auditExclusions[guildId][clean] = {
+            displayName = m.name,
+            reason = "Staff Void",
+            date = GetTimeStamp(),
+        }
+        self.PrintChat(string.format("|c59E08AVoided:|r Added %s to permanent audit exclusion list.", ColorText(m.name, "00FFCC")))
+        if not isBatch then
+            self:RunRosterAudit()
+            self:UpdateAuditorUI()
+            if self.auditExclusionsDrawer and not self.auditExclusionsDrawer:IsHidden() then
+                self:RefreshAuditExclusionsDrawer()
+            end
         end
     end
+end
+
+--[[ =========================================================================
+     PERMANENT VOID / EXCLUSIONS REGISTRY DRAWER
+========================================================================= ]]--
+
+function FR:BuildAuditExclusionsDrawer(card)
+    local wm = WINDOW_MANAGER
+    local drawer = wm:CreateControl("$(parent)_ExclusionsDrawer", card, CT_BACKDROP)
+    drawer:SetAnchor(TOPLEFT, card, TOPLEFT, 15, 10)
+    drawer:SetAnchor(BOTTOMRIGHT, card, BOTTOMRIGHT, -15, -10)
+    drawer:SetCenterColor(0.04, 0.04, 0.07, 0.98)
+    drawer:SetEdgeColor(0.60, 0.35, 0.85, 0.95)
+    drawer:SetEdgeTexture("", 8, 1, 0)
+    drawer:SetHidden(true)
+    self.auditExclusionsDrawer = drawer
+
+    local titleLbl = wm:CreateControl("$(parent)_Title", drawer, CT_LABEL)
+    titleLbl:SetAnchor(TOPLEFT, drawer, TOPLEFT, 16, 12)
+    titleLbl:SetFont("ZoFontGameBold")
+    titleLbl:SetText("|cFF9900PERMANENT VOID / EXCLUSIONS REGISTRY|r  |c888888(Shielded Accounts)|r")
+
+    local descLbl = wm:CreateControl("$(parent)_Desc", drawer, CT_LABEL)
+    descLbl:SetAnchor(TOPLEFT, titleLbl, BOTTOMLEFT, 0, 4)
+    descLbl:SetFont("ZoFontGameSmall")
+    descLbl:SetText("|cAAAAAAMembers listed here are permanently excluded from inactivity purges, check-ins, and warnings.|r")
+
+    local closeBtn = wm:CreateControl("$(parent)_CloseBtn", drawer, CT_BUTTON)
+    closeBtn:SetAnchor(TOPRIGHT, drawer, TOPRIGHT, -12, 10)
+    closeBtn:SetDimensions(28, 22)
+    closeBtn:SetFont("ZoFontGameBold")
+    closeBtn:SetText("X")
+    self:StyleTactileButton(closeBtn, {
+        normalBg = { 0.15, 0.05, 0.05, 0.85 },
+        hoverBg = { 0.30, 0.08, 0.08, 0.95 },
+        normalEdge = { 0.60, 0.20, 0.20, 0.80 },
+        hoverEdge = { 1.00, 0.30, 0.30, 1.00 },
+        normalTextColor = { 1, 0.5, 0.5, 1 },
+        hoverTextColor = { 1, 0.8, 0.8, 1 },
+        tooltipTitle = "Close Exclusions Registry",
+    })
+    closeBtn:SetHandler("OnClicked", function()
+        drawer:SetHidden(true)
+    end)
+
+    local headerY = 48
+    local colHeader = wm:CreateControl("$(parent)_Header", drawer, CT_BACKDROP)
+    colHeader:SetAnchor(TOPLEFT, drawer, TOPLEFT, 12, headerY)
+    colHeader:SetAnchor(TOPRIGHT, drawer, TOPRIGHT, -12, headerY)
+    colHeader:SetHeight(22)
+    colHeader:SetCenterColor(0.10, 0.08, 0.14, 0.90)
+    colHeader:SetEdgeColor(0.40, 0.25, 0.55, 0.60)
+    colHeader:SetEdgeTexture("", 8, 1, 0)
+
+    local h1 = wm:CreateControl("$(parent)_H1", colHeader, CT_LABEL)
+    h1:SetAnchor(LEFT, colHeader, LEFT, 12, 0)
+    h1:SetFont("ZoFontGameBold")
+    h1:SetText(ColorText("EXCLUDED ACCOUNT", "FF9900"))
+
+    local h2 = wm:CreateControl("$(parent)_H2", colHeader, CT_LABEL)
+    h2:SetAnchor(LEFT, colHeader, LEFT, 260, 0)
+    h2:SetFont("ZoFontGameBold")
+    h2:SetText(ColorText("DATE ADDED", "00FFCC"))
+
+    local h3 = wm:CreateControl("$(parent)_H3", colHeader, CT_LABEL)
+    h3:SetAnchor(LEFT, colHeader, LEFT, 440, 0)
+    h3:SetFont("ZoFontGameBold")
+    h3:SetText(ColorText("REASON", "FFD700"))
+
+    local h4 = wm:CreateControl("$(parent)_H4", colHeader, CT_LABEL)
+    h4:SetAnchor(LEFT, colHeader, LEFT, 640, 0)
+    h4:SetFont("ZoFontGameBold")
+    h4:SetText(ColorText("MANAGEMENT", "59E08A"))
+
+    self.auditExclusionsRows = {}
+    local EXCL_ROWS = 10
+    local startY = headerY + 24
+    for i = 1, EXCL_ROWS do
+        local row = wm:CreateControl("$(parent)_Row_" .. i, drawer, CT_BACKDROP)
+        row:SetAnchor(TOPLEFT, drawer, TOPLEFT, 12, startY + (i - 1) * 34)
+        row:SetAnchor(TOPRIGHT, drawer, TOPRIGHT, -12, startY + (i - 1) * 34)
+        row:SetHeight(32)
+        row:SetCenterColor(0.06, 0.05, 0.08, 0.70)
+        row:SetEdgeColor(0.25, 0.18, 0.35, 0.40)
+        row:SetEdgeTexture("", 8, 1, 0)
+
+        local nameLbl = wm:CreateControl("$(parent)_Name", row, CT_LABEL)
+        nameLbl:SetAnchor(LEFT, row, LEFT, 12, 0)
+        nameLbl:SetDimensions(240, 22)
+        nameLbl:SetFont("ZoFontGameMedium")
+        nameLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+        nameLbl:SetText("@Member")
+        row.nameLbl = nameLbl
+
+        local dateLbl = wm:CreateControl("$(parent)_Date", row, CT_LABEL)
+        dateLbl:SetAnchor(LEFT, row, LEFT, 260, 0)
+        dateLbl:SetDimensions(170, 22)
+        dateLbl:SetFont("ZoFontGameSmall")
+        dateLbl:SetText("--")
+        row.dateLbl = dateLbl
+
+        local reasonLbl = wm:CreateControl("$(parent)_Reason", row, CT_LABEL)
+        reasonLbl:SetAnchor(LEFT, row, LEFT, 440, 0)
+        reasonLbl:SetDimensions(190, 22)
+        reasonLbl:SetFont("ZoFontGameSmall")
+        reasonLbl:SetText("Staff Void")
+        row.reasonLbl = reasonLbl
+
+        local unhideBtn = wm:CreateControl("$(parent)_UnhideBtn", row, CT_BUTTON)
+        unhideBtn:SetAnchor(LEFT, row, LEFT, 640, 0)
+        unhideBtn:SetDimensions(135, 22)
+        unhideBtn:SetFont("ZoFontGameSmall")
+        unhideBtn:SetText("Unhide / Restore")
+        self:StyleTactileButton(unhideBtn, {
+            normalBg = { 0.06, 0.12, 0.08, 0.85 },
+            hoverBg = { 0.10, 0.20, 0.14, 0.95 },
+            normalEdge = { 0.20, 0.70, 0.35, 0.80 },
+            hoverEdge = { 0.30, 1.00, 0.50, 1.00 },
+            normalTextColor = { 0.3, 1, 0.5, 1 },
+            hoverTextColor = { 0.6, 1, 0.7, 1 },
+            tooltipTitle = "Restore Account",
+            tooltipText = "Remove this member from permanent void exclusion and return them to standard auditing.",
+        })
+        row.unhideBtn = unhideBtn
+
+        self.auditExclusionsRows[i] = row
+    end
+
+    local footerY = -10
+    local countLbl = wm:CreateControl("$(parent)_CountLbl", drawer, CT_LABEL)
+    countLbl:SetAnchor(BOTTOMLEFT, drawer, BOTTOMLEFT, 16, footerY)
+    countLbl:SetFont("ZoFontGameSmall")
+    countLbl:SetText("Total Excluded: 0")
+    self.auditExclCountLbl = countLbl
+
+    local nextBtn = wm:CreateControl("$(parent)_NextBtn", drawer, CT_BUTTON)
+    nextBtn:SetAnchor(BOTTOMRIGHT, drawer, BOTTOMRIGHT, -14, footerY + 2)
+    nextBtn:SetDimensions(60, 20)
+    nextBtn:SetFont("ZoFontGameSmall")
+    nextBtn:SetText("Next >")
+    self:StyleTactileButton(nextBtn, {
+        normalBg = { 0.06, 0.06, 0.09, 0.85 },
+        hoverBg = { 0.08, 0.16, 0.18, 0.95 },
+        normalEdge = { 0.25, 0.25, 0.30, 0.60 },
+        hoverEdge = { 0, 0.90, 0.80, 1.0 },
+        normalTextColor = { 0.7, 0.7, 0.7, 1 },
+        hoverTextColor = { 0, 1, 0.9, 1 },
+    })
+    nextBtn:SetHandler("OnClicked", function()
+        local total = self.auditExclTotalCount or 0
+        local maxPages = math.max(1, math.ceil(total / 10))
+        if (self.auditExclPage or 1) < maxPages then
+            self.auditExclPage = (self.auditExclPage or 1) + 1
+            self:RefreshAuditExclusionsDrawer()
+        end
+    end)
+    self.auditExclNextBtn = nextBtn
+
+    local pageLbl = wm:CreateControl("$(parent)_PageLbl", drawer, CT_LABEL)
+    pageLbl:SetAnchor(RIGHT, nextBtn, LEFT, -8, 0)
+    pageLbl:SetFont("ZoFontGameSmall")
+    pageLbl:SetText("Page 1/1")
+    self.auditExclPageLbl = pageLbl
+
+    local prevBtn = wm:CreateControl("$(parent)_PrevBtn", drawer, CT_BUTTON)
+    prevBtn:SetAnchor(RIGHT, pageLbl, LEFT, -8, 0)
+    prevBtn:SetDimensions(60, 20)
+    prevBtn:SetFont("ZoFontGameSmall")
+    prevBtn:SetText("< Prev")
+    self:StyleTactileButton(prevBtn, {
+        normalBg = { 0.06, 0.06, 0.09, 0.85 },
+        hoverBg = { 0.08, 0.16, 0.18, 0.95 },
+        normalEdge = { 0.25, 0.25, 0.30, 0.60 },
+        hoverEdge = { 0, 0.90, 0.80, 1.0 },
+        normalTextColor = { 0.7, 0.7, 0.7, 1 },
+        hoverTextColor = { 0, 1, 0.9, 1 },
+    })
+    prevBtn:SetHandler("OnClicked", function()
+        if (self.auditExclPage or 1) > 1 then
+            self.auditExclPage = (self.auditExclPage or 1) - 1
+            self:RefreshAuditExclusionsDrawer()
+        end
+    end)
+    self.auditExclPrevBtn = prevBtn
+end
+
+function FR:ToggleAuditExclusionsDrawer()
+    if not self.auditExclusionsDrawer then return end
+    if self.auditExclusionsDrawer:IsHidden() then
+        self.auditExclPage = 1
+        self:RefreshAuditExclusionsDrawer()
+        self.auditExclusionsDrawer:SetHidden(false)
+    else
+        self.auditExclusionsDrawer:SetHidden(true)
+    end
+end
+
+function FR:RefreshAuditExclusionsDrawer()
+    if not self.auditExclusionsDrawer then return end
+    local gIdx = self.selectedGuildIndex or 1
+    local guildId = GetGuildId(gIdx)
+
+    local excls = {}
+    if self.savedVars and self.savedVars.auditExclusions and self.savedVars.auditExclusions[guildId] then
+        for cleanName, data in pairs(self.savedVars.auditExclusions[guildId]) do
+            table.insert(excls, {
+                clean = cleanName,
+                displayName = data.displayName or ("@" .. cleanName),
+                reason = data.reason or "Staff Void",
+                date = data.date or 0,
+            })
+        end
+    end
+
+    table.sort(excls, function(a, b)
+        return (a.date or 0) > (b.date or 0)
+    end)
+
+    local total = #excls
+    self.auditExclTotalCount = total
+    local maxPages = math.max(1, math.ceil(total / 10))
+    if not self.auditExclPage or self.auditExclPage > maxPages then self.auditExclPage = maxPages end
+    if self.auditExclPage < 1 then self.auditExclPage = 1 end
+
+    local startIndex = (self.auditExclPage - 1) * 10
+    for i = 1, 10 do
+        local row = self.auditExclusionsRows and self.auditExclusionsRows[i]
+        local idx = startIndex + i
+        if row then
+            if idx <= total then
+                local entry = excls[idx]
+                row:SetHidden(false)
+                row.nameLbl:SetText(string.format("|c00FFCC%s|r", entry.displayName))
+
+                local dateStr = "Unknown"
+                if entry.date and entry.date > 0 then
+                    local ago = GetTimeStamp() - entry.date
+                    if ago < 3600 then dateStr = string.format("%dm ago", math.floor(ago / 60))
+                    elseif ago < 86400 then dateStr = string.format("%dh ago", math.floor(ago / 3600))
+                    else dateStr = string.format("%dd ago", math.floor(ago / 86400)) end
+                end
+                row.dateLbl:SetText(string.format("|c888888%s|r", dateStr))
+                row.reasonLbl:SetText(string.format("|cFFD700%s|r", entry.reason))
+
+                row.unhideBtn:SetHandler("OnClicked", function()
+                    if FR.savedVars and FR.savedVars.auditExclusions and FR.savedVars.auditExclusions[guildId] then
+                        FR.savedVars.auditExclusions[guildId][entry.clean] = nil
+                        FR.PrintChat(string.format("|c59E08ARestored:|r %s returned to standard auditing.", ColorText(entry.displayName, "00FFCC")))
+                        FR:RunRosterAudit()
+                        FR:UpdateAuditorUI()
+                        FR:RefreshAuditExclusionsDrawer()
+                    end
+                end)
+            else
+                row:SetHidden(true)
+            end
+        end
+    end
+
+    if self.auditExclCountLbl then
+        self.auditExclCountLbl:SetText(string.format("Total Excluded: |c00FFCC%d|r member(s)", total))
+    end
+    if self.auditExclPageLbl then
+        self.auditExclPageLbl:SetText(string.format("Page %d/%d", self.auditExclPage, maxPages))
+    end
+end
+
+--[[ =========================================================================
+     SAFE PACED BATCH AUTO-PROCESSOR
+========================================================================= ]]--
+
+function FR:BuildAuditBatchProgressPanel(card)
+    local wm = WINDOW_MANAGER
+    local batchPanel = wm:CreateControl("$(parent)_BatchProgress", card, CT_BACKDROP)
+    batchPanel:SetAnchor(BOTTOMLEFT, card, BOTTOMLEFT, 10, -32)
+    batchPanel:SetAnchor(BOTTOMRIGHT, card, BOTTOMRIGHT, -10, -32)
+    batchPanel:SetHeight(28)
+    batchPanel:SetCenterColor(0.12, 0.08, 0.02, 0.98)
+    batchPanel:SetEdgeColor(1.00, 0.65, 0.15, 0.95)
+    batchPanel:SetEdgeTexture("", 8, 1, 0)
+    batchPanel:SetHidden(true)
+    self.auditBatchProgressPanel = batchPanel
+
+    local statusLbl = wm:CreateControl("$(parent)_StatusLbl", batchPanel, CT_LABEL)
+    statusLbl:SetAnchor(LEFT, batchPanel, LEFT, 12, 0)
+    statusLbl:SetFont("ZoFontGameBold")
+    statusLbl:SetText("⚡ Batch Processing: Initializing...")
+    self.auditBatchStatusLbl = statusLbl
+
+    local abortBtn = wm:CreateControl("$(parent)_AbortBtn", batchPanel, CT_BUTTON)
+    abortBtn:SetAnchor(RIGHT, batchPanel, RIGHT, -8, 0)
+    abortBtn:SetDimensions(110, 22)
+    abortBtn:SetFont("ZoFontGameBold")
+    abortBtn:SetText("STOP / ABORT")
+    self:StyleTactileButton(abortBtn, {
+        normalBg = { 0.25, 0.05, 0.05, 0.95 },
+        hoverBg = { 0.40, 0.08, 0.08, 1.00 },
+        normalEdge = { 0.90, 0.20, 0.20, 0.90 },
+        hoverEdge = { 1.00, 0.35, 0.35, 1.00 },
+        normalTextColor = { 1, 0.8, 0.8, 1 },
+        hoverTextColor = { 1, 1, 1, 1 },
+        tooltipTitle = "Emergency Abort",
+        tooltipText = "Immediately halt the active batch processing queue.",
+    })
+    abortBtn:SetHandler("OnClicked", function()
+        self:AbortAuditBatch()
+    end)
+    self.auditBatchAbortBtn = abortBtn
+end
+
+function FR:StartAuditBatch()
+    if self.isAuditBatchRunning then
+        self.PrintChat("|cFF5555Error:|r Audit batch is already running!")
+        return
+    end
+
+    local members = self.auditFilteredMembers or {}
+    if #members == 0 then
+        self.PrintChat("|cFFCC00Notice:|r No flagged members in current audit filter to batch process.")
+        return
+    end
+
+    local gIdx = self.selectedGuildIndex or 1
+    local guildId = GetGuildId(gIdx)
+    local guildName = GetGuildName(guildId)
+
+    local queue = {}
+    local warnCount, kickMailCount, kickCount, loaCount, voidCount = 0, 0, 0, 0, 0
+    for _, m in ipairs(members) do
+        local act = m.stagedAction or "Warn Mail"
+        table.insert(queue, { member = m, action = act })
+        if act == "Warn Mail" then warnCount = warnCount + 1
+        elseif act == "Kick & Mail" then kickMailCount = kickMailCount + 1
+        elseif act == "Kick Only" then kickCount = kickCount + 1
+        elseif act == "Exempt [LOA]" then loaCount = loaCount + 1
+        elseif act == "Void / Hide" then voidCount = voidCount + 1
+        end
+    end
+
+    local total = #queue
+    local summaryStr = string.format("Batch process |c00FFCC%d|r members for |cFF9900%s|r?\n\n|cCCCCCCPlanned Actions:|r\n• Warn Mail: |cFFCC00%d|r\n• Kick & Mail: |cFF6600%d|r\n• Kick Only: |cFF4444%d|r\n• Exempt [LOA]: |c59E08A%d|r\n• Void / Hide: |cAA66FF%d|r\n\n|cFF9900Actions execute sequentially with 1.5s safe pacing to prevent server throttling.|r",
+        total, guildName, warnCount, kickMailCount, kickCount, loaCount, voidCount)
+
+    RegisterAuditorCustomDialogs()
+    ZO_Dialogs_ShowDialog("FISSAL_CONFIRM_AUDIT_BATCH", {
+        onConfirm = function()
+            FR:ExecuteAuditBatchQueue(guildId, queue)
+        end,
+    }, {
+        mainTextParams = { summaryStr }
+    })
+end
+
+function FR:AbortAuditBatch()
+    if not self.isAuditBatchRunning then return end
+    self.isAuditBatchRunning = false
+    EVENT_MANAGER:UnregisterForUpdate("FissalRelay_AuditBatchPacer")
+    if self.auditBatchProgressPanel then
+        self.auditBatchProgressPanel:SetHidden(true)
+    end
+    self.PrintChat("|cFF5555Audit Batch ABORTED by user.|r")
+    self:RunRosterAudit()
+    self:UpdateAuditorUI()
+end
+
+function FR:ExecuteAuditBatchQueue(guildId, queue)
+    if not queue or #queue == 0 then return end
+    self.isAuditBatchRunning = true
+    self.auditBatchQueue = queue
+    self.auditBatchIndex = 0
+    self.auditBatchTotal = #queue
+
+    if self.auditBatchProgressPanel then
+        self.auditBatchProgressPanel:SetHidden(false)
+    end
+
+    local function ProcessNext()
+        if not self.isAuditBatchRunning then return end
+        self.auditBatchIndex = self.auditBatchIndex + 1
+
+        if self.auditBatchIndex > self.auditBatchTotal then
+            self.isAuditBatchRunning = false
+            EVENT_MANAGER:UnregisterForUpdate("FissalRelay_AuditBatchPacer")
+            if self.auditBatchProgressPanel then
+                self.auditBatchProgressPanel:SetHidden(true)
+            end
+            self.PrintChat(string.format("|c59E08ABatch Processing Complete:|r Successfully executed actions for %d member(s).", self.auditBatchTotal))
+            self:RunRosterAudit()
+            self:UpdateAuditorUI()
+            return
+        end
+
+        local item = self.auditBatchQueue[self.auditBatchIndex]
+        if item and item.member then
+            if self.auditBatchStatusLbl then
+                self.auditBatchStatusLbl:SetText(string.format("⚡ Batch Processing (%d/%d): |c00FFCC%s|r [%s]...",
+                    self.auditBatchIndex, self.auditBatchTotal, item.member.name, item.action))
+            end
+            self:ApplyAuditAction(item.member, item.action, true)
+        end
+    end
+
+    ProcessNext()
+    EVENT_MANAGER:UnregisterForUpdate("FissalRelay_AuditBatchPacer")
+    EVENT_MANAGER:RegisterForUpdate("FissalRelay_AuditBatchPacer", 1500, ProcessNext)
 end
 
 function FR:RenderAuditorRows()
@@ -1109,6 +1681,18 @@ function FR:RenderAuditorRows()
                     SetTooltipText(InformationTooltip, tip)
                 end)
                 row.noteLbl:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
+
+                -- Dynamic Action button sync
+                row.memberData = m
+                local stagedAction = m.stagedAction or "Warn Mail"
+                row.selectedAction = stagedAction
+                for idx, act in ipairs(AUDIT_ACTIONS) do
+                    if act == stagedAction then
+                        row.actionIndex = idx
+                        break
+                    end
+                end
+                ApplyAuditActionStyle(row.actionBtn, stagedAction)
 
                 -- Apply button handler
                 row.applyBtn:SetHandler("OnClicked", function()

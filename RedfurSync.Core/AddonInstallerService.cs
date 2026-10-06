@@ -40,8 +40,8 @@ namespace RedfurSync
         public const string AddonDirectoryName = "FissalRelay";
         public const string ClientDirectoryName = "Client";
         public const string TargetExeName = "RedfurSync.exe";
-        public const string LatestAddonVersion = "1.7.0";
-        public const int LatestAddonVersionCode = 10700;
+        public const string LatestAddonVersion = "1.8.0";
+        public const int LatestAddonVersionCode = 10800;
         public static readonly string[] AddonFiles = new[]
         {
             "FissalRelay.txt",
@@ -57,6 +57,8 @@ namespace RedfurSync
         };
 
         public const string TtcPriceTableUrl = "https://us.tamrieltradecentre.com/download/PriceTable";
+        public const string LibHistoireDownloadUrl = "https://github.com/sirinsidiator/ESO-LibHistoire/archive/refs/heads/master.zip";
+        public const string LibAddonMenuDownloadUrl = "https://github.com/sirinsidiator/ESO-LibAddonMenu/archive/refs/heads/master.zip";
 
         public static string ActiveLatestAddonVersion { get; set; } = LatestAddonVersion;
         public static string? RemoteAddonDownloadUrl { get; set; } = null;
@@ -632,6 +634,91 @@ namespace RedfurSync
             }
         }
 
+        public static bool IsEsoRunning()
+        {
+            try
+            {
+                return Process.GetProcessesByName("eso64").Length > 0 || Process.GetProcessesByName("eso").Length > 0;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
+        public static async Task<bool> DownloadAndInstallDependencyAsync(string esoLiveDir, string depName, string downloadUrl, HttpClient? httpClient = null, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                if (IsEsoRunning())
+                {
+                    Debug.WriteLine($"[AddonInstaller] Warning: ESO is currently running. Installing {depName} may require /reloadui in-game.");
+                }
+
+                var addonsRoot = Path.Combine(esoLiveDir, "AddOns");
+                var targetDir = Path.Combine(addonsRoot, depName);
+                Directory.CreateDirectory(targetDir);
+
+                var client = httpClient ?? new HttpClient();
+                using var request = new HttpRequestMessage(HttpMethod.Get, downloadUrl);
+                request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) FissalRelay/1.8.0");
+
+                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+                if (!response.IsSuccessStatusCode) return false;
+
+                using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
+                using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
+
+                // Detect if all non-empty entries share a single root directory prefix (e.g. ESO-LibHistoire-master/)
+                string rootPrefix = string.Empty;
+                var firstEntry = archive.Entries.FirstOrDefault(e => !string.IsNullOrEmpty(e.Name));
+                if (firstEntry != null && firstEntry.FullName.Contains('/'))
+                {
+                    var slashIdx = firstEntry.FullName.IndexOf('/');
+                    var candidatePrefix = firstEntry.FullName.Substring(0, slashIdx + 1);
+                    if (archive.Entries.All(e => string.IsNullOrEmpty(e.Name) || e.FullName.StartsWith(candidatePrefix, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        rootPrefix = candidatePrefix;
+                    }
+                }
+
+                foreach (var entry in archive.Entries)
+                {
+                    string relPath = entry.FullName;
+                    if (!string.IsNullOrEmpty(rootPrefix) && relPath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
+                    {
+                        relPath = relPath.Substring(rootPrefix.Length);
+                    }
+
+                    if (string.IsNullOrWhiteSpace(relPath)) continue;
+
+                    relPath = relPath.Replace('/', Path.DirectorySeparatorChar);
+                    var destPath = Path.Combine(targetDir, relPath);
+
+                    if (string.IsNullOrEmpty(entry.Name))
+                    {
+                        Directory.CreateDirectory(destPath);
+                    }
+                    else
+                    {
+                        var parentDir = Path.GetDirectoryName(destPath);
+                        if (!string.IsNullOrEmpty(parentDir))
+                        {
+                            Directory.CreateDirectory(parentDir);
+                        }
+                        entry.ExtractToFile(destPath, overwrite: true);
+                    }
+                }
+
+                return true;
+            }
+            catch (Exception ex)
+            {
+                Debug.WriteLine($"[AddonInstaller] Dependency {depName} download failed: {ex.Message}");
+                return false;
+            }
+        }
+
         public static async Task<bool> SyncRaffleManifestAsync(UploadService uploader, string? esoLiveDir = null, Action<string>? log = null, CancellationToken cancellationToken = default)
         {
             try
@@ -683,12 +770,12 @@ namespace RedfurSync
 
         private const string AddonManifestTemplate = @"## Title: |cFF9900Fissal's|r Cogwork Relay
 ## Author: Echo & Fissal
-## Version: 1.5.1
-## AddOnVersion: 10501
+## Version: 1.8.0
+## AddOnVersion: 10800
 ## APIVersion: 101048 101049
 ## SavedVariables: FissalRelay_SavedVariables
 ## DependsOn: LibHistoire>=1062 LibAddonMenu-2.0>=41
-## OptionalDependsOn: LibCustomMenu
+## OptionalDependsOn: LibCustomMenu TamrielTradeCentre
 
 FissalRelay.lua
 FissalRelay_UI.lua
@@ -698,6 +785,7 @@ FissalRelay_Console.lua
 FissalRelay_MotD.lua
 FissalRelay_Audit.lua
 FissalRelay_Bids.lua
+FissalRelay_Ranks.lua
 ";
 
         // NOTE: This template is a last-resort fallback used only if the embedded

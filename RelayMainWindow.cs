@@ -145,7 +145,6 @@ namespace RedfurSync
 
         // View Panels
         private Panel _syncView = null!;
-        private Panel _assistantView = null!;
         private Panel _addonView = null!;
         private Panel _setupView = null!;
         private Panel _themesView = null!;
@@ -260,25 +259,22 @@ namespace RedfurSync
             }
         }
 
-        // ── 2. Ask Fissal Controls ──
-        private FlowLayoutPanel _transcript = null!;
-        private TextBox _prompt = null!;
-        private Button _send = null!;
-        private Label _assistantStatus = null!;
-        private Label _assistantModelLabel = null!;
-        private DwemerToggleControl _harnessToggle = null!;
-        private DwemerToggleControl _writePermsToggle = null!;
-        private readonly List<(string role, string text)> _chatHistory = new();
-        private readonly FissalHarnessService _harnessService = new(AppConfig.Instance);
+        // ── Compact Mode State ──
+        private bool _isCompactMode = false;
+        private Size _normalSize;
+        private Control? _compactToggleBtn;
 
-        // ── 2b. ESO Addon Controls ──
+        // ── 2. ESO Addon Controls ──
         private Label _lblAddonStatusBadge = null!;
         private Label _lblAddonStatusDetail = null!;
         private Label _lblAddonInstalledVer = null!;
         private Label _lblAddonLatestVer = null!;
         private TextBox _txtAddonEsoPath = null!;
         private Label _lblLibHistoireStatus = null!;
+        private Button _btnInstallLibHistoire = null!;
         private Label _lblLibAddonMenuStatus = null!;
+        private Button _btnInstallLibAddonMenu = null!;
+        private Label _lblTtcStatus = null!;
         private Button _btnInstallOrUpdateAddon = null!;
         private Button _btnBrowseEsoPath = null!;
         private Button _btnRefreshAddon = null!;
@@ -286,7 +282,6 @@ namespace RedfurSync
         private Button _btnOpenSavedVars = null!;
         private Button _btnUpdateTtcPriceTable = null!;
         private Label _lblSetupAddonStatus = null!;
-        private Button _btnSetupCheckAddon = null!;
         private TableLayoutPanel? _addonLayout;
         private TableLayoutPanel? _setupLayout;
 
@@ -402,11 +397,9 @@ namespace RedfurSync
                 TraceLog("Shown: ApplyDarkModeScrollbars");
                 ApplyDarkModeScrollbars();
                 TraceLog("Shown: all done");
-                if (_transcript.Controls.Count == 0)
+                if (AppConfig.Instance.CompactMode)
                 {
-                    AddAssistantMessage(false, "*purrs warmly* Welcome back to the bench! Fissal's tonal lattice is humming smoothly. I can inspect our live sync cassettes, check your ESO data scrolls, explain anomaly logs, or tune our apparatus settings. What shall we look into together?");
-                    // Keep greeting at top
-                    _transcript.AutoScrollPosition = new Point(0, 0);
+                    ToggleCompactMode();
                 }
             };
 
@@ -671,22 +664,22 @@ namespace RedfurSync
                 int h = _microDisplayPanel.Height;
                 if (w <= 10 || h <= 10) return;
 
-                // 1. Recessed CRT screen plate
+                // 1. Recessed CRT screen plate bound dynamically to active theme
                 using var mcPath = FissalTheme.RoundRect(0, 0, w - 1, h - 1, (int)(4 * _scale));
-                using (var mcBg = new SolidBrush(Color.FromArgb(255, 4, 12, 6)))
+                using (var mcBg = new SolidBrush(Color.FromArgb(245, CPanelBgAlt)))
                     g.FillPath(mcBg, mcPath);
 
                 // 2. Inner shadow gradient to push screen backward
                 using (var mcInnerShadow = new LinearGradientBrush(
                     new Rectangle(0, 0, w, h),
-                    Color.FromArgb(220, 5, 10, 15), Color.Transparent, LinearGradientMode.Vertical))
+                    Color.FromArgb(160, CBg), Color.Transparent, LinearGradientMode.Vertical))
                 {
                     mcInnerShadow.SetBlendTriangularShape(0.25f);
                     g.FillPath(mcInnerShadow, mcPath);
                 }
 
-                // 3. CRT green scanlines
-                using (var mcScanPen = new Pen(Color.FromArgb(22, CGreen), 1f))
+                // 3. CRT scanlines dynamically bound to active theme accent
+                using (var mcScanPen = new Pen(Color.FromArgb(16, CAccent), 1f))
                 {
                     for (int sy = 2; sy < h - 1; sy += 3)
                         g.DrawLine(mcScanPen, 1, sy, w - 2, sy);
@@ -747,13 +740,13 @@ namespace RedfurSync
                     string dispName = AppConfig.Instance.DisplayName;
                     string userStatus = string.IsNullOrWhiteSpace(dispName) ? "" : $"> OPERATOR: {dispName.ToUpper()}";
 
-                    statuses.Add(("> STAND BY... MONITORING ESO LIVE", Color.FromArgb(255, 50, 255, 50), 0));
-                    statuses.Add(("● TONAL TRANSCEIVER RESONANT • REDFUR RELAY", Color.FromArgb(255, 50, 255, 50), 0));
-                    if (!string.IsNullOrEmpty(userStatus)) statuses.Add((userStatus, Color.FromArgb(255, 50, 255, 50), 0));
+                    statuses.Add(("> STAND BY... MONITORING ESO LIVE", CAccent, 0));
+                    statuses.Add(("● TONAL TRANSCEIVER RESONANT • REDFUR RELAY", CGoldBrt, 0));
+                    if (!string.IsNullOrEmpty(userStatus)) statuses.Add((userStatus, CText, 0));
                     if (safeJobs.Length > 0)
                     {
                         int doneCount = safeJobs.Count(j => j.Status == UploadStatus.Done);
-                        statuses.Add(($"> {doneCount} TRANSMISSIONS ARCHIVED", Color.FromArgb(255, 50, 255, 50), 0));
+                        statuses.Add(($"> {doneCount} TRANSMISSIONS ARCHIVED", CGreen, 0));
                     }
                 }
 
@@ -867,7 +860,7 @@ namespace RedfurSync
             };
             rightDeck.MouseDown += OnTitleBarMouseDown;
 
-            Control MakeCircularWinBtn(string symbol, Color capColor, Action onClick)
+            Control MakeCircularWinBtn(Func<string> getSymbol, Color capColor, Action onClick)
             {
                 int btnSize = (int)(26 * _scale);
                 bool isHover = false;
@@ -887,14 +880,16 @@ namespace RedfurSync
                 btn.Click += (_, _) => onClick();
                 btn.Paint += (s, e) =>
                 {
-                    FissalTheme.DrawDwemerCircularButton(e.Graphics, new Rectangle(0, 0, btn.Width, btn.Height), symbol, capColor, isHover, isPressed, _scale);
+                    FissalTheme.DrawDwemerCircularButton(e.Graphics, new Rectangle(0, 0, btn.Width, btn.Height), getSymbol(), capColor, isHover, isPressed, _scale);
                 };
                 return btn;
             }
 
-            rightDeck.Controls.Add(MakeCircularWinBtn("✕", Color.FromArgb(195, 38, 38), () => Hide()));
-            rightDeck.Controls.Add(MakeCircularWinBtn("□", Color.FromArgb(68, 56, 40), () => WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized));
-            rightDeck.Controls.Add(MakeCircularWinBtn("—", Color.FromArgb(68, 56, 40), () => WindowState = FormWindowState.Minimized));
+            rightDeck.Controls.Add(MakeCircularWinBtn(() => "✕", Color.FromArgb(195, 38, 38), () => Hide()));
+            rightDeck.Controls.Add(MakeCircularWinBtn(() => "□", Color.FromArgb(68, 56, 40), () => WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized));
+            rightDeck.Controls.Add(MakeCircularWinBtn(() => "—", Color.FromArgb(68, 56, 40), () => WindowState = FormWindowState.Minimized));
+            _compactToggleBtn = MakeCircularWinBtn(() => _isCompactMode ? "◰" : "◱", Color.FromArgb(68, 56, 40), ToggleCompactMode);
+            rightDeck.Controls.Add(_compactToggleBtn);
 
             _headerConsole.Controls.Add(rightDeck, 2, 0);
 
@@ -937,7 +932,6 @@ namespace RedfurSync
             };
 
             AddNavButton(navStack, "sync",        "⚡ Live Sync & Logs", "Live file sync monitor and batch history");
-            AddNavButton(navStack, "assistant",   "🐾 Transceiver",      "Commune with Fissal for relay diagnostics");
             AddNavButton(navStack, "addon",       "📜 ESO Addon",        "Addon install, version sync & game path");
             AddNavButton(navStack, "setup",       "🛠️ Setup & Pairing",  "Device token, display name, and pairing code");
             AddNavButton(navStack, "themes",      "🎨 Themes & Display", "11 Terminal color palettes and UI scaling");
@@ -1149,28 +1143,17 @@ namespace RedfurSync
             }
             else if (id == "diagnostics") RefreshDiagnosticsView();
             else if (id == "setup") RefreshSetupView();
-            else if (id == "assistant")
-            {
-                BeginInvoke(() =>
-                {
-                    ApplyDarkModeScrollbars();
-                    ResizeAssistantCards();
-                    _prompt?.Focus();
-                });
-            }
         }
 
         private void BuildViewPanels()
         {
             _syncView = _navItems.First(x => x.id == "sync").viewPanel;
-            _assistantView = _navItems.First(x => x.id == "assistant").viewPanel;
             _addonView = _navItems.First(x => x.id == "addon").viewPanel;
             _setupView = _navItems.First(x => x.id == "setup").viewPanel;
             _themesView = _navItems.First(x => x.id == "themes").viewPanel;
             _diagnosticsView = _navItems.First(x => x.id == "diagnostics").viewPanel;
 
             InitSyncView();
-            InitAssistantView();
             InitAddonView();
             InitSetupView();
             InitThemesView();
@@ -2857,667 +2840,106 @@ namespace RedfurSync
         }
 
         // ═════════════════════════════════════════════════════════════════════
-        // 2. EMBEDDED ASK FISSAL TERMINAL
+        // 2. WINDOWING & COMPACT MODE ENGINE
         // ═════════════════════════════════════════════════════════════════════
-        private void InitAssistantView()
+        public void ToggleCompactMode()
         {
-            var layout = new TableLayoutPanel
+            if (InvokeRequired)
             {
-                Dock = DockStyle.Fill,
-                ColumnCount = 1,
-                RowCount = 5,
-                BackColor = CBg,
-            };
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, (int)(46 * _scale))); // Header & Toggles
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, (int)(40 * _scale))); // Quick Action chips
-            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));                 // Chat transcript
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, (int)(76 * _scale))); // Input composer
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, (int)(28 * _scale))); // Status / shortcuts
-
-            // Header
-            var header = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                ColumnCount = 4,
-                RowCount = 1,
-                BackColor = CPanelBg,
-                Padding = new Padding((int)(12 * _scale), (int)(6 * _scale), (int)(12 * _scale), (int)(6 * _scale)),
-            };
-            header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-            header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-
-            var brandLabel = new Label
-            {
-                Text = "🐾 TONAL TRANSCEIVER // FISSAL",
-                ForeColor = CGoldBrt,
-                Font = Title(10f, _scale, FontStyle.Bold),
-                AutoSize = true,
-                Anchor = AnchorStyles.Left,
-            };
-            header.Controls.Add(brandLabel, 0, 0);
-
-            _assistantModelLabel = new Label
-            {
-                Text = "● HARMONICS SYNCHRONIZED",
-                ForeColor = CGreen,
-                Font = Mono(7.5f, _scale, FontStyle.Bold),
-                AutoSize = true,
-                Anchor = AnchorStyles.Left,
-                Margin = new Padding((int)(12 * _scale), 0, 0, 0),
-            };
-            header.Controls.Add(_assistantModelLabel, 1, 0);
-
-            _harnessToggle = new DwemerToggleControl("Tonal Attunement", CGreen, _scale, AppConfig.Instance.FissalHarnessEnabled);
-            _harnessToggle.Anchor = AnchorStyles.Right;
-            _harnessToggle.Margin = new Padding(0, 0, (int)(8 * _scale), 0);
-            _harnessToggle.CheckedChanged += (_, _) =>
-            {
-                AppConfig.Instance.FissalHarnessEnabled = _harnessToggle.Checked;
-                if (!_harnessToggle.Checked) _writePermsToggle.Checked = false;
-                AppConfig.Instance.Save();
-                _writePermsToggle.Enabled = _harnessToggle.Checked;
-                _assistantStatus.Text = _harnessToggle.Checked ? "Attunement active. Tonal diagnostics accompany transmissions." : "Attunement idle.";
-            };
-            header.Controls.Add(_harnessToggle, 2, 0);
-
-            _writePermsToggle = new DwemerToggleControl("Allow Tuning", CWarn, _scale, AppConfig.Instance.FissalHarnessEnabled && AppConfig.Instance.FissalWritePermissions);
-            _writePermsToggle.Enabled = AppConfig.Instance.FissalHarnessEnabled;
-            _writePermsToggle.Anchor = AnchorStyles.Right;
-            _writePermsToggle.Margin = new Padding(0);
-            _writePermsToggle.CheckedChanged += (_, _) =>
-            {
-                AppConfig.Instance.FissalWritePermissions = _writePermsToggle.Checked;
-                AppConfig.Instance.Save();
-            };
-            header.Controls.Add(_writePermsToggle, 3, 0);
-
-            layout.Controls.Add(header, 0, 0);
-
-            // Quick Actions
-            var quickActions = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = false,
-                BackColor = Color.FromArgb(16, 13, 8),
-                Padding = new Padding((int)(8 * _scale), (int)(5 * _scale), (int)(8 * _scale), (int)(5 * _scale)),
-            };
-            AddChatChip(quickActions, "📜", "Check Sales Files", "Check whether the Relay can see my ESO data files and explain anything missing.");
-            AddChatChip(quickActions, "⏳", "Why is sync idle?", "Review my Relay state and tell me why no files may be syncing.");
-            AddChatChip(quickActions, "🔍", "Explain recent logs", "Summarize my recent Relay sync activity and call out failures or stale data.");
-            AddChatChip(quickActions, "🧹", "Clear chat", () =>
-            {
-                _transcript.Controls.Clear();
-                _chatHistory.Clear();
-                AddAssistantMessage(false, "Fresh page. What shall we inspect?");
-            });
-            layout.Controls.Add(quickActions, 0, 1);
-
-            // Transcript
-            _transcript = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                AutoScroll = true,
-                FlowDirection = FlowDirection.TopDown,
-                WrapContents = false,
-                BackColor = Color.FromArgb(10, 9, 6),
-                Padding = new Padding((int)(12 * _scale)),
-            };
-            _transcript.Resize += (_, _) => ResizeAssistantCards();
-            _transcript.HandleCreated += (_, _) => ApplyDarkModeScrollbars();
-            layout.Controls.Add(_transcript, 0, 2);
-
-            // Composer
-            var composer = new TableLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                ColumnCount = 3,
-                RowCount = 1,
-                BackColor = CPanelBg,
-                Padding = new Padding((int)(8 * _scale)),
-            };
-            composer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(28 * _scale))); // Prompt glyph
-            composer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));                  // Input text box
-            composer.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(135 * _scale))); // Transmit button
-
-            var promptMarker = new Label
-            {
-                Text = "❯",
-                ForeColor = CGreen,
-                Font = Title(13f, _scale, FontStyle.Bold),
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleCenter,
-            };
-            composer.Controls.Add(promptMarker, 0, 0);
-
-            _prompt = new TextBox
-            {
-                Dock = DockStyle.Fill,
-                Multiline = true,
-                AcceptsReturn = true,
-                ScrollBars = ScrollBars.Vertical,
-                BackColor = Color.FromArgb(16, 14, 9),
-                ForeColor = CText,
-                BorderStyle = BorderStyle.FixedSingle,
-                Font = Body(9.5f, _scale),
-                MaxLength = 2000,
-            };
-            _prompt.KeyDown += (s, e) =>
-            {
-                if (e.KeyCode == Keys.Enter && !e.Shift)
-                {
-                    e.SuppressKeyPress = true;
-                    e.Handled = true;
-                    _ = SendAssistantPromptAsync();
-                }
-            };
-            _prompt.HandleCreated += (_, _) => FissalTheme.ApplyDarkScrollbars(_prompt.Handle);
-            composer.Controls.Add(_prompt, 1, 0);
-
-            _send = MakeStyledButton("⚡ TRANSMIT", CGreen);
-            _send.Dock = DockStyle.Fill;
-            _send.Font = Title(10f, _scale, FontStyle.Bold);
-            _send.Click += async (_, _) => await SendAssistantPromptAsync();
-            composer.Controls.Add(_send, 2, 0);
-
-            layout.Controls.Add(composer, 0, 3);
-
-            // Status Bar
-            var statusPanel = new Panel
-            {
-                Dock = DockStyle.Fill,
-                BackColor = CPanelBg,
-                Padding = new Padding((int)(8 * _scale), (int)(4 * _scale), (int)(8 * _scale), (int)(4 * _scale)),
-            };
-            _assistantStatus = new Label
-            {
-                Text = "● Attuned to 115.2 kHz • Press Enter to transmit (Shift+Enter for newline)",
-                ForeColor = CTextSub,
-                Font = Body(8f, _scale),
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            };
-            statusPanel.Controls.Add(_assistantStatus);
-            layout.Controls.Add(statusPanel, 0, 4);
-
-            _assistantView.Controls.Add(layout);
-        }
-
-        private void AddChatChip(FlowLayoutPanel panel, string icon, string label, string prompt)
-        {
-            var btn = MakeStyledButton($"{icon} {label}", CGoldMid);
-            btn.Height = (int)(28 * _scale);
-            btn.Font = Body(8f, _scale);
-            // D10: tooltip makes it clear these pre-fill the prompt box (not free-form AI)
-            var tip = new ToolTip { InitialDelay = 400, ReshowDelay = 200 };
-            tip.SetToolTip(btn, $"Quick Action — loads \"{label}\" into the prompt box. Press Send to transmit.");
-            btn.Click += (_, _) =>
-            {
-                _prompt.Text = prompt;
-                _prompt.Focus();
-                _prompt.SelectionStart = _prompt.TextLength;
-            };
-            panel.Controls.Add(btn);
-        }
-
-        private void AddChatChip(FlowLayoutPanel panel, string icon, string label, Action onClick)
-        {
-            var btn = MakeStyledButton($"{icon} {label}", CTextSub);
-            btn.Height = (int)(28 * _scale);
-            btn.Font = Body(8f, _scale);
-            btn.Click += (_, _) => onClick();
-            panel.Controls.Add(btn);
-        }
-
-        private async Task SendAssistantPromptAsync()
-        {
-            var text = _prompt.Text.Trim();
-            if (string.IsNullOrWhiteSpace(text) || !_send.Enabled) return;
-
-            if (string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken) && string.IsNullOrWhiteSpace(AppConfig.Instance.ApiKey))
-            {
-                AddAssistantMessage(false, "Pairing is required before asking Fissal questions. Please switch to the **Setup & Pairing** tab and enter your Relay Pairing Code.", true);
+                BeginInvoke(new Action(ToggleCompactMode));
                 return;
             }
 
-            _prompt.Clear();
-            AddAssistantMessage(true, text);
-            _chatHistory.Add(("User", text));
+            _isCompactMode = !_isCompactMode;
+            AppConfig.Instance.CompactMode = _isCompactMode;
+            AppConfig.Instance.Save();
 
-            _send.Enabled = false;
-            _send.Text = "TUNING...";
-            _assistantStatus.Text = "Fissal is analyzing the tonal harmonics...";
-
-            var (fissalCard, rtb, copyLink, senderLabel) = CreateAssistantCard(false, false);
-            rtb.Text = "◈ Tuning harmonic frequencies...";
-            rtb.ForeColor = CGoldDim;
-            _transcript.Controls.Add(fissalCard);
-            UpdateCardHeight(fissalCard, rtb, copyLink);
-            _transcript.ScrollControlIntoView(fissalCard);
-
+            SuspendLayout();
             try
             {
-                var sb = new StringBuilder("Continue this Relay support conversation. Reply to the latest user message.\n");
-                int start = Math.Max(0, _chatHistory.Count - 8);
-                for (int i = start; i < _chatHistory.Count; i++)
+                if (_isCompactMode)
                 {
-                    sb.Append(_chatHistory[i].role).Append(": ").AppendLine(_chatHistory[i].text);
-                }
+                    _normalSize = Size;
+                    MinimumSize = new Size((int)(400 * _scale), (int)(260 * _scale));
+                    _navRail.Visible = false;
+                    _rootLayout.ColumnStyles[0].Width = 0;
+                    SwitchTab("sync");
 
-                if (_harnessToggle.Checked)
-                {
-                    sb.Append("\n\n[LOCAL RELAY HARNESS - diagnostics supplied with explicit user consent]\n")
-                      .Append(_harnessService.DescribePermissions(_writePermsToggle.Checked)).Append("\n")
-                      .Append(_watcher.GetAssistantContext());
-                    if (_writePermsToggle.Checked)
+                    int compactW = (int)(480 * _scale);
+                    int compactH = (int)(340 * _scale);
+                    var scr = Screen.FromControl(this) ?? Screen.PrimaryScreen;
+                    if (scr != null)
                     {
-                        sb.Append("\n").Append(_harnessService.GetCommandContract());
+                        var wa = scr.WorkingArea;
+                        if (compactW > wa.Width) compactW = wa.Width;
+                        if (compactH > wa.Height) compactH = wa.Height;
                     }
-                }
-
-                bool firstChunk = true;
-                var rawBuilder = new StringBuilder();
-
-                var result = await _watcher.AskFissalStreamAsync(sb.ToString(), onChunk: chunk =>
-                {
-                    if (IsDisposed || !IsHandleCreated) return;
-                    try
-                    {
-                        BeginInvoke(new Action(() =>
-                        {
-                            if (firstChunk)
-                            {
-                                firstChunk = false;
-                                rtb.Clear();
-                                rtb.ForeColor = CText;
-                            }
-                            rawBuilder.Append(chunk);
-                            rtb.AppendText(chunk);
-                            UpdateCardHeight(fissalCard, rtb, copyLink);
-                            _transcript.ScrollControlIntoView(fissalCard);
-                        }));
-                    }
-                    catch { }
-                });
-
-                string reply = result.message;
-
-                if (result.ok)
-                {
-                    reply = ProcessHarnessActionInReply(reply);
-                    _chatHistory.Add(("Fissal", reply));
+                    Size = new Size(compactW, compactH);
                 }
                 else
                 {
-                    fissalCard.BackColor = CErrBg;
-                    senderLabel.Text = "⚠️ FISSAL // SIGNAL ANOMALY";
-                    senderLabel.ForeColor = CBarFail;
+                    MinimumSize = new Size((int)(920 * _scale), (int)(580 * _scale));
+                    _navRail.Visible = true;
+                    _rootLayout.ColumnStyles[0].Width = (int)(220 * _scale);
+                    Size = _normalSize.Width > 0 ? _normalSize : new Size((int)(1060 * _scale), (int)(690 * _scale));
                 }
-
-                // Finalize formatted card
-                rtb.ForeColor = CText;
-                FormatAssistantRichText(rtb, reply);
-                if (copyLink != null && result.ok)
-                {
-                    copyLink.Visible = true;
-                    copyLink.LinkClicked += (_, _) =>
-                    {
-                        try
-                        {
-                            Clipboard.SetText(reply);
-                            copyLink.Text = "✓ Transmission copied!";
-                            copyLink.LinkColor = CGreen;
-                            _assistantStatus.Text = "Transmission copied to clipboard.";
-                        }
-                        catch { _assistantStatus.Text = "Failed to copy transmission."; }
-                    };
-                }
-
-                UpdateCardHeight(fissalCard, rtb, copyLink);
-                fissalCard.Invalidate();
-                _transcript.ScrollControlIntoView(fissalCard);
-
-                _assistantModelLabel.Text = result.ok
-                    ? (!string.IsNullOrWhiteSpace(result.model) ? $"● {result.model.ToUpperInvariant()}" : "● CONNECTED")
-                    : "● ERROR";
-                _assistantModelLabel.ForeColor = result.ok ? CGreen : CBarFail;
-                _assistantStatus.Text = result.ok ? "Response received." : "Communication interrupted.";
-            }
-            catch (Exception ex)
-            {
-                fissalCard.BackColor = CErrBg;
-                senderLabel.Text = "⚠️ FISSAL // SIGNAL ANOMALY";
-                senderLabel.ForeColor = CBarFail;
-                FormatAssistantRichText(rtb, $"Request failed: `{ex.Message}`");
-                UpdateCardHeight(fissalCard, rtb, copyLink);
-                _assistantStatus.Text = "Error during assistant transmission.";
             }
             finally
             {
-                _send.Enabled = true;
-                _send.Text = "⚡ TRANSMIT";
-                _prompt.Focus();
-            }
-        }
-
-        private string ProcessHarnessActionInReply(string response)
-        {
-            const string pattern = @"<fissal-action>(.*?)</fissal-action>";
-            var match = Regex.Match(response, pattern, RegexOptions.Singleline | RegexOptions.IgnoreCase);
-            if (!match.Success) return response;
-
-            var visibleResponse = Regex.Replace(response, pattern, string.Empty, RegexOptions.Singleline | RegexOptions.IgnoreCase).Trim();
-            if (!_harnessToggle.Checked || !_writePermsToggle.Checked)
-                return visibleResponse + "\n\n**Local action blocked:** Write permission is disabled.";
-
-            var confirmation = FissalBox.Show(
-                "Fissal requested a change to an approved Relay setting. Apply this change?",
-                "Confirm Local Change",
-                MessageBoxButtons.YesNo);
-            if (confirmation != DialogResult.Yes)
-                return visibleResponse + "\n\n**Local action cancelled:** No settings were changed.";
-
-            var execution = _harnessService.Execute(match.Groups[1].Value);
-            return visibleResponse + $"\n\n**Local action {(execution.ok ? "complete" : "failed")}:** {execution.message}";
-        }
-
-        private (Panel card, RichTextBox rtb, LinkLabel copyLink, Label senderLabel) CreateAssistantCard(bool fromUser, bool isError)
-        {
-            int availW = _transcript.ClientSize.Width > 100 ? _transcript.ClientSize.Width : (int)(680 * _scale);
-            int indent = (int)(40 * _scale);
-            int totalW = Math.Max(380, availW - (int)(28 * _scale));
-            int cardW = totalW - indent;
-
-            var card = new Panel
-            {
-                AutoSize = false,
-                Width = cardW,
-                BackColor = fromUser ? Color.FromArgb(28, 22, 14) : isError ? CErrBg : Color.FromArgb(14, 18, 14),
-                Padding = new Padding((int)(12 * _scale)),
-                Margin = new Padding(fromUser ? indent : 0, 0, fromUser ? 0 : indent, (int)(12 * _scale)),
-                Tag = "chat-card",
-            };
-
-            card.Paint += (s, e) =>
-            {
-                var g = e.Graphics;
-                g.SmoothingMode = SmoothingMode.AntiAlias;
-                Color borderCol = fromUser ? CGoldDim : isError ? CErrBorder : CBorderSub;
-                using var pen = new Pen(borderCol, 1f);
-                g.DrawRectangle(pen, 0, 0, card.Width - 1, card.Height - 1);
-
-                // Small decorative corner jewel on Fissal cards
-                if (!fromUser)
-                {
-                    using var jewelBrush = new SolidBrush(isError ? CBarFail : CGreen);
-                    g.FillPolygon(jewelBrush, new[] {
-                        new PointF(1, 1),
-                        new PointF(12 * _scale, 1),
-                        new PointF(1, 12 * _scale)
-                    });
-                }
-                else
-                {
-                    using var jewelBrush = new SolidBrush(CGoldBrt);
-                    g.FillPolygon(jewelBrush, new[] {
-                        new PointF(card.Width - 1, 1),
-                        new PointF(card.Width - (12 * _scale), 1),
-                        new PointF(card.Width - 1, 12 * _scale)
-                    });
-                }
-            };
-
-            int innerW = cardW - card.Padding.Horizontal;
-
-            // 1. Header (Sender label & Timestamp)
-            var headerPanel = new TableLayoutPanel
-            {
-                Location = new Point(card.Padding.Left, card.Padding.Top),
-                Width = innerW,
-                Height = (int)(22 * _scale),
-                ColumnCount = 2,
-                RowCount = 1,
-                BackColor = Color.Transparent,
-                Margin = new Padding(0),
-                Tag = "card-header",
-            };
-            headerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            headerPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-
-            var senderLabel = new Label
-            {
-                Text = fromUser ? "👤 YOU // TRADER CONSOLE" : isError ? "⚠️ FISSAL // SIGNAL ANOMALY" : "🐾 FISSAL // TONAL HARMONICS",
-                ForeColor = fromUser ? CGoldBrt : isError ? CBarFail : CGreen,
-                Font = Mono(8f, _scale, FontStyle.Bold),
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleLeft,
-            };
-            headerPanel.Controls.Add(senderLabel, 0, 0);
-
-            var timeLabel = new Label
-            {
-                Text = DateTime.Now.ToString("h:mm tt"),
-                ForeColor = CTextSub,
-                Font = Mono(7.5f, _scale),
-                Dock = DockStyle.Fill,
-                TextAlign = ContentAlignment.MiddleRight,
-            };
-            headerPanel.Controls.Add(timeLabel, 1, 0);
-            card.Controls.Add(headerPanel);
-
-            // 2. Rich Text Box
-            int textW = innerW - (int)(4 * _scale);
-            var rtb = new RichTextBox
-            {
-                ReadOnly = true,
-                BorderStyle = BorderStyle.None,
-                BackColor = card.BackColor,
-                ForeColor = CText,
-                Font = Body(9.5f, _scale),
-                DetectUrls = true,
-                ScrollBars = RichTextBoxScrollBars.None,
-                TabStop = false,
-                Location = new Point(card.Padding.Left, headerPanel.Bottom + (int)(5 * _scale)),
-                Width = textW,
-                Tag = "card-rtb",
-            };
-
-            rtb.LinkClicked += (_, e) =>
-            {
-                if (!string.IsNullOrWhiteSpace(e.LinkText))
-                    try { Process.Start(new ProcessStartInfo(e.LinkText) { UseShellExecute = true }); } catch { }
-            };
-
-            rtb.MouseWheel += (s, e) =>
-            {
-                if (_transcript.VerticalScroll.Visible)
-                {
-                    int newPos = _transcript.VerticalScroll.Value - (e.Delta / 2);
-                    newPos = Math.Max(_transcript.VerticalScroll.Minimum, Math.Min(_transcript.VerticalScroll.Maximum, newPos));
-                    _transcript.AutoScrollPosition = new Point(0, newPos);
-                }
-            };
-
-            card.Controls.Add(rtb);
-
-            // 3. Optional Copy Link
-            LinkLabel? copyLink = null;
-            if (!fromUser)
-            {
-                copyLink = new LinkLabel
-                {
-                    Text = "📋 Copy Transmission",
-                    LinkColor = CTextSub,
-                    ActiveLinkColor = CGoldBrt,
-                    Font = Body(7.8f, _scale),
-                    Location = new Point(card.Padding.Left, rtb.Bottom + (int)(6 * _scale)),
-                    Width = innerW,
-                    Height = (int)(20 * _scale),
-                    TextAlign = ContentAlignment.MiddleLeft,
-                    Tag = "card-copy",
-                    Visible = false,
-                };
-                card.Controls.Add(copyLink);
+                ResumeLayout(true);
             }
 
-            return (card, rtb, copyLink!, senderLabel);
+            _compactToggleBtn?.Invalidate();
+            Invalidate(true);
         }
 
-        private void UpdateCardHeight(Panel card, RichTextBox rtb, LinkLabel? copyLink)
+        // ═════════════════════════════════════════════════════════════════════
+        // RECURSIVE THEME VISITOR ENGINE
+        // ═════════════════════════════════════════════════════════════════════
+        private void ApplyThemeToHierarchy(Control root)
         {
-            int textW = card.Width - card.Padding.Horizontal - (int)(4 * _scale);
-            rtb.Width = Math.Max(100, textW);
-            int textH = CalculateRichTextHeight(rtb, rtb.Width);
-            rtb.Height = textH;
-
-            if (copyLink != null)
+            foreach (Control c in root.Controls)
             {
-                copyLink.Width = card.Width - card.Padding.Horizontal;
-                copyLink.Location = new Point(card.Padding.Left, rtb.Bottom + (int)(6 * _scale));
-            }
-
-            int cardH = (copyLink != null && copyLink.Visible ? copyLink.Bottom : rtb.Bottom) + card.Padding.Bottom + (int)(6 * _scale);
-            card.Height = cardH;
-        }
-
-        private void AddAssistantMessage(bool fromUser, string text, bool isError = false)
-        {
-            var (card, rtb, copyLink, _) = CreateAssistantCard(fromUser, isError);
-            FormatAssistantRichText(rtb, text);
-            if (copyLink != null && !fromUser && !isError)
-            {
-                copyLink.Visible = true;
-                copyLink.LinkClicked += (_, _) =>
+                // Preserve semantic controls (e.g. green status indicators, warning badges)
+                if (c.Tag is string tag && tag.StartsWith("semantic-", StringComparison.OrdinalIgnoreCase))
                 {
-                    try
+                    if (c.HasChildren) ApplyThemeToHierarchy(c);
+                    continue;
+                }
+
+                if (c is Panel or TableLayoutPanel or FlowLayoutPanel)
+                {
+                    if (c.Tag as string == "card")
                     {
-                        Clipboard.SetText(text);
-                        copyLink.Text = "✓ Transmission copied!";
-                        copyLink.LinkColor = CGreen;
-                        _assistantStatus.Text = "Transmission copied to clipboard.";
+                        c.BackColor = CPanelBg;
+                        c.ForeColor = CText;
                     }
-                    catch { _assistantStatus.Text = "Failed to copy transmission."; }
-                };
-            }
-
-            _transcript.Controls.Add(card);
-            UpdateCardHeight(card, rtb, copyLink);
-            ResizeAssistantCards();
-            _transcript.ScrollControlIntoView(card);
-        }
-
-        private void ResizeAssistantCards()
-        {
-            if (_transcript == null || _transcript.IsDisposed) return;
-            int availW = _transcript.ClientSize.Width;
-            if (availW <= 100) return;
-
-            int indent = (int)(40 * _scale);
-            int totalW = Math.Max(380, availW - (int)(28 * _scale));
-            int cardW = totalW - indent;
-
-            _transcript.SuspendLayout();
-
-            foreach (Control ctrl in _transcript.Controls)
-            {
-                if (!Equals(ctrl.Tag, "chat-card") || ctrl is not Panel card) continue;
-
-                card.Width = cardW;
-                int innerW = cardW - card.Padding.Horizontal;
-
-                TableLayoutPanel? header = null;
-                RichTextBox? rtb = null;
-                LinkLabel? copy = null;
-
-                foreach (Control child in card.Controls)
-                {
-                    if (Equals(child.Tag, "card-header") && child is TableLayoutPanel t) header = t;
-                    else if (Equals(child.Tag, "card-rtb") && child is RichTextBox r) rtb = r;
-                    else if (Equals(child.Tag, "card-copy") && child is LinkLabel l) copy = l;
-                }
-
-                if (header != null)
-                {
-                    header.Width = innerW;
-                }
-
-                if (rtb != null)
-                {
-                    int textW = innerW - (int)(4 * _scale);
-                    rtb.Width = Math.Max(100, textW);
-                    int newH = CalculateRichTextHeight(rtb, textW);
-                    rtb.Height = newH;
-                    rtb.Location = new Point(card.Padding.Left, (header != null ? header.Bottom : card.Padding.Top) + (int)(5 * _scale));
-
-                    if (copy != null)
+                    else if (c.Tag as string == "card-alt")
                     {
-                        copy.Width = innerW;
-                        copy.Location = new Point(card.Padding.Left, rtb.Bottom + (int)(6 * _scale));
+                        c.BackColor = CPanelBgAlt;
+                        c.ForeColor = CText;
                     }
-
-                    card.Height = (copy != null && copy.Visible ? copy.Bottom : rtb.Bottom) + card.Padding.Bottom + (int)(6 * _scale);
                 }
-            }
-
-            _transcript.ResumeLayout(true);
-        }
-
-        private int CalculateRichTextHeight(RichTextBox rtb, int width)
-        {
-            if (string.IsNullOrEmpty(rtb.Text)) return (int)(26 * _scale);
-
-            // 1. GDI text measurement using Bold style for maximum line wrap headroom
-            using var measureFont = new Font(rtb.Font.FontFamily, rtb.Font.SizeInPoints, FontStyle.Bold);
-            var size = TextRenderer.MeasureText(
-                rtb.Text + "\n\n  ",
-                measureFont,
-                new Size(Math.Max(100, width - (int)(16 * _scale)), int.MaxValue),
-                TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl);
-
-            int gdiH = size.Height + (int)(24 * _scale);
-
-            // 2. RichEdit native position check if handle is created
-            int rtbH = 0;
-            if (rtb.IsHandleCreated && rtb.TextLength > 0)
-            {
-                var pt = rtb.GetPositionFromCharIndex(rtb.TextLength - 1);
-                int lineH = (int)(rtb.Font.GetHeight() * 1.8f);
-                rtbH = pt.Y + lineH + (int)(22 * _scale);
-            }
-
-            return Math.Max(Math.Max((int)(26 * _scale), gdiH), rtbH);
-        }
-
-        private void FormatAssistantRichText(RichTextBox box, string raw)
-        {
-            string clean = Regex.Replace(raw ?? string.Empty, "(?m)^#{1,6}\\s+", string.Empty);
-            clean = Regex.Replace(clean, "(?m)^[-*]\\s+", "• ");
-            box.Text = clean;
-
-            // Apply style passes
-            ApplyStylePattern(box, @"\*\*(.+?)\*\*", FontStyle.Bold, CGoldBrt, removeMarker: true);
-            ApplyStylePattern(box, @"\*([^*]+?)\*", FontStyle.Italic, Color.FromArgb(170, 210, 180), removeMarker: true);
-            ApplyStylePattern(box, @"`([^`]+)`", FontStyle.Regular, CWarn, removeMarker: true, monospace: true);
-        }
-
-        private void ApplyStylePattern(RichTextBox box, string pattern, FontStyle style, Color color, bool removeMarker, bool monospace = false)
-        {
-            var matches = Regex.Matches(box.Text, pattern);
-            for (int i = matches.Count - 1; i >= 0; i--)
-            {
-                var match = matches[i];
-                if (removeMarker)
+                else if (c is Label lbl)
                 {
-                    box.Select(match.Index, match.Length);
-                    box.SelectedText = match.Groups[1].Value;
+                    if (lbl.Tag as string == "header") lbl.ForeColor = CGoldBrt;
+                    else if (lbl.Tag as string == "field") lbl.ForeColor = CGoldDim;
+                    else if (lbl.Tag as string == "sub") lbl.ForeColor = CTextSub;
+                    else if (lbl.Tag as string == "value") lbl.ForeColor = CText;
                 }
-                box.Select(match.Index, match.Groups[1].Value.Length);
-                box.SelectionFont = monospace ? Mono(9f, _scale, style) : Body(9.5f, _scale, style);
-                box.SelectionColor = color;
+                else if (c is TextBox tb)
+                {
+                    tb.BackColor = CPanelBgAlt;
+                    tb.ForeColor = CText;
+                }
+                else if (c is RichTextBox rtb)
+                {
+                    rtb.BackColor = CPanelBgAlt;
+                    rtb.ForeColor = CText;
+                }
+
+                if (c.HasChildren) ApplyThemeToHierarchy(c);
             }
-            box.Select(0, 0);
         }
 
         // ═════════════════════════════════════════════════════════════════════
@@ -3561,6 +2983,7 @@ namespace RedfurSync
             };
             formPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(160 * _scale)));
             formPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            formPanel.Tag = "card";
 
             var sectionLabel = new Label
             {
@@ -3799,32 +3222,36 @@ namespace RedfurSync
 
             layout.Controls.Add(formPanel, 0, 0);
 
-            // Card 2: Required Dependencies (LibHistoire, LibAddonMenu)
+            // Card 2: Required Dependencies & Data Utilities (LibHistoire, LibAddonMenu, TamrielTradeCentre)
             var depsPanel = new TableLayoutPanel
             {
                 Dock = DockStyle.Top,
-                ColumnCount = 2,
+                ColumnCount = 3,
                 RowCount = 4,
                 BackColor = CPanelBg,
                 Padding = new Padding((int)(16 * _scale)),
                 AutoSize = true,
                 Margin = new Padding(0, 0, 0, (int)(12 * _scale)),
+                Tag = "card"
             };
             depsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(160 * _scale)));
             depsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            depsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
             var depsHeader = new Label
             {
-                Text = "REQUIRED ESO LIBRARIES & DATA UTILITIES",
+                Text = "ESO ADDON DEPENDENCIES & DATA UTILITIES",
                 UseMnemonic = false,
                 ForeColor = CGoldBrt,
                 Font = Title(11f, _scale, FontStyle.Bold),
                 AutoSize = true,
                 Margin = new Padding(0, 0, 0, (int)(14 * _scale)),
+                Tag = "header"
             };
             depsPanel.Controls.Add(depsHeader, 0, 0);
-            depsPanel.SetColumnSpan(depsHeader, 2);
+            depsPanel.SetColumnSpan(depsHeader, 3);
 
+            // 1. LibHistoire
             depsPanel.Controls.Add(MakeFieldLabel("LibHistoire:"), 0, 1);
             _lblLibHistoireStatus = new Label
             {
@@ -3836,6 +3263,28 @@ namespace RedfurSync
             };
             depsPanel.Controls.Add(_lblLibHistoireStatus, 1, 1);
 
+            _btnInstallLibHistoire = MakeStyledButton("⚡ Install LibHistoire", CGoldBrt);
+            _btnInstallLibHistoire.AutoSize = true;
+            _btnInstallLibHistoire.Click += async (_, _) =>
+            {
+                string live = _txtAddonEsoPath.Text.Trim();
+                if (string.IsNullOrWhiteSpace(live)) live = AddonInstallerService.FindEsoLiveDirectory() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(live) || !Directory.Exists(live))
+                {
+                    FissalBox.Show("Elder Scrolls Online live folder not found.", "Folder Error");
+                    return;
+                }
+                _btnInstallLibHistoire.Enabled = false;
+                _btnInstallLibHistoire.Text = "Installing...";
+                bool ok = await AddonInstallerService.DownloadAndInstallDependencyAsync(live, "LibHistoire", AddonInstallerService.LibHistoireDownloadUrl);
+                _btnInstallLibHistoire.Enabled = true;
+                _btnInstallLibHistoire.Text = "⚡ Install LibHistoire";
+                RefreshAddonView();
+                FissalBox.Show(ok ? "LibHistoire installed successfully! If ESO is running, type /reloadui in-game." : "Failed to install LibHistoire from repository mirror.", "LibHistoire");
+            };
+            depsPanel.Controls.Add(_btnInstallLibHistoire, 2, 1);
+
+            // 2. LibAddonMenu-2.0
             depsPanel.Controls.Add(MakeFieldLabel("LibAddonMenu-2.0:"), 0, 2);
             _lblLibAddonMenuStatus = new Label
             {
@@ -3847,9 +3296,50 @@ namespace RedfurSync
             };
             depsPanel.Controls.Add(_lblLibAddonMenuStatus, 1, 2);
 
-            depsPanel.Controls.Add(MakeFieldLabel("TTC Price Table:"), 0, 3);
-            _btnUpdateTtcPriceTable = MakeStyledButton("Update TTC PriceTable", CGoldBrt);
+            _btnInstallLibAddonMenu = MakeStyledButton("⚡ Install LibAddonMenu", CGoldBrt);
+            _btnInstallLibAddonMenu.AutoSize = true;
+            _btnInstallLibAddonMenu.Click += async (_, _) =>
+            {
+                string live = _txtAddonEsoPath.Text.Trim();
+                if (string.IsNullOrWhiteSpace(live)) live = AddonInstallerService.FindEsoLiveDirectory() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(live) || !Directory.Exists(live))
+                {
+                    FissalBox.Show("Elder Scrolls Online live folder not found.", "Folder Error");
+                    return;
+                }
+                _btnInstallLibAddonMenu.Enabled = false;
+                _btnInstallLibAddonMenu.Text = "Installing...";
+                bool ok = await AddonInstallerService.DownloadAndInstallDependencyAsync(live, "LibAddonMenu-2.0", AddonInstallerService.LibAddonMenuDownloadUrl);
+                _btnInstallLibAddonMenu.Enabled = true;
+                _btnInstallLibAddonMenu.Text = "⚡ Install LibAddonMenu";
+                RefreshAddonView();
+                FissalBox.Show(ok ? "LibAddonMenu-2.0 installed successfully! If ESO is running, type /reloadui in-game." : "Failed to install LibAddonMenu-2.0 from repository mirror.", "LibAddonMenu-2.0");
+            };
+            depsPanel.Controls.Add(_btnInstallLibAddonMenu, 2, 2);
+
+            // 3. TTC Price Table
+            depsPanel.Controls.Add(MakeFieldLabel("TamrielTradeCentre:"), 0, 3);
+            _lblTtcStatus = new Label
+            {
+                Text = "ℹ Optional — Required for in-game store bumping & price lookups",
+                ForeColor = CTextSub,
+                Font = Mono(8f, _scale),
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Tag = "sub"
+            };
+            depsPanel.Controls.Add(_lblTtcStatus, 1, 3);
+
+            var ttcFlow = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.LeftToRight,
+                AutoSize = true,
+                Margin = new Padding(0)
+            };
+            _btnUpdateTtcPriceTable = MakeStyledButton("⚡ Update Price Table", CGoldBrt);
             _btnUpdateTtcPriceTable.AutoSize = true;
+            _btnUpdateTtcPriceTable.Margin = new Padding(0, 0, (int)(6 * _scale), 0);
             _btnUpdateTtcPriceTable.Click += async (_, _) =>
             {
                 string live = _txtAddonEsoPath.Text.Trim();
@@ -3860,13 +3350,23 @@ namespace RedfurSync
                     return;
                 }
                 _btnUpdateTtcPriceTable.Enabled = false;
-                _btnUpdateTtcPriceTable.Text = "Downloading TTC...";
+                _btnUpdateTtcPriceTable.Text = "Downloading...";
                 bool ok = await AddonInstallerService.DownloadAndInstallTtcPriceTableAsync(live);
                 _btnUpdateTtcPriceTable.Enabled = true;
-                _btnUpdateTtcPriceTable.Text = "Update TTC PriceTable";
-                FissalBox.Show(ok ? "TTC PriceTable downloaded and updated successfully!" : "Failed to download TTC PriceTable from server.", "TTC PriceTable");
+                _btnUpdateTtcPriceTable.Text = "⚡ Update Price Table";
+                FissalBox.Show(ok ? "TTC PriceTable downloaded and updated successfully! If ESO is running, type /reloadui in-game." : "Failed to download TTC PriceTable from server.", "TTC PriceTable");
             };
-            depsPanel.Controls.Add(_btnUpdateTtcPriceTable, 1, 3);
+            ttcFlow.Controls.Add(_btnUpdateTtcPriceTable);
+
+            var btnVisitTtc = MakeStyledButton("Visit TTC Web", CTextSub);
+            btnVisitTtc.AutoSize = true;
+            btnVisitTtc.Click += (_, _) =>
+            {
+                try { Process.Start(new ProcessStartInfo("https://tamrieltradecentre.com") { UseShellExecute = true }); } catch { }
+            };
+            ttcFlow.Controls.Add(btnVisitTtc);
+
+            depsPanel.Controls.Add(ttcFlow, 2, 3);
 
             layout.Controls.Add(depsPanel, 0, 1);
 
@@ -3889,6 +3389,7 @@ namespace RedfurSync
                 AutoSize = true,
                 Margin = new Padding(0, 0, 0, (int)(12 * _scale)),
             };
+            guidePanel.Tag = "card";
             guidePanel.Controls.Add(guideHeader, 0, 0);
 
             var guideText = new Label
@@ -3964,17 +3465,40 @@ namespace RedfurSync
             // Dependencies
             if (status.EsoLiveFound)
             {
-                _lblLibHistoireStatus.Text = status.LibHistoireInstalled ? "● LibHistoire: Installed" : "▲ LibHistoire: Missing (Required for Sales Sync)";
-                _lblLibHistoireStatus.ForeColor = status.LibHistoireInstalled ? CGreen : CBarFail;
+                if (status.LibHistoireInstalled)
+                {
+                    _lblLibHistoireStatus.Text = "● LibHistoire: Installed";
+                    _lblLibHistoireStatus.ForeColor = CGreen;
+                    _btnInstallLibHistoire.Text = "✓ Reinstall / Update";
+                    _btnInstallLibHistoire.ForeColor = CTextSub;
+                }
+                else
+                {
+                    _lblLibHistoireStatus.Text = "▲ LibHistoire: Missing (Required for Sales Sync)";
+                    _lblLibHistoireStatus.ForeColor = CBarFail;
+                    _btnInstallLibHistoire.Text = "⚡ Install LibHistoire";
+                    _btnInstallLibHistoire.ForeColor = CGoldBrt;
+                }
 
-                _lblLibAddonMenuStatus.Text = status.LibAddonMenuInstalled ? "● LibAddonMenu-2.0: Installed" : "▲ LibAddonMenu-2.0: Missing (Recommended for Menu)";
-                _lblLibAddonMenuStatus.ForeColor = status.LibAddonMenuInstalled ? CGreen : CWarn;
+                if (status.LibAddonMenuInstalled)
+                {
+                    _lblLibAddonMenuStatus.Text = "● LibAddonMenu-2.0: Installed";
+                    _lblLibAddonMenuStatus.ForeColor = CGreen;
+                    _btnInstallLibAddonMenu.Text = "✓ Reinstall / Update";
+                    _btnInstallLibAddonMenu.ForeColor = CTextSub;
+                }
+                else
+                {
+                    _lblLibAddonMenuStatus.Text = "▲ LibAddonMenu-2.0: Missing (Required for Settings)";
+                    _lblLibAddonMenuStatus.ForeColor = CWarn;
+                    _btnInstallLibAddonMenu.Text = "⚡ Install LibAddonMenu";
+                    _btnInstallLibAddonMenu.ForeColor = CGoldBrt;
+                }
             }
             else
             {
                 _lblLibHistoireStatus.Text = "● LibHistoire: Unknown (ESO Path needed)";
                 _lblLibHistoireStatus.ForeColor = CTextSub;
-
                 _lblLibAddonMenuStatus.Text = "● LibAddonMenu-2.0: Unknown (ESO Path needed)";
                 _lblLibAddonMenuStatus.ForeColor = CTextSub;
             }
@@ -4003,6 +3527,7 @@ namespace RedfurSync
             };
             _setupLayout = layout;
 
+            layout.AutoScrollMargin = new Size(0, (int)(24 * _scale));
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -4023,6 +3548,7 @@ namespace RedfurSync
             };
             authPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, labelColWidth));
             authPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            authPanel.Tag = "card";
 
             var authHeader = new Label
             {
@@ -4085,76 +3611,37 @@ namespace RedfurSync
 
             layout.Controls.Add(authPanel, 0, 0);
 
-            // ── Card 2: ESO Addon Integration & Status ──
-            var addonPanel = new TableLayoutPanel
+            // ── Card 2: Lightweight 1-line ESO Addon Status Banner ──
+            var addonBanner = new TableLayoutPanel
             {
                 Dock = DockStyle.Top,
                 ColumnCount = 2,
-                RowCount = 3,
+                RowCount = 1,
                 BackColor = CPanelBg,
-                Padding = new Padding((int)(16 * _scale)),
+                Padding = new Padding((int)(14 * _scale), (int)(10 * _scale), (int)(14 * _scale), (int)(10 * _scale)),
                 AutoSize = true,
                 Margin = new Padding(0, 0, 0, (int)(12 * _scale)),
+                Tag = "card"
             };
-            addonPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, labelColWidth));
-            addonPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            addonBanner.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            addonBanner.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
 
-            var addonHeader = new Label
-            {
-                Text = "ESO ADDON INTEGRATION & SYNC STATUS",
-                UseMnemonic = false,
-                ForeColor = CGoldBrt,
-                Font = Title(11f, _scale, FontStyle.Bold),
-                AutoSize = true,
-                Margin = new Padding(0, 0, 0, (int)(14 * _scale)),
-            };
-            addonPanel.Controls.Add(addonHeader, 0, 0);
-            addonPanel.SetColumnSpan(addonHeader, 2);
-
-            addonPanel.Controls.Add(MakeFieldLabel("Addon State:"), 0, 1);
             _lblSetupAddonStatus = new Label
             {
-                Text = "Checking addon...",
+                Text = "● Checking addon...",
                 ForeColor = CGoldBrt,
-                Font = Mono(9f, _scale, FontStyle.Bold),
+                Font = Mono(8.5f, _scale, FontStyle.Bold),
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
-                Margin = new Padding(0, (int)(4 * _scale), 0, (int)(6 * _scale)),
             };
-            addonPanel.Controls.Add(_lblSetupAddonStatus, 1, 1);
+            addonBanner.Controls.Add(_lblSetupAddonStatus, 0, 0);
 
-            addonPanel.Controls.Add(MakeFieldLabel("Addon Actions:"), 0, 2);
-            var addonActionFlow = new FlowLayoutPanel
-            {
-                Dock = DockStyle.Fill,
-                FlowDirection = FlowDirection.LeftToRight,
-                WrapContents = true,
-                AutoSize = true,
-                Margin = new Padding(0, (int)(4 * _scale), 0, 0),
-            };
-
-            _btnSetupCheckAddon = MakeStyledButton("Check Addon Status", CGoldBrt);
-            _btnSetupCheckAddon.Margin = new Padding(0, 0, (int)(8 * _scale), (int)(4 * _scale));
-            _btnSetupCheckAddon.Click += async (_, _) =>
-            {
-                _btnSetupCheckAddon.Enabled = false;
-                _btnSetupCheckAddon.Text = "Checking...";
-                await AddonInstallerService.CheckRemoteAddonVersionAsync(AppConfig.Instance.ServerUrl);
-                RefreshSetupView();
-                RefreshAddonView();
-                _btnSetupCheckAddon.Enabled = true;
-                _btnSetupCheckAddon.Text = "Check Addon Status";
-                FissalBox.Show("Addon installation status refreshed from server & disk.", "Status Refreshed");
-            };
-            addonActionFlow.Controls.Add(_btnSetupCheckAddon);
-
-            var btnGoToAddon = MakeStyledButton("Inspect / Full Addon Manager →", CText);
-            btnGoToAddon.Margin = new Padding(0, 0, (int)(8 * _scale), (int)(4 * _scale));
+            var btnGoToAddon = MakeStyledButton("Go to ESO Addon Manager →", CText);
+            btnGoToAddon.AutoSize = true;
             btnGoToAddon.Click += (_, _) => SwitchTab("addon");
-            addonActionFlow.Controls.Add(btnGoToAddon);
+            addonBanner.Controls.Add(btnGoToAddon, 1, 0);
 
-            addonPanel.Controls.Add(addonActionFlow, 1, 2);
-            layout.Controls.Add(addonPanel, 0, 1);
+            layout.Controls.Add(addonBanner, 0, 1);
 
             // ── Card 3: Relay Preferences & Network Endpoints ──
             var prefsPanel = new TableLayoutPanel
@@ -4169,6 +3656,7 @@ namespace RedfurSync
             };
             prefsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, labelColWidth));
             prefsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            prefsPanel.Tag = "card";
 
             var prefsHeader = new Label
             {
@@ -4657,13 +4145,14 @@ namespace RedfurSync
             topCard.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(140 * _scale)));
             topCard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
-            topCard.Controls.Add(MakeFieldLabel("Watcher State:"), 0, 0);
-            _watcherStatusLabel = new Label { Text = "Active", ForeColor = CGreen, Font = Mono(8.5f, _scale, FontStyle.Bold), Dock = DockStyle.Fill };
-            topCard.Controls.Add(_watcherStatusLabel, 1, 0);
+            topCard.Tag = "card";
+            topCard.Controls.Add(MakeFieldLabel("ESO Directory:"), 0, 0);
+            _esoPathLabel = new Label { Text = "Detecting...", ForeColor = CTextSub, Font = Mono(7.5f, _scale), Dock = DockStyle.Fill, Tag = "sub" };
+            topCard.Controls.Add(_esoPathLabel, 1, 0);
 
-            topCard.Controls.Add(MakeFieldLabel("ESO Directory:"), 0, 1);
-            _esoPathLabel = new Label { Text = "Sniffing...", ForeColor = CTextSub, Font = Mono(7.5f, _scale), Dock = DockStyle.Fill };
-            topCard.Controls.Add(_esoPathLabel, 1, 1);
+            topCard.Controls.Add(MakeFieldLabel("Watcher Telemetry:"), 0, 1);
+            _watcherStatusLabel = new Label { Text = "Active", ForeColor = CGreen, Font = Mono(8.5f, _scale, FontStyle.Bold), Dock = DockStyle.Fill };
+            topCard.Controls.Add(_watcherStatusLabel, 1, 1);
 
             topCard.Controls.Add(MakeFieldLabel("Config Path:"), 0, 2);
             _configPathLabel = new Label { Text = AppConfig.ConfigPath, ForeColor = CTextSub, Font = Mono(7.5f, _scale), Dock = DockStyle.Fill };
@@ -4720,15 +4209,38 @@ namespace RedfurSync
 
         private void RefreshDiagnosticsView()
         {
-            _watcherStatusLabel.Text = _watcher.GetJobsSnapshot().Any(j => j.Status == UploadStatus.Uploading) ? "TRANSMITTING" : "ACTIVE MONITORING";
-            _watcherStatusLabel.ForeColor = CGreen;
+            string resolvedEsoPath = AppConfig.Instance.CustomEsoLiveDirectory ?? AddonInstallerService.FindEsoLiveDirectory() ?? "";
+            bool hasValidEsoDir = !string.IsNullOrWhiteSpace(resolvedEsoPath) && Directory.Exists(resolvedEsoPath);
+
+            if (hasValidEsoDir)
+            {
+                _esoPathLabel.Text = resolvedEsoPath;
+                _esoPathLabel.ForeColor = CText;
+            }
+            else
+            {
+                _esoPathLabel.Text = "Not Detected — Configure in Setup or Addon Tab";
+                _esoPathLabel.ForeColor = CWarn;
+            }
+
+            if (!hasValidEsoDir)
+            {
+                _watcherStatusLabel.Text = "⚠ Inactive (ESO Directory inaccessible)";
+                _watcherStatusLabel.ForeColor = CWarn;
+            }
+            else if (_watcher.GetJobsSnapshot().Any(j => j.Status == UploadStatus.Uploading))
+            {
+                _watcherStatusLabel.Text = "● Transmitting File Data...";
+                _watcherStatusLabel.ForeColor = CGoldBrt;
+            }
+            else
+            {
+                _watcherStatusLabel.Text = "● Actively Monitoring (Standing by for live game events)";
+                _watcherStatusLabel.ForeColor = CGreen;
+            }
 
             string context = _watcher.GetAssistantContext();
             _diagLogBox.Text = $"[FISSAL TONAL RELAY DIAGNOSTICS SNAPSHOT — {DateTime.Now:yyyy-MM-dd HH:mm:ss}]\n\n" + context;
-
-            // Find ESO path from diagnostic lines
-            var match = Regex.Match(context, @"Tracked directories:\s*(.+)");
-            if (match.Success) _esoPathLabel.Text = match.Groups[1].Value.Trim();
         }
 
         // ═════════════════════════════════════════════════════════════════════
@@ -4755,6 +4267,11 @@ namespace RedfurSync
 
             _navRail.BackColor = CPanelBg;
             _contentHost.BackColor = CBg;
+
+            // Hierarchical semantic re-theming across all views
+            ApplyThemeToHierarchy(_contentHost);
+            ApplyThemeToHierarchy(_headerConsole);
+            ApplyThemeToHierarchy(_navRail);
 
             PopulateThemeCards();
             SwitchTab(_activeTabId);
@@ -4882,10 +4399,6 @@ namespace RedfurSync
                     FissalTheme.ApplyDarkScrollbars(_syncJobsList.Handle);
                 if (_syncLogBox != null && _syncLogBox.IsHandleCreated)
                     FissalTheme.ApplyDarkScrollbars(_syncLogBox.Handle);
-                if (_transcript != null && _transcript.IsHandleCreated)
-                    FissalTheme.ApplyDarkScrollbars(_transcript.Handle);
-                if (_prompt != null && _prompt.IsHandleCreated)
-                    FissalTheme.ApplyDarkScrollbars(_prompt.Handle);
                 if (_diagLogBox != null && _diagLogBox.IsHandleCreated)
                     FissalTheme.ApplyDarkScrollbars(_diagLogBox.Handle);
                 if (_addonLayout != null && _addonLayout.IsHandleCreated)

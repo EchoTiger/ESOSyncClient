@@ -199,6 +199,20 @@ function FR:GetRaffleDateInfo(guildId)
         prevRange = "Prior Week"
     end
 
+    local prevPrevStart = prevStart - 604800
+    local prevPrevMonth = SafeDate("%b", prevPrevStart)
+    local prevPrevDay = tonumber(SafeDate("%d", prevPrevStart)) or ""
+    local prevPrevRange
+    if prevPrevMonth ~= "" and prevMonth ~= "" then
+        if prevPrevMonth == prevMonth then
+            prevPrevRange = string.format("%s %s – %s", prevPrevMonth, tostring(prevPrevDay), tostring(prevDay))
+        else
+            prevPrevRange = string.format("%s %s – %s %s", prevPrevMonth, tostring(prevPrevDay), prevMonth, tostring(prevDay))
+        end
+    else
+        prevPrevRange = "Archived Cycle"
+    end
+
     local drawWeekday = SafeDate("%A", curEnd)
     if drawWeekday == "" then drawWeekday = "Sunday" end
     local drawingStr = (endMonth ~= "" and endDay ~= "")
@@ -220,6 +234,7 @@ function FR:GetRaffleDateInfo(guildId)
     return {
         currentRange = curRange,
         previousRange = sealedLabel or prevRange,
+        prevPrevRange = prevPrevRange,
         startDate = (startMonth ~= "" and startDay ~= "") and string.format("%s %s", startMonth, tostring(startDay)) or "Start",
         endDate = (endMonth ~= "" and endDay ~= "") and string.format("%s %s", endMonth, tostring(endDay)) or "End",
         drawingDate = drawingStr,
@@ -246,22 +261,33 @@ function FR:ReplaceMotDDateRange(text, dateInfo)
         isWinnerAnnouncement = true
     end
 
-    local targetRange = isWinnerAnnouncement and dateInfo.previousRange or dateInfo.currentRange
-    local resolved = text
+    local cycle = self.selectedMotDWeekCycle or "live"
+    local targetRange
+    if cycle == "last" or (cycle == "live" and isWinnerAnnouncement) then
+        targetRange = dateInfo.previousRange
+    elseif cycle == "prev" then
+        targetRange = dateInfo.prevPrevRange or dateInfo.previousRange
+    else
+        targetRange = dateInfo.currentRange
+    end
 
-    -- 1. Surgical Legacy Date Range (e.g. "Sep 20 - 27", "Sep 20 – 27", "Sep 27 – Oct 4", "Sept 27th - Oct 4th", "9/27 - 10/4")
+    local resolved = text
     local norm = self.NormalizeDashesBytePreserving and self:NormalizeDashesBytePreserving(resolved)
         or resolved:gsub("\xE2\x80\x93", "---"):gsub("\xE2\x80\x94", "---")
 
-    -- Priority 1: Cross-month range e.g. "Sep 27 - Oct 4", "Sept 27th - Oct 4th", "September 27 - October 4"
-    local patA = "([A-Za-z]+%.?%s+%d+[%a]*%s*[%-]+%s*[A-Za-z]+%.?%s+%d+[%a]*)"
-    -- Priority 2: Same-month range e.g. "Oct 4 - 11", "Oct 4th - 11th", "Sep 20 - 27"
-    local patB = "([A-Za-z]+%.?%s+%d+[%a]*%s*[%-]+%s*%d+[%a]*)"
-    -- Priority 3: Numeric M/D - M/D e.g. "9/27 - 10/4" or "10/4 - 10/11"
-    local patC = "(%d%d?/%d%d?%s*[%-]+%s*%d%d?/%d%d?)"
+    -- Priority 1: Cross-month range e.g. "Sep 27 ~Oct 4", "Sep 27 - Oct 4", "Sept 27th to Oct 4th", "September 27 / October 4"
+    local patA1 = "([A-Za-z]+%.?%s+%d+[%a]*%s*[%-~/]+%s*[A-Za-z]+%.?%s+%d+[%a]*)"
+    local patA2 = "([A-Za-z]+%.?%s+%d+[%a]*%s+to%s+[A-Za-z]+%.?%s+%d+[%a]*)"
+    -- Priority 2: Same-month range e.g. "Oct 4 - 11", "Oct 4th ~ 11th", "Oct 4 to 11"
+    local patB1 = "([A-Za-z]+%.?%s+%d+[%a]*%s*[%-~/]+%s*%d+[%a]*)"
+    local patB2 = "([A-Za-z]+%.?%s+%d+[%a]*%s+to%s+%d+[%a]*)"
+    -- Priority 3: Numeric M/D - M/D e.g. "9/27 - 10/4" or "10/4 ~ 10/11"
+    local patC = "(%d%d?/%d%d?%s*[%-~/]+%s*%d%d?/%d%d?)"
 
-    local s, e = norm:find(patA)
-    if not s then s, e = norm:find(patB) end
+    local s, e = norm:find(patA1)
+    if not s then s, e = norm:find(patA2) end
+    if not s then s, e = norm:find(patB1) end
+    if not s then s, e = norm:find(patB2) end
     if not s then s, e = norm:find(patC) end
 
     if s and e then
@@ -319,20 +345,44 @@ function FR:ResolveMotDTokens(rawText, guildId)
         return tostring(n)
     end
 
-    -- Prioritize live bank ledger if active deposits are present; fallback to sealed draw data
-    local pot = (liveMetrics and liveMetrics.totalGold > 0) and liveMetrics.totalGold or (raffleData and raffleData.pot or 0)
-    local tickets = (liveMetrics and liveMetrics.totalGold > 0) and liveMetrics.totalTickets or (raffleData and raffleData.tickets or 0)
-    local entrants = (liveMetrics and liveMetrics.totalGold > 0) and liveMetrics.entrants or (raffleData and raffleData.entrants or 0)
-    local entries = (liveMetrics and liveMetrics.totalGold > 0) and liveMetrics.entries or 0
+    -- Dynamic cycle selection (live bank, last sealed draw, or previous cycle)
+    local cycle = self.selectedMotDWeekCycle or "live"
+    local pot, tickets, entrants, entries, dateWeekStr
+
+    if cycle == "last" then
+        pot = raffleData and raffleData.pot or 0
+        tickets = raffleData and raffleData.tickets or 0
+        entrants = raffleData and raffleData.entrants or 0
+        entries = entrants
+        dateWeekStr = dateInfo.previousRange
+    elseif cycle == "prev" then
+        pot = raffleData and raffleData.pot or 0
+        tickets = raffleData and raffleData.tickets or 0
+        entrants = raffleData and raffleData.entrants or 0
+        entries = entrants
+        dateWeekStr = dateInfo.prevPrevRange or dateInfo.previousRange
+    else -- "live"
+        local isLiveBank = (liveMetrics and liveMetrics.totalGold > 0)
+        pot = isLiveBank and liveMetrics.totalGold or (raffleData and raffleData.pot or 0)
+        tickets = isLiveBank and liveMetrics.totalTickets or (raffleData and raffleData.tickets or 0)
+        entrants = isLiveBank and liveMetrics.entrants or (raffleData and raffleData.entrants or 0)
+        entries = isLiveBank and liveMetrics.entries or 0
+        dateWeekStr = dateInfo.currentRange
+    end
 
     local potStr = FormatGoldVal(pot)
     local tixStr = FormatGoldVal(tickets)
     local entStr = tostring(entrants)
     local entriesStr = tostring(entries)
 
-    local firstPrize = (liveMetrics and liveMetrics.totalGold > 0) and math.floor(pot * 0.30) or (raffleData and raffleData.prizes and raffleData.prizes.first or 0)
-    local secondPrize = (liveMetrics and liveMetrics.totalGold > 0) and math.floor(pot * 0.20) or (raffleData and raffleData.prizes and raffleData.prizes.second or 0)
-    local thirdPrize = (liveMetrics and liveMetrics.totalGold > 0) and math.floor(pot * 0.10) or (raffleData and raffleData.prizes and raffleData.prizes.third or 0)
+    local firstPrize = math.floor(pot * 0.30)
+    local secondPrize = math.floor(pot * 0.20)
+    local thirdPrize = math.floor(pot * 0.10)
+    if cycle ~= "live" and raffleData and raffleData.prizes then
+        firstPrize = raffleData.prizes.first or firstPrize
+        secondPrize = raffleData.prizes.second or secondPrize
+        thirdPrize = raffleData.prizes.third or thirdPrize
+    end
 
     local firstStr = FormatGoldVal(firstPrize)
     local secondStr = FormatGoldVal(secondPrize)
@@ -364,12 +414,12 @@ function FR:ResolveMotDTokens(rawText, guildId)
         ["{raffle_winners}"] = winnersStr,
         ["{kiosk_location}"] = kioskStr,
         ["{guild_name}"] = guildName,
-        ["{raffle_dates}"] = dateInfo.currentRange,
+        ["{raffle_dates}"] = dateWeekStr,
         ["{raffle_prev_dates}"] = dateInfo.previousRange,
-        ["{drawing_date}"] = dateInfo.drawingDate,
+        ["{drawing_date}"] = (cycle == "live") and dateInfo.drawingDate or (cycle == "last" and "Concluded" or "Archived"),
         ["{raffle_start}"] = dateInfo.startDate,
         ["{raffle_end}"] = dateInfo.endDate,
-        ["{date_week}"] = dateInfo.currentRange,
+        ["{date_week}"] = dateWeekStr,
     }
 
     local resolved = rawText
@@ -421,12 +471,12 @@ function FR:BuildMotDStudio(parent)
     local title = wm:CreateControl("$(parent)_Title", card, CT_LABEL)
     title:SetAnchor(TOPLEFT, card, TOPLEFT, 12, 10)
     title:SetFont("ZoFontGameBold")
-    title:SetText("|cFF9900MOTD BROADCAST STUDIO|r • |c00FFCCDynamic Token Interpolation|r")
+    title:SetText("|cFF9900MOTD BROADCAST STUDIO|r")
 
     local sourceBadge = wm:CreateControl("$(parent)_SourceBadge", card, CT_LABEL)
-    sourceBadge:SetAnchor(LEFT, title, RIGHT, 14, 0)
+    sourceBadge:SetAnchor(LEFT, title, RIGHT, 10, 0)
     sourceBadge:SetFont("ZoFontGameBold")
-    sourceBadge:SetText("|c59E08A[LEDGER: Loading...]|r")
+    sourceBadge:SetText("|c59E08A[SYNCED]|r")
     self.motdSourceBadge = sourceBadge
 
     local authLbl = wm:CreateControl("$(parent)_AuthLbl", card, CT_LABEL)
@@ -540,23 +590,37 @@ function FR:BuildMotDStudio(parent)
     gaugeLbl:SetText(string.format("Length: 0 / %d characters (0 bytes)", MAX_MOTD_CHARS))
     self.motdStudioGaugeLbl = gaugeLbl
 
-    -- 5b. Active Ledger & Token Telemetry Ribbon
+    -- 5b. Active Ledger & Token Telemetry Ribbon (Single Bounded Line with Tooltip)
     local telemetryBar = wm:CreateControl("$(parent)_TelemetryBar", card, CT_LABEL)
-    telemetryBar:SetAnchor(TOPLEFT, editBg, BOTTOMLEFT, 4, 22)
-    telemetryBar:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -4, 22)
+    telemetryBar:SetAnchor(TOPLEFT, editBg, BOTTOMLEFT, 4, 24)
+    telemetryBar:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -4, 24)
+    telemetryBar:SetHeight(20)
+    telemetryBar:SetMaxLineCount(1)
+    telemetryBar:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
     telemetryBar:SetFont("ZoFontGameSmall")
     telemetryBar:SetText("|c888888Active Ledger Telemetry: Initializing...|r")
+    telemetryBar:SetMouseEnabled(true)
+    telemetryBar:SetHandler("OnMouseEnter", function(ctrl)
+        if ctrl.tooltipData then
+            InitializeTooltip(InformationTooltip, ctrl, TOP, 0, -4)
+            local tip = string.format("|cFF9900%s|r\n|cCCCCCC%s|r", ctrl.tooltipData.title, ctrl.tooltipData.text)
+            SetTooltipText(InformationTooltip, tip)
+        end
+    end)
+    telemetryBar:SetHandler("OnMouseExit", function()
+        ClearTooltip(InformationTooltip)
+    end)
     self.motdTelemetryBar = telemetryBar
 
-    -- 6. Preset Selector Buttons (Dedicated Mid Tier)
+    -- 6. Preset Selector Buttons & Raffle Cycle Dropdown (Dedicated Mid Tier)
     local presetLbl = wm:CreateControl("$(parent)_PresetLbl", card, CT_LABEL)
-    presetLbl:SetAnchor(TOPLEFT, editBg, BOTTOMLEFT, 4, 44)
+    presetLbl:SetAnchor(TOPLEFT, editBg, BOTTOMLEFT, 4, 48)
     presetLbl:SetFont("ZoFontGameSmall")
-    presetLbl:SetText("|c888888Load Template:|r")
+    presetLbl:SetText("|c888888Template:|r")
 
     local pBtn1 = wm:CreateControl("$(parent)_PresetRaffle", card, CT_BUTTON)
     pBtn1:SetAnchor(LEFT, presetLbl, RIGHT, 8, 0)
-    pBtn1:SetDimensions(100, 24)
+    pBtn1:SetDimensions(95, 24)
     pBtn1:SetFont("ZoFontGameSmall")
     pBtn1:SetText("Raffle Push")
     self:StyleTactileButton(pBtn1, {
@@ -574,8 +638,8 @@ function FR:BuildMotDStudio(parent)
     end)
 
     local pBtn2 = wm:CreateControl("$(parent)_PresetWinners", card, CT_BUTTON)
-    pBtn2:SetAnchor(LEFT, pBtn1, RIGHT, 8, 0)
-    pBtn2:SetDimensions(95, 24)
+    pBtn2:SetAnchor(LEFT, pBtn1, RIGHT, 6, 0)
+    pBtn2:SetDimensions(85, 24)
     pBtn2:SetFont("ZoFontGameSmall")
     pBtn2:SetText("Winners")
     self:StyleTactileButton(pBtn2, {
@@ -593,8 +657,8 @@ function FR:BuildMotDStudio(parent)
     end)
 
     local pBtn3 = wm:CreateControl("$(parent)_PresetTrader", card, CT_BUTTON)
-    pBtn3:SetAnchor(LEFT, pBtn2, RIGHT, 8, 0)
-    pBtn3:SetDimensions(95, 24)
+    pBtn3:SetAnchor(LEFT, pBtn2, RIGHT, 6, 0)
+    pBtn3:SetDimensions(85, 24)
     pBtn3:SetFont("ZoFontGameSmall")
     pBtn3:SetText("Trader")
     self:StyleTactileButton(pBtn3, {
@@ -611,8 +675,43 @@ function FR:BuildMotDStudio(parent)
         self:LoadMotDPreset("trader_update")
     end)
 
+    -- Raffle Week Selection Dropdown
+    local weekLbl = wm:CreateControl("$(parent)_WeekLbl", card, CT_LABEL)
+    weekLbl:SetAnchor(LEFT, pBtn3, RIGHT, 12, 0)
+    weekLbl:SetFont("ZoFontGameSmall")
+    weekLbl:SetText("|c888888Cycle:|r")
+
+    local weekDropdownCtrl = wm:CreateControlFromVirtual("$(parent)_WeekDropdown", card, "ZO_ComboBox")
+    weekDropdownCtrl:SetAnchor(LEFT, weekLbl, RIGHT, 6, 0)
+    weekDropdownCtrl:SetDimensions(190, 24)
+    local weekCb = ZO_ComboBox_ObjectFromContainer(weekDropdownCtrl)
+    weekCb:SetSortsItems(false)
+    weekCb:SetSpacing(4)
+    self.motdWeekComboBox = weekCb
+
+    local function OnWeekSelected(_, entryText, entry)
+        self.selectedMotDWeekCycle = entry.mode or "live"
+        self:UpdateMotDTelemetryBar()
+        self:UpdateMotDStudioGauge()
+    end
+
+    local eLive = weekCb:CreateItemEntry("Live Raffle (Active Bank)", OnWeekSelected)
+    eLive.mode = "live"
+    weekCb:AddItem(eLive)
+
+    local eLast = weekCb:CreateItemEntry("Last Raffle (Sealed Draw)", OnWeekSelected)
+    eLast.mode = "last"
+    weekCb:AddItem(eLast)
+
+    local ePrev = weekCb:CreateItemEntry("Previous Raffle (Archive)", OnWeekSelected)
+    ePrev.mode = "prev"
+    weekCb:AddItem(ePrev)
+
+    weekCb:SelectItem(eLive)
+    self.selectedMotDWeekCycle = "live"
+
     local undoBtn = wm:CreateControl("$(parent)_UndoBtn", card, CT_BUTTON)
-    undoBtn:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -170, 42)
+    undoBtn:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -170, 48)
     undoBtn:SetDimensions(62, 24)
     undoBtn:SetFont("ZoFontGameSmall")
     undoBtn:SetText("↶ Undo")
@@ -631,7 +730,7 @@ function FR:BuildMotDStudio(parent)
     end)
 
     local redoBtn = wm:CreateControl("$(parent)_RedoBtn", card, CT_BUTTON)
-    redoBtn:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -104, 42)
+    redoBtn:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -104, 48)
     redoBtn:SetDimensions(62, 24)
     redoBtn:SetFont("ZoFontGameSmall")
     redoBtn:SetText("Redo ↷")
@@ -650,7 +749,7 @@ function FR:BuildMotDStudio(parent)
     end)
 
     local clearBtn = wm:CreateControl("$(parent)_ClearBtn", card, CT_BUTTON)
-    clearBtn:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -4, 42)
+    clearBtn:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -4, 48)
     clearBtn:SetDimensions(95, 24)
     clearBtn:SetFont("ZoFontGameSmall")
     clearBtn:SetText("Clear Text")
@@ -815,37 +914,61 @@ function FR:UpdateMotDTelemetryBar(guildId)
     local liveMetrics = self.CalculateRaffleMetrics and self:CalculateRaffleMetrics(guildId, 7, 1000)
     local dateInfo = self:GetRaffleDateInfo(guildId)
 
-    local isLiveBank = (liveMetrics and liveMetrics.totalGold > 0)
-    local pot = isLiveBank and liveMetrics.totalGold or (raffleData and raffleData.pot or 0)
-    local tickets = isLiveBank and liveMetrics.totalTickets or (raffleData and raffleData.tickets or 0)
-    local entrants = isLiveBank and liveMetrics.entrants or (raffleData and raffleData.entrants or 0)
+    local cycle = self.selectedMotDWeekCycle or "live"
+    local pot, tickets, entrants, rangeStr, drawStr, badgeText, winnersTooltip
 
     local FormatGold = function(n)
         return ZO_LocalizeDecimalNumber and ZO_LocalizeDecimalNumber(n or 0) or tostring(n or 0)
     end
 
-    local isSynced = (raffleData and raffleData.isSynced)
-    local srcBadge = isSynced and "|c59E08A[DISCORD SYNCED ✓]|r" or "|cFFD700[LIVE BANK]|r"
-    local weekRead = raffleData and (raffleData.weekLabel or (raffleData.weekStart and ("Week " .. raffleData.weekStart))) or "Active Cycle"
+    if cycle == "last" then
+        badgeText = "|c59E08A[SEALED DRAW]|r"
+        pot = raffleData and raffleData.pot or 0
+        tickets = raffleData and raffleData.tickets or 0
+        entrants = raffleData and raffleData.entrants or 0
+        rangeStr = dateInfo.previousRange or "Prior Cycle"
+        drawStr = "Concluded"
+    elseif cycle == "prev" then
+        badgeText = "|c00FFCC[ARCHIVED]|r"
+        pot = raffleData and raffleData.pot or 0
+        tickets = raffleData and raffleData.tickets or 0
+        entrants = raffleData and raffleData.entrants or 0
+        rangeStr = dateInfo.prevPrevRange or "Archived Cycle"
+        drawStr = "Archived"
+    else -- "live"
+        local isLiveBank = (liveMetrics and liveMetrics.totalGold > 0)
+        badgeText = isLiveBank and "|cFFD700[LIVE BANK]|r" or "|c59E08A[DISCORD SYNCED]|r"
+        pot = isLiveBank and liveMetrics.totalGold or (raffleData and raffleData.pot or 0)
+        tickets = isLiveBank and liveMetrics.totalTickets or (raffleData and raffleData.tickets or 0)
+        entrants = isLiveBank and liveMetrics.entrants or (raffleData and raffleData.entrants or 0)
+        rangeStr = dateInfo.currentRange or "Active Cycle"
+        drawStr = dateInfo.drawingDate or "Sunday 7:00 PM ET"
+    end
 
-    local winnersSummary = ""
     if raffleData and raffleData.winners and #raffleData.winners > 0 then
         local wParts = {}
         for _, w in ipairs(raffleData.winners) do
-            table.insert(wParts, string.format("#%d %s", w.place or 1, tostring(w.name or "@winner")))
+            table.insert(wParts, string.format("• #%d %s (%s gold)", w.place or 1, tostring(w.name or "@winner"), FormatGold(w.prize)))
         end
-        winnersSummary = " • |c888888Winners:|r " .. table.concat(wParts, ", ")
+        winnersTooltip = table.concat(wParts, "\n")
+    else
+        winnersTooltip = "No winners recorded."
     end
 
     if self.motdTelemetryBar then
-        local text = string.format("%s |c00FFCC%s|r: Reading |cFFFFFF%s|r • Pot: |cFFD700%sg|r (%s tix, %s entrants) • Dates: |c00FFCC%s|r (Prev: |cFFD700%s|r)%s",
-            srcBadge, guildName ~= "" and guildName or "Guild", weekRead, FormatGold(pot), FormatGold(tickets), tostring(entrants),
-            dateInfo.currentRange or "Active", dateInfo.previousRange or "Prior", winnersSummary)
+        local text = string.format("%s |c00FFCC%s|r • %s • Pot: |cFFD700%sg|r (%s tix, %s entrants)",
+            badgeText, guildName ~= "" and guildName or "Guild", rangeStr, FormatGold(pot), FormatGold(tickets), tostring(entrants))
         self.motdTelemetryBar:SetText(text)
+
+        self.motdTelemetryBar.tooltipData = {
+            title = string.format("%s Telemetry (%s)", guildName ~= "" and guildName or "Guild", rangeStr),
+            text = string.format("Cycle Mode: %s\nPot: %s gold\nTickets: %s (%s unique entrants)\nDrawing Deadline: %s\n\nWinners:\n%s",
+                badgeText, FormatGold(pot), FormatGold(tickets), tostring(entrants), drawStr, winnersTooltip),
+        }
     end
 
     if self.motdSourceBadge then
-        self.motdSourceBadge:SetText(string.format("%s |cFFFFFF%s|r", srcBadge, weekRead))
+        self.motdSourceBadge:SetText(badgeText)
     end
 end
 

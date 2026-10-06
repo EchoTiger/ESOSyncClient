@@ -10,7 +10,7 @@ FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
 FR.name = "FissalRelay"
-FR.version = "1.7.0"
+FR.version = "1.8.0"
 FR.author = "Echo & Fissal"
 
 -- Defaults for SavedVariables
@@ -21,6 +21,15 @@ local DEFAULT_SAVED_VARS = {
     sales = {},
     kiosks = {},
     nextSeq = 0,
+    auditExclusions = {},
+    autoWelcome = {
+        welcomed = {},
+        pending = {},
+        guildSettings = {},
+        autoSendWhenMailOpen = false,
+        initialized = false,
+        mailDelay = 2500,
+    },
     audit = {
         schemaVersion = 3,
         domains = {
@@ -2798,6 +2807,17 @@ local function OnAddOnLoaded(eventCode, addOnName)
     if not FR.savedVars.settings then FR.savedVars.settings = {} end
     if FR.savedVars.settings.bumperAutoReload == nil then FR.savedVars.settings.bumperAutoReload = false end
     if FR.savedVars.settings.bumperWaitForLibHistoire == nil then FR.savedVars.settings.bumperWaitForLibHistoire = true end
+    if not FR.savedVars.auditExclusions then FR.savedVars.auditExclusions = {} end
+    if not FR.savedVars.autoWelcome then
+        FR.savedVars.autoWelcome = {
+            welcomed = {},
+            pending = {},
+            guildSettings = {},
+            autoSendWhenMailOpen = false,
+            initialized = false,
+            mailDelay = 2500,
+        }
+    end
 
     -- Ground Recon Quarantine Purge (Ruling 4.2 & Fable 5.1): Remove Kargiz, Shuzug, and assistant bankers
     if FR.savedVars.kiosks then

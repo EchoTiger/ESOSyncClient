@@ -103,6 +103,9 @@ namespace RedfurSync
         
         [JsonPropertyName("AppScale")]
         public float  AppScale { get; set; } = 1.0f;
+
+        [JsonPropertyName("CompactMode")]
+        public bool   CompactMode { get; set; } = false;
         
         [JsonPropertyName("LastUpdatePrompt")]
         public DateTime LastUpdatePrompt { get; set; } = DateTime.MinValue;
