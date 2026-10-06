@@ -3310,7 +3310,7 @@ namespace RedfurSync
             };
             depsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(160 * _scale)));
             depsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            depsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            depsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(190 * _scale)));
 
             var depsHeader = new Label
             {
@@ -3679,7 +3679,7 @@ namespace RedfurSync
             authPanel.Controls.Add(MakeFieldLabel("Relay Pairing Code:"), 0, 2);
             var pairLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true, Margin = new Padding(0, (int)(3 * _scale), 0, (int)(6 * _scale)) };
             pairLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            pairLayout.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            pairLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(140 * _scale)));
 
             _txtPairingCode = MakeStyledTextBox(AppConfig.Instance.PairingCode);
             pairLayout.Controls.Add(_txtPairingCode, 0, 0);
@@ -3731,7 +3731,7 @@ namespace RedfurSync
                 Tag = "card"
             };
             addonBanner.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            addonBanner.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            addonBanner.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(220 * _scale)));
 
             _lblSetupAddonStatus = new Label
             {
@@ -3795,6 +3795,7 @@ namespace RedfurSync
                 cfg.Save();
                 UpdateSilentSyncButton();
             };
+            _btnSilentSync.MinimumSize = new Size((int)(180 * _scale), (int)(28 * _scale));
             UpdateSilentSyncButton();
             prefsPanel.Controls.Add(_btnSilentSync, 1, 2);
 
@@ -3802,6 +3803,7 @@ namespace RedfurSync
             prefsPanel.Controls.Add(MakeFieldLabel("MasterMerchant Sync:"), 0, 3);
             _btnSyncMm = MakeStyledButton("", CGoldBrt);
             _btnSyncMm.AutoSize = true;
+            _btnSyncMm.MinimumSize = new Size((int)(180 * _scale), (int)(28 * _scale));
             _btnSyncMm.Margin = new Padding(0, (int)(3 * _scale), 0, (int)(6 * _scale));
             _btnSyncMm.Click += (_, _) =>
             {
@@ -4284,6 +4286,8 @@ namespace RedfurSync
             {
                 Dock = DockStyle.Fill,
                 FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = true,
+                AutoSize = true,
                 BackColor = CPanelBg,
                 Padding = new Padding((int)(8 * _scale), (int)(6 * _scale), (int)(8 * _scale), (int)(6 * _scale)),
             };
@@ -4468,6 +4472,9 @@ namespace RedfurSync
                 Margin = new Padding(0, 0, (int)(8 * _scale), 0),
                 Tag = role ?? (accent == CGreen ? "btn-green" : (accent == CWarn ? "btn-warn" : (accent == CBarFail ? "btn-fail" : (accent == CTextSub ? "btn-sub" : (accent == CText ? "btn-text" : "btn-gold"))))),
             };
+            btn.AutoEllipsis = false;
+            btn.TextAlign = ContentAlignment.MiddleCenter;
+            btn.MinimumSize = new Size((int)(80 * _scale), (int)(26 * _scale));
             btn.FlatAppearance.BorderColor = accent;
             btn.FlatAppearance.BorderSize = 1;
             btn.FlatAppearance.MouseOverBackColor = Color.FromArgb(45, accent.R, accent.G, accent.B);
