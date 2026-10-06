@@ -2223,6 +2223,62 @@ function FR:CalculateRaffleMetrics(guildId, lookbackDays, ticketPrice)
         lookbackDays = lookbackDays,
         officersExcluded = officerCount,
         entriesVoided = voidedCount,
+        entrantsMap = entrantsMap,
+    }
+end
+
+
+function FR:GetMyRaffleTickets(guildIndexOrId)
+    local guildId = self:ResolveGuildId(guildIndexOrId or (self.selectedGuildIndex or 1))
+    if not guildId or guildId == 0 then
+        guildId = GetGuildId(self.selectedGuildIndex or 1)
+    end
+    local guildName = GetGuildName(guildId)
+    local isPost = string.find(guildName, "Post") ~= nil
+    local isDealers = string.find(guildName, "Dealer") ~= nil
+    local isCaravan = string.find(guildName, "Caravan") ~= nil
+    local gKey = isPost and "post" or (isDealers and "dealers" or (isCaravan and "caravan" or nil))
+
+    local myRaw = GetDisplayName() or ""
+    local myName = string.lower(string.gsub(myRaw, "^@", ""))
+    local raffleData = gKey and self.GetRaffleData and self:GetRaffleData(gKey)
+    local liveMetrics = self.CalculateRaffleMetrics and self:CalculateRaffleMetrics(guildId, 7, 1000)
+
+    local tickets = 0
+    local gold = 0
+    local totalTickets = 0
+    local isLive = false
+
+    if liveMetrics and liveMetrics.totalGold > 0 then
+        totalTickets = liveMetrics.totalTickets or 0
+        if liveMetrics.entrantsMap then
+            tickets = liveMetrics.entrantsMap[myRaw] or liveMetrics.entrantsMap["@" .. myName] or liveMetrics.entrantsMap[myName] or 0
+            gold = tickets * (liveMetrics.ticketPrice or 1000)
+            if tickets > 0 then isLive = true end
+        end
+    end
+
+    if tickets == 0 and raffleData then
+        if totalTickets == 0 then totalTickets = raffleData.tickets or 0 end
+        if raffleData.entrants and (raffleData.entrants[myName] or raffleData.entrants["@" .. myName] or raffleData.entrants[myRaw]) then
+            local e = raffleData.entrants[myName] or raffleData.entrants["@" .. myName] or raffleData.entrants[myRaw]
+            tickets = e.tickets or 0
+            gold = e.gold or (tickets * 1000)
+        end
+    end
+
+    local odds = (totalTickets > 0) and ((tickets / totalTickets) * 100) or 0
+
+    return {
+        guildId = guildId,
+        guildName = guildName,
+        guildKey = gKey,
+        tickets = tickets,
+        gold = gold,
+        totalTickets = totalTickets,
+        odds = odds,
+        isLive = isLive,
+        hasEntered = (tickets > 0),
     }
 end
 
@@ -2465,6 +2521,36 @@ function FR:HandleSlashCommand(arg)
             if self.UpdateHUD then self:UpdateHUD() end
             PlayFissalSound()
         end
+    elseif cmd == "tickets" or cmd == "mytickets" then
+        local myName = GetDisplayName() or "@player"
+        PrintChat(string.format("=== Raffle Ticket Status for %s ===", ColorText(myName, "00FFCC")))
+        local totalMyTickets = 0
+        for g = 1, GetNumGuilds() do
+            local gId = GetGuildId(g)
+            local gName = GetGuildName(gId)
+            if string.find(gName, "Redfur") then
+                local res = self:GetMyRaffleTickets(gId)
+                if res.hasEntered then
+                    totalMyTickets = totalMyTickets + res.tickets
+                    local srcBadge = res.isLive and "|c59E08A[Live Bank]|r" or "|c00FFCC[Sealed Ledger]|r"
+                    df("  • [%s] %s: |c00FFCC%s tickets|r (%s gold) — |c59E08A%.1f%% win odds|r %s",
+                        ColorText(gName, "00FFCC"),
+                        ColorText(myName, "FFFFFF"),
+                        ZO_LocalizeDecimalNumber(res.tickets),
+                        ZO_LocalizeDecimalNumber(res.gold),
+                        res.odds,
+                        srcBadge)
+                else
+                    df("  • [%s] No tickets entered yet this cycle. (1,000g = 1 ticket)", ColorText(gName, "888888"))
+                end
+            end
+        end
+        if totalMyTickets > 0 then
+            PrintChat(string.format("Total across Redfur guilds: |c00FFCC%s tickets|r. Good luck in the draw!", ZO_LocalizeDecimalNumber(totalMyTickets)))
+        else
+            PrintChat("Deposit gold in the guild bank anytime before Sunday 7 PM ET to enter the raffle!")
+        end
+        PlayFissalSound()
     elseif cmd == "inactives" or cmd == "audit" then
         if self.ToggleConsole and #args <= 1 then
             self:ToggleConsole(true)

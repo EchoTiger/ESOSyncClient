@@ -619,14 +619,20 @@ function FR:BuildOverviewTab(parent)
     entLbl:SetText("Entrants: |cFFFFFF0 members|r")
     self.overviewEntLbl = entLbl
 
+    local myTicketsLbl = wm:CreateControl("$(parent)_MyTickets", card3, CT_LABEL)
+    myTicketsLbl:SetAnchor(TOPLEFT, card3, TOPLEFT, 10, 62)
+    myTicketsLbl:SetFont("ZoFontGameBold")
+    myTicketsLbl:SetText("• Your Entry: |c888888Checking personal ticket ledger...|r")
+    self.overviewMyTicketsLbl = myTicketsLbl
+
     local prizesLbl = wm:CreateControl("$(parent)_Prizes", card3, CT_LABEL)
-    prizesLbl:SetAnchor(TOPLEFT, card3, TOPLEFT, 10, 66)
+    prizesLbl:SetAnchor(TOPLEFT, card3, TOPLEFT, 10, 88)
     prizesLbl:SetFont("ZoFontGame")
     prizesLbl:SetText("Prizes: 1st: -- | 2nd: -- | 3rd: -- | Guild: --")
     self.overviewPrizesLbl = prizesLbl
 
     local winnersLbl = wm:CreateControl("$(parent)_Winners", card3, CT_LABEL)
-    winnersLbl:SetAnchor(TOPLEFT, card3, TOPLEFT, 10, 92)
+    winnersLbl:SetAnchor(TOPLEFT, card3, TOPLEFT, 10, 112)
     winnersLbl:SetAnchor(BOTTOMRIGHT, card3, BOTTOMRIGHT, -10, -40)
     winnersLbl:SetFont("ZoFontGameSmall")
     winnersLbl:SetText("Winners: Checking ledger...")
@@ -1089,6 +1095,18 @@ function FR:UpdateOverviewTab()
         if self.overviewEntLbl then self.overviewEntLbl:SetText("• Entrants: |c888888--|r") end
         if self.overviewPrizesLbl then self.overviewPrizesLbl:SetText("• Payouts: |c888888No sealed ledger for this guild.|r") end
         if self.overviewWinnersLbl then self.overviewWinnersLbl:SetText("• Winners: |c888888(Switch to Redfur Trading Post or Redfur Dealers)|r") end
+    end
+
+    -- Update Personal Tickets Label
+    if self.overviewMyTicketsLbl then
+        local myEntry = self.GetMyRaffleTickets and self:GetMyRaffleTickets(guildId)
+        if myEntry and myEntry.hasEntered then
+            local srcBadge = myEntry.isLive and "|c59E08A[Live Bank]|r" or "|c00FFCC[Sealed Ledger]|r"
+            self.overviewMyTicketsLbl:SetText(string.format("• Your Entry %s: |c00FFCC%s tickets|r (|cFFD700%sg deposited|r) • Win Probability: |c59E08A%.1f%%|r",
+                srcBadge, ZO_LocalizeDecimalNumber(myEntry.tickets), ZO_LocalizeDecimalNumber(myEntry.gold), myEntry.odds))
+        else
+            self.overviewMyTicketsLbl:SetText("• Your Entry: |c8888880 tickets (0.0% odds)|r • |cFFD700Deposit gold in Guild Bank (1k = 1 tix) to enter!|r")
+        end
     end
 end
 
