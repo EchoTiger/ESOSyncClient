@@ -368,6 +368,8 @@ namespace RedfurSync
             MinimumSize = new Size((int)(920 * _scale), (int)(580 * _scale));
             Size = new Size(initialW, initialH);
 
+            FissalTheme.SetTheme(AppConfig.Instance.Theme);
+
             SuspendLayout();
             try
             {
@@ -1104,6 +1106,7 @@ namespace RedfurSync
                 Dock = DockStyle.Fill,
                 BackColor = CBg,
                 Visible = false,
+                Tag = "view-root",
             };
 
             btn.Click += (_, _) => SwitchTab(id);
@@ -2919,23 +2922,88 @@ namespace RedfurSync
                         c.BackColor = CPanelBgAlt;
                         c.ForeColor = CText;
                     }
+                    else if (c.Tag as string == "view-root" || c.Parent == _contentHost)
+                    {
+                        c.BackColor = CBg;
+                        c.ForeColor = CText;
+                    }
+                }
+                else if (c is Button btn)
+                {
+                    btn.BackColor = CBtnBg;
+                    Color accent = CGoldBrt;
+                    if (btn.Tag is string btag)
+                    {
+                        if (btag == "btn-green") accent = CGreen;
+                        else if (btag == "btn-warn") accent = CWarn;
+                        else if (btag == "btn-fail") accent = CBarFail;
+                        else if (btag == "btn-sub") accent = CTextSub;
+                        else if (btag == "btn-text") accent = CText;
+                        else accent = CGoldBrt;
+                    }
+                    else
+                    {
+                        if (btn.Text.StartsWith("Install", StringComparison.OrdinalIgnoreCase) ||
+                            btn.Text.StartsWith("Restart", StringComparison.OrdinalIgnoreCase) ||
+                            btn.Text.StartsWith("Apply", StringComparison.OrdinalIgnoreCase) ||
+                            btn.Text.StartsWith("✓", StringComparison.OrdinalIgnoreCase))
+                        {
+                            accent = CGreen;
+                        }
+                        else if (btn.Text.Contains("Clear", StringComparison.OrdinalIgnoreCase) ||
+                                 btn.Text.Contains("Open", StringComparison.OrdinalIgnoreCase) ||
+                                 btn.Text.Contains("Visit", StringComparison.OrdinalIgnoreCase))
+                        {
+                            accent = CTextSub;
+                        }
+                        else
+                        {
+                            accent = CGoldBrt;
+                        }
+                    }
+                    btn.ForeColor = accent;
+                    btn.FlatAppearance.BorderColor = accent;
+                    btn.FlatAppearance.MouseOverBackColor = Color.FromArgb(45, accent.R, accent.G, accent.B);
                 }
                 else if (c is Label lbl)
                 {
-                    if (lbl.Tag as string == "header") lbl.ForeColor = CGoldBrt;
-                    else if (lbl.Tag as string == "field") lbl.ForeColor = CGoldDim;
-                    else if (lbl.Tag as string == "sub") lbl.ForeColor = CTextSub;
-                    else if (lbl.Tag as string == "value") lbl.ForeColor = CText;
+                    if (lbl.Tag is string ltag)
+                    {
+                        if (ltag == "header") lbl.ForeColor = CGoldBrt;
+                        else if (ltag == "field") lbl.ForeColor = CGoldBrt;
+                        else if (ltag == "sub") lbl.ForeColor = CTextSub;
+                        else if (ltag == "value") lbl.ForeColor = CText;
+                        else lbl.ForeColor = CText;
+                    }
+                    else
+                    {
+                        if (lbl.Font.Bold || lbl.Font.Size >= 10f) lbl.ForeColor = CGoldBrt;
+                        else if (lbl.Font.Italic || lbl.Font.Size <= 8f) lbl.ForeColor = CTextSub;
+                        else lbl.ForeColor = CText;
+                    }
                 }
                 else if (c is TextBox tb)
                 {
-                    tb.BackColor = CPanelBgAlt;
+                    tb.BackColor = CBg;
                     tb.ForeColor = CText;
                 }
                 else if (c is RichTextBox rtb)
                 {
                     rtb.BackColor = CPanelBgAlt;
                     rtb.ForeColor = CText;
+                }
+                else if (c is ComboBox cmb)
+                {
+                    cmb.BackColor = CPanelBgAlt;
+                    cmb.ForeColor = CText;
+                }
+                else if (c is CheckBox cb)
+                {
+                    cb.ForeColor = CText;
+                }
+                else if (c is TrackBar trk)
+                {
+                    trk.BackColor = CPanelBg;
                 }
 
                 if (c.HasChildren) ApplyThemeToHierarchy(c);
@@ -2993,6 +3061,7 @@ namespace RedfurSync
                 Font = Title(11f, _scale, FontStyle.Bold),
                 AutoSize = true,
                 Margin = new Padding(0, 0, 0, (int)(14 * _scale)),
+                Tag = "header",
             };
             formPanel.Controls.Add(sectionLabel, 0, 0);
             formPanel.SetColumnSpan(sectionLabel, 2);
@@ -3013,6 +3082,7 @@ namespace RedfurSync
                 ForeColor = CGoldBrt,
                 Font = Mono(9.5f, _scale, FontStyle.Bold),
                 AutoSize = true,
+                Tag = "semantic-badge",
             };
             _lblAddonStatusDetail = new Label
             {
@@ -3022,6 +3092,7 @@ namespace RedfurSync
                 Font = Mono(8f, _scale),
                 AutoSize = true,
                 Margin = new Padding(0, (int)(3 * _scale), 0, 0),
+                Tag = "sub",
             };
             statusFlow.Controls.Add(_lblAddonStatusBadge);
             statusFlow.Controls.Add(_lblAddonStatusDetail);
@@ -3036,6 +3107,7 @@ namespace RedfurSync
                 Font = Mono(9f, _scale, FontStyle.Bold),
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
+                Tag = "value",
             };
             formPanel.Controls.Add(_lblAddonInstalledVer, 1, 2);
 
@@ -3048,6 +3120,7 @@ namespace RedfurSync
                 Font = Mono(9f, _scale, FontStyle.Bold),
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
+                Tag = "header",
             };
             formPanel.Controls.Add(_lblAddonLatestVer, 1, 3);
 
@@ -3217,6 +3290,7 @@ namespace RedfurSync
                 Font = Mono(8f, _scale, FontStyle.Italic),
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
+                Tag = "sub",
             };
             formPanel.Controls.Add(noticeLabel, 1, 6);
 
@@ -3260,6 +3334,7 @@ namespace RedfurSync
                 Font = Mono(8.5f, _scale, FontStyle.Bold),
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
+                Tag = "semantic-status",
             };
             depsPanel.Controls.Add(_lblLibHistoireStatus, 1, 1);
 
@@ -3293,6 +3368,7 @@ namespace RedfurSync
                 Font = Mono(8.5f, _scale, FontStyle.Bold),
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
+                Tag = "semantic-status",
             };
             depsPanel.Controls.Add(_lblLibAddonMenuStatus, 1, 2);
 
@@ -3388,6 +3464,7 @@ namespace RedfurSync
                 Font = Title(11f, _scale, FontStyle.Bold),
                 AutoSize = true,
                 Margin = new Padding(0, 0, 0, (int)(12 * _scale)),
+                Tag = "header",
             };
             guidePanel.Tag = "card";
             guidePanel.Controls.Add(guideHeader, 0, 0);
@@ -3401,6 +3478,7 @@ namespace RedfurSync
                 ForeColor = CTextSub,
                 Font = Mono(8f, _scale),
                 AutoSize = true,
+                Tag = "sub",
             };
             guidePanel.Controls.Add(guideText, 0, 1);
 
@@ -3425,6 +3503,7 @@ namespace RedfurSync
             _lblAddonInstalledVer.ForeColor = status.InstalledVersion != null ? CText : CBarFail;
 
             _lblAddonLatestVer.Text = $"v{status.LatestVersion} (Latest Available)";
+            _lblAddonLatestVer.ForeColor = CGoldBrt;
 
             switch (status.State)
             {
@@ -3432,24 +3511,36 @@ namespace RedfurSync
                     _lblAddonStatusBadge.Text = "● ADDON IS INSTALLED & UP TO DATE";
                     _lblAddonStatusBadge.ForeColor = CGreen;
                     _lblAddonStatusDetail.Text = $"Version {status.InstalledVersion} is active in ESO live directory.";
+                    _lblAddonStatusDetail.ForeColor = CTextSub;
                     _btnInstallOrUpdateAddon.Text = "Repair / Reinstall Addon (v" + status.LatestVersion + ")";
                     _btnInstallOrUpdateAddon.ForeColor = CGoldBrt;
+                    _btnInstallOrUpdateAddon.FlatAppearance.BorderColor = CGoldBrt;
+                    _btnInstallOrUpdateAddon.BackColor = CBtnBg;
+                    _btnInstallOrUpdateAddon.Tag = "btn-gold";
                     break;
 
                 case AddonInstallState.UpdateAvailable:
                     _lblAddonStatusBadge.Text = "▲ ADDON UPDATE REQUIRED";
                     _lblAddonStatusBadge.ForeColor = CWarn;
                     _lblAddonStatusDetail.Text = status.StatusMessage;
+                    _lblAddonStatusDetail.ForeColor = CTextSub;
                     _btnInstallOrUpdateAddon.Text = "Update Addon to v" + status.LatestVersion + " Now";
                     _btnInstallOrUpdateAddon.ForeColor = CGreen;
+                    _btnInstallOrUpdateAddon.FlatAppearance.BorderColor = CGreen;
+                    _btnInstallOrUpdateAddon.BackColor = CBtnBg;
+                    _btnInstallOrUpdateAddon.Tag = "btn-green";
                     break;
 
                 case AddonInstallState.NotInstalled:
                     _lblAddonStatusBadge.Text = "✖ ADDON NOT INSTALLED";
                     _lblAddonStatusBadge.ForeColor = CBarFail;
                     _lblAddonStatusDetail.Text = "FissalRelay folder is missing from ESO live AddOns directory.";
+                    _lblAddonStatusDetail.ForeColor = CTextSub;
                     _btnInstallOrUpdateAddon.Text = "Install Fissal Relay Addon (v" + status.LatestVersion + ")";
                     _btnInstallOrUpdateAddon.ForeColor = CGreen;
+                    _btnInstallOrUpdateAddon.FlatAppearance.BorderColor = CGreen;
+                    _btnInstallOrUpdateAddon.BackColor = CBtnBg;
+                    _btnInstallOrUpdateAddon.Tag = "btn-green";
                     break;
 
                 case AddonInstallState.EsoNotFound:
@@ -3457,8 +3548,12 @@ namespace RedfurSync
                     _lblAddonStatusBadge.Text = "? ESO LIVE DIRECTORY NOT FOUND";
                     _lblAddonStatusBadge.ForeColor = CWarn;
                     _lblAddonStatusDetail.Text = "Could not locate Elder Scrolls Online live folder. Use 'Browse...' to select it.";
+                    _lblAddonStatusDetail.ForeColor = CTextSub;
                     _btnInstallOrUpdateAddon.Text = "Install Addon";
                     _btnInstallOrUpdateAddon.ForeColor = CTextSub;
+                    _btnInstallOrUpdateAddon.FlatAppearance.BorderColor = CTextSub;
+                    _btnInstallOrUpdateAddon.BackColor = CBtnBg;
+                    _btnInstallOrUpdateAddon.Tag = "btn-sub";
                     break;
             }
 
@@ -3471,6 +3566,9 @@ namespace RedfurSync
                     _lblLibHistoireStatus.ForeColor = CGreen;
                     _btnInstallLibHistoire.Text = "✓ Reinstall / Update";
                     _btnInstallLibHistoire.ForeColor = CTextSub;
+                    _btnInstallLibHistoire.FlatAppearance.BorderColor = CTextSub;
+                    _btnInstallLibHistoire.BackColor = CBtnBg;
+                    _btnInstallLibHistoire.Tag = "btn-sub";
                 }
                 else
                 {
@@ -3478,6 +3576,9 @@ namespace RedfurSync
                     _lblLibHistoireStatus.ForeColor = CBarFail;
                     _btnInstallLibHistoire.Text = "⚡ Install LibHistoire";
                     _btnInstallLibHistoire.ForeColor = CGoldBrt;
+                    _btnInstallLibHistoire.FlatAppearance.BorderColor = CGoldBrt;
+                    _btnInstallLibHistoire.BackColor = CBtnBg;
+                    _btnInstallLibHistoire.Tag = "btn-gold";
                 }
 
                 if (status.LibAddonMenuInstalled)
@@ -3486,6 +3587,9 @@ namespace RedfurSync
                     _lblLibAddonMenuStatus.ForeColor = CGreen;
                     _btnInstallLibAddonMenu.Text = "✓ Reinstall / Update";
                     _btnInstallLibAddonMenu.ForeColor = CTextSub;
+                    _btnInstallLibAddonMenu.FlatAppearance.BorderColor = CTextSub;
+                    _btnInstallLibAddonMenu.BackColor = CBtnBg;
+                    _btnInstallLibAddonMenu.Tag = "btn-sub";
                 }
                 else
                 {
@@ -3493,6 +3597,9 @@ namespace RedfurSync
                     _lblLibAddonMenuStatus.ForeColor = CWarn;
                     _btnInstallLibAddonMenu.Text = "⚡ Install LibAddonMenu";
                     _btnInstallLibAddonMenu.ForeColor = CGoldBrt;
+                    _btnInstallLibAddonMenu.FlatAppearance.BorderColor = CGoldBrt;
+                    _btnInstallLibAddonMenu.BackColor = CBtnBg;
+                    _btnInstallLibAddonMenu.Tag = "btn-gold";
                 }
             }
             else
@@ -4268,6 +4375,13 @@ namespace RedfurSync
             _navRail.BackColor = CPanelBg;
             _contentHost.BackColor = CBg;
 
+            foreach (var item in _navItems)
+            {
+                item.viewPanel.BackColor = CBg;
+                item.viewPanel.ForeColor = CText;
+                item.panel.BackColor = CPanelBg;
+            }
+
             // Hierarchical semantic re-theming across all views
             ApplyThemeToHierarchy(_contentHost);
             ApplyThemeToHierarchy(_headerConsole);
@@ -4282,6 +4396,7 @@ namespace RedfurSync
         private void RefreshAllViews()
         {
             RefreshSyncView();
+            RefreshAddonView();
             RefreshSetupView();
             RefreshDiagnosticsView();
         }
@@ -4338,7 +4453,7 @@ namespace RedfurSync
         }
 
         // ── Helper UI Controls ────────────────────────────────────────────────
-        private Button MakeStyledButton(string text, Color accent)
+        private Button MakeStyledButton(string text, Color accent, string? role = null)
         {
             var btn = new Button
             {
@@ -4351,6 +4466,7 @@ namespace RedfurSync
                 AutoSize = true,
                 Padding = new Padding((int)(12 * _scale), (int)(5 * _scale), (int)(12 * _scale), (int)(5 * _scale)),
                 Margin = new Padding(0, 0, (int)(8 * _scale), 0),
+                Tag = role ?? (accent == CGreen ? "btn-green" : (accent == CWarn ? "btn-warn" : (accent == CBarFail ? "btn-fail" : (accent == CTextSub ? "btn-sub" : (accent == CText ? "btn-text" : "btn-gold"))))),
             };
             btn.FlatAppearance.BorderColor = accent;
             btn.FlatAppearance.BorderSize = 1;
@@ -4380,6 +4496,7 @@ namespace RedfurSync
                 Font = Body(8.5f, _scale, FontStyle.Bold),
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
+                Tag = "field",
             };
         }
 

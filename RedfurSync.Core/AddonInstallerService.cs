@@ -89,7 +89,9 @@ namespace RedfurSync
                     var remoteVer = verProp.GetString();
                     if (!string.IsNullOrWhiteSpace(remoteVer))
                     {
-                        ActiveLatestAddonVersion = remoteVer;
+                        ActiveLatestAddonVersion = RelayVersion.IsServerNewer(remoteVer, LatestAddonVersion)
+                            ? remoteVer
+                            : LatestAddonVersion;
                     }
                 }
                 if (doc.RootElement.TryGetProperty("addonUrl", out var urlProp))
@@ -264,7 +266,9 @@ namespace RedfurSync
             bool libHistoire = Directory.Exists(Path.Combine(addonsRoot, "LibHistoire"));
             bool libAddonMenu = Directory.Exists(Path.Combine(addonsRoot, "LibAddonMenu-2.0"));
 
-            string effectiveLatest = ActiveLatestAddonVersion;
+            string effectiveLatest = RelayVersion.IsServerNewer(ActiveLatestAddonVersion, LatestAddonVersion)
+                ? ActiveLatestAddonVersion
+                : LatestAddonVersion;
 
             if (!Directory.Exists(addonDir) || !File.Exists(manifestPath))
             {

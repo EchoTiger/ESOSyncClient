@@ -197,6 +197,7 @@ namespace RedfurSync
                 }
             }
 
+            FissalTheme.SetTheme(AppConfig.Instance.Theme);
             TraceLog("Creating TrayApp...");
             using var app = new TrayApp(startMinimized);
             TraceLog("Starting Application.Run...");
