@@ -661,6 +661,7 @@ function FR:BuildAutoRanksUI(parent)
     title:SetFont("ZoFontGameBold")
     title:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
     title:SetText("|cFF9900AUTO-RANK LEADERBOARD|r • |c00FFCCDues & Performance|r")
+    self.autoRanksTitleLbl = title
 
     local statSummaryLbl = wm:CreateControl("$(parent)_Stats", card, CT_LABEL)
     statSummaryLbl:SetAnchor(TOPRIGHT, card, TOPRIGHT, -12, 8)
@@ -1073,23 +1074,32 @@ end
 function FR:BuildRankConfigDrawer(parent)
     local wm = WINDOW_MANAGER
     local drawer = wm:CreateControl("$(parent)_RankDrawer", parent, CT_BACKDROP)
-    drawer:SetAnchor(TOPLEFT, parent, TOPLEFT, 8, 30)
-    drawer:SetAnchor(BOTTOMRIGHT, parent, BOTTOMRIGHT, -8, -8)
-    drawer:SetCenterColor(0.04, 0.04, 0.07, 1.0)
+    drawer:SetAnchor(TOPLEFT, parent, TOPLEFT, 4, 4)
+    drawer:SetAnchor(BOTTOMRIGHT, parent, BOTTOMRIGHT, -4, -4)
+    drawer:SetCenterColor(0.03, 0.03, 0.05, 1.0)
     drawer:SetEdgeColor(0.95, 0.70, 0.20, 0.95)
     drawer:SetEdgeTexture("", 8, 1, 0)
     drawer:SetDrawTier(DT_HIGH)
+    drawer:SetDrawLayer(DL_OVERLAY)
+    drawer:SetDrawLevel(10)
     drawer:SetMouseEnabled(true)
     drawer:SetHandler("OnMouseWheel", function() end)
     drawer:SetHidden(true)
     self.rankConfigDrawer = drawer
 
-    -- Dedicated opaque plate guaranteeing zero label or texture bleed-through
-    local solidBg = wm:CreateControl("$(parent)_SolidBg", drawer, CT_TEXTURE)
-    solidBg:SetAnchorFill()
-    solidBg:SetColor(0.04, 0.03, 0.07, 1.0)
-    solidBg:SetDrawLayer(DL_BACKGROUND)
-    solidBg:SetDrawLevel(0)
+    -- Core ESO Default Backdrop for 100% solid opacity
+    local defBg = wm:CreateControlFromVirtual("$(parent)_DefBg", drawer, "ZO_DefaultBackdrop")
+    defBg:SetAnchorFill()
+    defBg:SetAlpha(1.0)
+    defBg:SetDrawLayer(DL_BACKGROUND)
+
+    -- Midnight Munge Texture plate
+    local munge = wm:CreateControl("$(parent)_Munge", drawer, CT_TEXTURE)
+    munge:SetAnchorFill()
+    munge:SetTexture("EsoUI/Art/Performance/StatusMeterMunge.dds")
+    munge:SetAlpha(0.96)
+    munge:SetDrawLayer(DL_BACKGROUND)
+    munge:SetDrawLevel(1)
 
     -- Drawer Header
     local dTitle = wm:CreateControl("$(parent)_Title", drawer, CT_LABEL)
@@ -1266,6 +1276,8 @@ function FR:SetAutoRanksTableHidden(hidden)
     if self.autoRanksPageLbl then self.autoRanksPageLbl:SetHidden(hidden) end
     if self.autoRanksPrevBtn then self.autoRanksPrevBtn:SetHidden(hidden) end
     if self.autoRanksNextBtn then self.autoRanksNextBtn:SetHidden(hidden) end
+    if self.autoRanksSummaryLbl then self.autoRanksSummaryLbl:SetHidden(hidden) end
+    if self.autoRanksTitleLbl then self.autoRanksTitleLbl:SetHidden(hidden) end
 end
 
 function FR:OpenRankConfigDrawer()
@@ -1283,7 +1295,12 @@ function FR:CloseRankConfigDrawer()
     self.rankConfigDrawer:SetHidden(true)
     if not self.autoWelcomeDrawer or self.autoWelcomeDrawer:IsHidden() then
         self:SetAutoRanksTableHidden(false)
-        self:RenderAutoRanksRows()
+        if self.autoRanksPendingRender then
+            self.autoRanksPendingRender = false
+            self:RenderAutoRanksRows()
+        else
+            self:RenderAutoRanksRows()
+        end
     end
 end
 
@@ -1698,23 +1715,32 @@ end
 function FR:BuildAutoWelcomeDrawer(parent)
     local wm = WINDOW_MANAGER
     local drawer = wm:CreateControl("$(parent)_WelcomeDrawer", parent, CT_BACKDROP)
-    drawer:SetAnchor(TOPLEFT, parent, TOPLEFT, 8, 30)
-    drawer:SetAnchor(BOTTOMRIGHT, parent, BOTTOMRIGHT, -8, -8)
-    drawer:SetCenterColor(0.04, 0.04, 0.07, 1.0)
+    drawer:SetAnchor(TOPLEFT, parent, TOPLEFT, 4, 4)
+    drawer:SetAnchor(BOTTOMRIGHT, parent, BOTTOMRIGHT, -4, -4)
+    drawer:SetCenterColor(0.03, 0.03, 0.05, 1.0)
     drawer:SetEdgeColor(0.0, 0.85, 0.75, 0.95)
     drawer:SetEdgeTexture("", 8, 1, 0)
     drawer:SetDrawTier(DT_HIGH)
+    drawer:SetDrawLayer(DL_OVERLAY)
+    drawer:SetDrawLevel(10)
     drawer:SetMouseEnabled(true)
     drawer:SetHandler("OnMouseWheel", function() end)
     drawer:SetHidden(true)
     self.autoWelcomeDrawer = drawer
 
-    -- Dedicated opaque plate guaranteeing zero label or texture bleed-through
-    local solidBg = wm:CreateControl("$(parent)_SolidBg", drawer, CT_TEXTURE)
-    solidBg:SetAnchorFill()
-    solidBg:SetColor(0.04, 0.03, 0.07, 1.0)
-    solidBg:SetDrawLayer(DL_BACKGROUND)
-    solidBg:SetDrawLevel(0)
+    -- Core ESO Default Backdrop for 100% solid opacity
+    local defBg = wm:CreateControlFromVirtual("$(parent)_DefBg", drawer, "ZO_DefaultBackdrop")
+    defBg:SetAnchorFill()
+    defBg:SetAlpha(1.0)
+    defBg:SetDrawLayer(DL_BACKGROUND)
+
+    -- Midnight Munge Texture plate
+    local munge = wm:CreateControl("$(parent)_Munge", drawer, CT_TEXTURE)
+    munge:SetAnchorFill()
+    munge:SetTexture("EsoUI/Art/Performance/StatusMeterMunge.dds")
+    munge:SetAlpha(0.96)
+    munge:SetDrawLayer(DL_BACKGROUND)
+    munge:SetDrawLevel(1)
 
     -- Title & Subtitle
     local titleLbl = wm:CreateControl("$(parent)_Title", drawer, CT_LABEL)
@@ -2029,7 +2055,12 @@ function FR:CloseAutoWelcomeDrawer()
     self.autoWelcomeDrawer:SetHidden(true)
     if not self.rankConfigDrawer or self.rankConfigDrawer:IsHidden() then
         self:SetAutoRanksTableHidden(false)
-        self:RenderAutoRanksRows()
+        if self.autoRanksPendingRender then
+            self.autoRanksPendingRender = false
+            self:RenderAutoRanksRows()
+        else
+            self:RenderAutoRanksRows()
+        end
     end
 end
 

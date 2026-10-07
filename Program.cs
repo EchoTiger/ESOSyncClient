@@ -10,10 +10,15 @@ namespace RedfurSync
         private static Mutex? _mutex;
         public const string MutexName = "FissalCogworkCourier_SingleInstance";
         public const string WakeEventName = "FissalRelay_ActivateEvent";
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        private static extern bool AllowSetForegroundWindow(int dwProcessId);
+        private const int ASFW_ANY = -1;
+
 
         [STAThread]
         static void Main(string[] args)
         {
+            try { AllowSetForegroundWindow(ASFW_ANY); } catch { }
             TraceLog("Main started. Args: " + string.Join(" ", args));
 
             // ── Crash-during-commit recovery (Fable 5.1 Ruling 3.5) ──────────────
@@ -80,6 +85,7 @@ namespace RedfurSync
 
             if (!isNew)
             {
+                try { AllowSetForegroundWindow(ASFW_ANY); } catch { }
                 // Try to signal the running instance to wake
                 bool signaled = false;
                 try

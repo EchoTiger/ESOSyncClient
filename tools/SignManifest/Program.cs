@@ -24,8 +24,8 @@ var manifestObj = new
     schema = 1,
     product = "fissal-relay",
     channel = "stable",
-    sequence = 64,
-    version = "1.7.0",
+    sequence = 65,
+    version = "1.8.0",
     issued_at = DateTimeOffset.UtcNow.ToString("O"),
     expires_at = DateTimeOffset.UtcNow.AddYears(1).ToString("O"),
     min_updater_version = "1.4.0",
@@ -42,7 +42,7 @@ var manifestObj = new
     downloadUrl = "https://redfur.ech-o.net/api/relay/v1/update-download",
     sizeBytes = exeSize,
     sha256 = exeHash,
-    changelog = "- feat(assistant): SSE streaming responses for Fissal with real-time token rendering\n- feat(ui): smooth transcript auto-scroll, bold text wrap headroom, and mouse wheel forwarding\n- feat(pairing): robust device pairing flow, master key support, and isolated config saves\n- feat(raffle): updated sealed ledger manifest for Sep 20 - Sep 27\n- feat(ranks): auto-rank evaluator with multi-threshold criteria and audit filtering"
+    changelog = "- feat(relay): Fissal Relay Prime v1.8.0 Unified Courier\n- feat(motd): Multi-Format Date Replacer with drawing schedule parsing\n- feat(audit): Automated Inactive Member Auditing with Void List exclusions\n- feat(ranks): Continuous Bank Deposit Consensus & Auto-Ranks\n- feat(ui): Real-time SSE assistant streaming & Dwemer Tonal Terminal UI overhaul"
 };
 
 var jsonOpts = new JsonSerializerOptions { WriteIndented = true };
@@ -54,7 +54,7 @@ var alg = SignatureAlgorithm.Ed25519;
 using var key = Key.Import(alg, privateKeyBytes, KeyBlobFormat.RawPrivateKey);
 var signature = alg.Sign(key, manifestBytes);
 
-var (ok, parsed, err) = UpdateTrustVerifier.VerifyAndParse(manifestBytes, signature, lastVerifiedSequence: 63);
+var (ok, parsed, err) = UpdateTrustVerifier.VerifyAndParse(manifestBytes, signature, lastVerifiedSequence: 64);
 if (!ok || parsed == null)
 {
     Console.Error.WriteLine($"Verification failed: {err}");

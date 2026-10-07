@@ -454,7 +454,21 @@ function FR:BuildAuditorUI(parent)
         self.auditCurrentPage = 1
         self:UpdateAuditorUI()
     end)
-    self.auditShieldToggle = shieldToggle
+        self.auditShieldToggle = shieldToggle
+
+    self.auditFilterControls = {
+        filterLbl,
+        offToggle,
+        loaToggle,
+        shieldToggle,
+        rankBtn,
+        exclusionsBtn,
+        batchBtn,
+        searchBg,
+    }
+    for _, dBtn in pairs(self.auditDayBtns or {}) do
+        table.insert(self.auditFilterControls, dBtn)
+    end
 
     -- Rank Filter Cycle Button
     -- Search Box Container (anchored top right)
@@ -1180,28 +1194,37 @@ end
 function FR:BuildAuditExclusionsDrawer(card)
     local wm = WINDOW_MANAGER
     local drawer = wm:CreateControl("$(parent)_ExclusionsDrawer", card, CT_BACKDROP)
-    drawer:SetAnchor(TOPLEFT, card, TOPLEFT, 8, 30)
-    drawer:SetAnchor(BOTTOMRIGHT, card, BOTTOMRIGHT, -8, -8)
-    drawer:SetCenterColor(0.04, 0.04, 0.07, 1.0)
+    drawer:SetAnchor(TOPLEFT, card, TOPLEFT, 4, 4)
+    drawer:SetAnchor(BOTTOMRIGHT, card, BOTTOMRIGHT, -4, -4)
+    drawer:SetCenterColor(0.03, 0.03, 0.05, 1.0)
     drawer:SetEdgeColor(0.60, 0.35, 0.85, 0.95)
     drawer:SetEdgeTexture("", 8, 1, 0)
     drawer:SetDrawTier(DT_HIGH)
+    drawer:SetDrawLayer(DL_OVERLAY)
+    drawer:SetDrawLevel(10)
     drawer:SetMouseEnabled(true)
     drawer:SetHandler("OnMouseWheel", function() end)
     drawer:SetHidden(true)
     self.auditExclusionsDrawer = drawer
 
-    -- Dedicated opaque plate guaranteeing zero label or texture bleed-through
-    local solidBg = wm:CreateControl("$(parent)_SolidBg", drawer, CT_TEXTURE)
-    solidBg:SetAnchorFill()
-    solidBg:SetColor(0.04, 0.03, 0.07, 1.0)
-    solidBg:SetDrawLayer(DL_BACKGROUND)
-    solidBg:SetDrawLevel(0)
+    -- Core ESO Default Backdrop for 100% solid opacity
+    local defBg = wm:CreateControlFromVirtual("$(parent)_DefBg", drawer, "ZO_DefaultBackdrop")
+    defBg:SetAnchorFill()
+    defBg:SetAlpha(1.0)
+    defBg:SetDrawLayer(DL_BACKGROUND)
+
+    -- Midnight Munge Texture plate
+    local munge = wm:CreateControl("$(parent)_Munge", drawer, CT_TEXTURE)
+    munge:SetAnchorFill()
+    munge:SetTexture("EsoUI/Art/Performance/StatusMeterMunge.dds")
+    munge:SetAlpha(0.96)
+    munge:SetDrawLayer(DL_BACKGROUND)
+    munge:SetDrawLevel(1)
 
     local titleLbl = wm:CreateControl("$(parent)_Title", drawer, CT_LABEL)
     titleLbl:SetAnchor(TOPLEFT, drawer, TOPLEFT, 16, 12)
     titleLbl:SetFont("ZoFontGameBold")
-    titleLbl:SetText("|cFF9900PERMANENT VOID / EXCLUSIONS REGISTRY|r  |c888888(Shielded Accounts)|r")
+    titleLbl:SetText("|cFF9900PERMANENT VOID / EXCLUSIONS REGISTRY|r  |c00FFCC(Shielded Accounts)|r")
 
     local descLbl = wm:CreateControl("$(parent)_Desc", drawer, CT_LABEL)
     descLbl:SetAnchor(TOPLEFT, titleLbl, BOTTOMLEFT, 0, 4)
@@ -1226,72 +1249,72 @@ function FR:BuildAuditExclusionsDrawer(card)
         self:CloseAuditExclusionsDrawer()
     end)
 
-    local headerY = 48
+    local headerY = 54
     local colHeader = wm:CreateControl("$(parent)_Header", drawer, CT_BACKDROP)
     colHeader:SetAnchor(TOPLEFT, drawer, TOPLEFT, 12, headerY)
     colHeader:SetAnchor(TOPRIGHT, drawer, TOPRIGHT, -12, headerY)
-    colHeader:SetHeight(22)
-    colHeader:SetCenterColor(0.10, 0.08, 0.14, 0.90)
-    colHeader:SetEdgeColor(0.40, 0.25, 0.55, 0.60)
+    colHeader:SetHeight(24)
+    colHeader:SetCenterColor(0.08, 0.06, 0.12, 0.95)
+    colHeader:SetEdgeColor(0.40, 0.25, 0.55, 0.70)
     colHeader:SetEdgeTexture("", 8, 1, 0)
 
     local h1 = wm:CreateControl("$(parent)_H1", colHeader, CT_LABEL)
-    h1:SetAnchor(LEFT, colHeader, LEFT, 12, 0)
+    h1:SetAnchor(LEFT, colHeader, LEFT, 16, 0)
     h1:SetFont("ZoFontGameBold")
     h1:SetText(ColorText("EXCLUDED ACCOUNT", "FF9900"))
 
     local h2 = wm:CreateControl("$(parent)_H2", colHeader, CT_LABEL)
-    h2:SetAnchor(LEFT, colHeader, LEFT, 260, 0)
+    h2:SetAnchor(LEFT, colHeader, LEFT, 240, 0)
     h2:SetFont("ZoFontGameBold")
     h2:SetText(ColorText("DATE ADDED", "00FFCC"))
 
     local h3 = wm:CreateControl("$(parent)_H3", colHeader, CT_LABEL)
-    h3:SetAnchor(LEFT, colHeader, LEFT, 440, 0)
+    h3:SetAnchor(LEFT, colHeader, LEFT, 400, 0)
     h3:SetFont("ZoFontGameBold")
     h3:SetText(ColorText("REASON", "FFD700"))
 
     local h4 = wm:CreateControl("$(parent)_H4", colHeader, CT_LABEL)
-    h4:SetAnchor(LEFT, colHeader, LEFT, 640, 0)
+    h4:SetAnchor(RIGHT, colHeader, RIGHT, -30, 0)
     h4:SetFont("ZoFontGameBold")
     h4:SetText(ColorText("MANAGEMENT", "59E08A"))
 
     self.auditExclusionsRows = {}
     local EXCL_ROWS = 10
-    local startY = headerY + 24
+    local startY = headerY + 28
     for i = 1, EXCL_ROWS do
         local row = wm:CreateControl("$(parent)_Row_" .. i, drawer, CT_BACKDROP)
-        row:SetAnchor(TOPLEFT, drawer, TOPLEFT, 12, startY + (i - 1) * 34)
-        row:SetAnchor(TOPRIGHT, drawer, TOPRIGHT, -12, startY + (i - 1) * 34)
-        row:SetHeight(32)
-        row:SetCenterColor(0.06, 0.05, 0.08, 0.70)
-        row:SetEdgeColor(0.25, 0.18, 0.35, 0.40)
+        row:SetAnchor(TOPLEFT, drawer, TOPLEFT, 12, startY + (i - 1) * 32)
+        row:SetAnchor(TOPRIGHT, drawer, TOPRIGHT, -12, startY + (i - 1) * 32)
+        row:SetHeight(30)
+        row:SetCenterColor(0.05, 0.04, 0.08, 0.85)
+        row:SetEdgeColor(0.25, 0.18, 0.35, 0.50)
         row:SetEdgeTexture("", 8, 1, 0)
 
         local nameLbl = wm:CreateControl("$(parent)_Name", row, CT_LABEL)
-        nameLbl:SetAnchor(LEFT, row, LEFT, 12, 0)
-        nameLbl:SetDimensions(240, 22)
-        nameLbl:SetFont("ZoFontGameMedium")
+        nameLbl:SetAnchor(LEFT, row, LEFT, 16, 0)
+        nameLbl:SetDimensions(210, 22)
+        nameLbl:SetFont("ZoFontGameBold")
         nameLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
         nameLbl:SetText("@Member")
         row.nameLbl = nameLbl
 
         local dateLbl = wm:CreateControl("$(parent)_Date", row, CT_LABEL)
-        dateLbl:SetAnchor(LEFT, row, LEFT, 260, 0)
-        dateLbl:SetDimensions(170, 22)
-        dateLbl:SetFont("ZoFontGameSmall")
+        dateLbl:SetAnchor(LEFT, row, LEFT, 240, 0)
+        dateLbl:SetDimensions(140, 22)
+        dateLbl:SetFont("ZoFontGame")
         dateLbl:SetText("--")
         row.dateLbl = dateLbl
 
         local reasonLbl = wm:CreateControl("$(parent)_Reason", row, CT_LABEL)
-        reasonLbl:SetAnchor(LEFT, row, LEFT, 440, 0)
-        reasonLbl:SetDimensions(190, 22)
-        reasonLbl:SetFont("ZoFontGameSmall")
+        reasonLbl:SetAnchor(LEFT, row, LEFT, 400, 0)
+        reasonLbl:SetDimensions(240, 22)
+        reasonLbl:SetFont("ZoFontGame")
         reasonLbl:SetText("Staff Void")
         row.reasonLbl = reasonLbl
 
         local unhideBtn = wm:CreateControl("$(parent)_UnhideBtn", row, CT_BUTTON)
-        unhideBtn:SetAnchor(LEFT, row, LEFT, 640, 0)
-        unhideBtn:SetDimensions(135, 22)
+        unhideBtn:SetAnchor(RIGHT, row, RIGHT, -14, 0)
+        unhideBtn:SetDimensions(130, 22)
         unhideBtn:SetFont("ZoFontGameSmall")
         unhideBtn:SetText("Unhide / Restore")
         self:StyleTactileButton(unhideBtn, {
@@ -1309,7 +1332,7 @@ function FR:BuildAuditExclusionsDrawer(card)
         self.auditExclusionsRows[i] = row
     end
 
-    local footerY = -10
+    local footerY = -12
     local countLbl = wm:CreateControl("$(parent)_CountLbl", drawer, CT_LABEL)
     countLbl:SetAnchor(BOTTOMLEFT, drawer, BOTTOMLEFT, 16, footerY)
     countLbl:SetFont("ZoFontGameSmall")
@@ -1378,10 +1401,17 @@ function FR:SetAuditTableHidden(hidden)
     if self.auditPrevBtn then self.auditPrevBtn:SetHidden(hidden) end
     if self.auditPageLbl then self.auditPageLbl:SetHidden(hidden) end
     if self.auditNextBtn then self.auditNextBtn:SetHidden(hidden) end
+    if self.auditStatusSummaryLbl then self.auditStatusSummaryLbl:SetHidden(hidden) end
+    if self.auditFilterControls then
+        for _, ctrl in ipairs(self.auditFilterControls) do
+            if ctrl then ctrl:SetHidden(hidden) end
+        end
+    end
 end
 
 function FR:OpenAuditExclusionsDrawer()
     if not self.auditExclusionsDrawer then return end
+    if self.auditSearchBox then self.auditSearchBox:LoseFocus() end
     self.auditExclPage = 1
     self:SetAuditTableHidden(true)
     self:RefreshAuditExclusionsDrawer()
@@ -1392,7 +1422,12 @@ function FR:CloseAuditExclusionsDrawer()
     if not self.auditExclusionsDrawer then return end
     self.auditExclusionsDrawer:SetHidden(true)
     self:SetAuditTableHidden(false)
-    self:UpdateAuditorUI()
+    if self.auditPendingRender then
+        self.auditPendingRender = false
+        self:RenderAuditorRows()
+    else
+        self:UpdateAuditorUI()
+    end
 end
 
 function FR:ToggleAuditExclusionsDrawer()
@@ -1615,6 +1650,10 @@ function FR:ExecuteAuditBatchQueue(guildId, queue)
 end
 
 function FR:RenderAuditorRows()
+    if self.auditExclusionsDrawer and not self.auditExclusionsDrawer:IsHidden() then
+        self.auditPendingRender = true
+        return
+    end
     local members = self.auditFilteredMembers or {}
     local total = #members
     local maxPages = math.max(1, math.ceil(total / ROWS_PER_PAGE))

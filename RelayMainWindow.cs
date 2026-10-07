@@ -3310,7 +3310,7 @@ namespace RedfurSync
             };
             depsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(160 * _scale)));
             depsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            depsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(190 * _scale)));
+            depsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(290 * _scale)));
 
             var depsHeader = new Label
             {
@@ -3411,6 +3411,7 @@ namespace RedfurSync
                 Dock = DockStyle.Fill,
                 FlowDirection = FlowDirection.LeftToRight,
                 AutoSize = true,
+                WrapContents = false,
                 Margin = new Padding(0)
             };
             _btnUpdateTtcPriceTable = MakeStyledButton("⚡ Update Price Table", CGoldBrt);
@@ -3455,6 +3456,7 @@ namespace RedfurSync
                 BackColor = CPanelBg,
                 Padding = new Padding((int)(16 * _scale)),
                 AutoSize = true,
+                Tag = "card",
             };
             var guideHeader = new Label
             {
@@ -4387,6 +4389,10 @@ namespace RedfurSync
             }
 
             // Hierarchical semantic re-theming across all views
+            foreach (var item in _navItems)
+            {
+                ApplyThemeToHierarchy(item.viewPanel);
+            }
             ApplyThemeToHierarchy(_contentHost);
             ApplyThemeToHierarchy(_headerConsole);
             ApplyThemeToHierarchy(_navRail);
