@@ -137,15 +137,73 @@ function FR:CollectBidsData()
 end
 
 function FR:CollectReconData()
-    local recon = {}
+    local reconMap = {}
+
+    local function IsKioskVacant(k)
+        if k.isOpen == true or k.isVacant == true then return true end
+        local gName = string.lower(k.guildName or "")
+        if gName == "" or gName == "none" or gName == "empty" or gName == "open" or gName == "vacant" or gName == "unhired" or gName == "no trader" or gName == "open spot" then
+            return true
+        end
+        if string.find(gName, "open") or string.find(gName, "vacant") or string.find(gName, "empty") then
+            return true
+        end
+        return false
+    end
+
+    -- 1. Ingest synced spreadsheet kiosks from Fissal Relay
+    local sheetKiosks = (self.savedVars and self.savedVars.spreadsheetKiosks) or self.SpreadsheetKiosks or {}
+    for key, sk in pairs(sheetKiosks) do
+        local traderKey = (sk.trader or key):lower()
+        local isOpen = IsKioskVacant(sk)
+        reconMap[traderKey] = {
+            trader = sk.trader or key,
+            city = sk.city or "Unknown",
+            zone = sk.zone or "Unknown",
+            guildName = isOpen and "None (Open Spot)" or (sk.guildName or "Unknown"),
+            timestamp = sk.timestamp or sk.updatedAt or 0,
+            isOpen = isOpen,
+            source = "Spreadsheet",
+            notes = sk.notes or "",
+        }
+    end
+
+    -- 2. Ingest in-game ground truth scouted observations (authoritative ground recon)
     if self.savedVars and self.savedVars.kiosks then
         for trader, k in pairs(self.savedVars.kiosks) do
-            table.insert(recon, k)
+            local traderKey = (k.trader or trader):lower()
+            local isOpen = IsKioskVacant(k)
+            local existing = reconMap[traderKey]
+            if not existing or (k.timestamp or 0) >= (existing.timestamp or 0) then
+                reconMap[traderKey] = {
+                    trader = k.trader or trader,
+                    city = k.city or (existing and existing.city) or "?",
+                    zone = k.zone or (existing and existing.zone) or "?",
+                    guildName = isOpen and "None (Open Spot)" or (k.guildName or "None"),
+                    timestamp = k.timestamp or 0,
+                    isOpen = isOpen,
+                    source = "Scouted",
+                    notes = k.notes or (existing and existing.notes) or "",
+                }
+            end
         end
     end
+
+    local recon = {}
+    for _, k in pairs(reconMap) do
+        table.insert(recon, k)
+    end
+
+    -- 3. Prioritize Open / Vacant Kiosks at the top of the list!
     table.sort(recon, function(a, b)
+        local aOpen = a.isOpen and 1 or 0
+        local bOpen = b.isOpen and 1 or 0
+        if aOpen ~= bOpen then
+            return aOpen > bOpen -- 1 (open) before 0 (occupied)
+        end
         return (a.timestamp or 0) > (b.timestamp or 0)
     end)
+
     self.reconList = recon
 end
 
@@ -761,14 +819,23 @@ function FR:RenderBidsRows()
                     row.col6:SetText(timeAgo)
                 else
                     -- Recon item
-                    row.col1:SetText(string.format("|cFFFFFF%s|r", item.trader or "Trader"))
-                    row.col2:SetText(string.format("%s, %s", item.city or "?", item.zone or "?"))
-                    row.col3:SetText("|c59E08AVerified|r")
-                    row.col4:SetText(string.format("|c00FFCC%s|r", item.guildName or "None"))
-                    row.col5:SetText("|c888888Logged|r")
-
-                    local timeAgo = item.timestamp and ZO_FormatDurationAgo(GetTimeStamp() - item.timestamp) or "--"
-                    row.col6:SetText(timeAgo)
+                    local timeAgo = (item.timestamp and item.timestamp > 0) and ZO_FormatDurationAgo(GetTimeStamp() - item.timestamp) or "--"
+                    if item.isOpen then
+                        row:SetCenterColor(0.06, 0.16, 0.08, 0.75)
+                        row.col1:SetText(string.format("|cFFD700⭐ %s|r", item.trader or "Trader"))
+                        row.col2:SetText(string.format("%s, %s", item.city or "?", item.zone or "?"))
+                        row.col3:SetText("|c59E08A⭐ VACANT / OPEN|r")
+                        row.col4:SetText("|c00FFCC(No Guild Claimed)|r")
+                        row.col5:SetText(string.format("|c00FFCC%s|r", item.source or "Spreadsheet"))
+                        row.col6:SetText(timeAgo)
+                    else
+                        row.col1:SetText(string.format("|cFFFFFF%s|r", item.trader or "Trader"))
+                        row.col2:SetText(string.format("%s, %s", item.city or "?", item.zone or "?"))
+                        row.col3:SetText("|c59E08AVerified|r")
+                        row.col4:SetText(string.format("|c00FFCC%s|r", item.guildName or "None"))
+                        row.col5:SetText(string.format("|c888888%s|r", item.source or "Logged"))
+                        row.col6:SetText(timeAgo)
+                    end
                 end
             else
                 row:SetHidden(true)

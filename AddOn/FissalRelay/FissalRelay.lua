@@ -2782,6 +2782,16 @@ local function OnPlayerActivated(eventCode, initial)
     zo_callLater(function()
         if FR.UpdateCategorySyncTelemetry then FR:UpdateCategorySyncTelemetry() end
     end, 8000)
+
+    -- Wayshrine / Zone load kiosk reconciliation
+    zo_callLater(function()
+        if FR.CollectReconData then
+            FR:CollectReconData()
+            if FR.bidsSubView == "recon" and FR.RenderBidsRows then
+                FR:RenderBidsRows()
+            end
+        end
+    end, 2500)
 end
 
 local function OnAddOnLoaded(eventCode, addOnName)
@@ -2793,6 +2803,7 @@ local function OnAddOnLoaded(eventCode, addOnName)
         "FissalRelay_SavedVariables", 3, nil, DEFAULT_SAVED_VARS
     )
     if not FR.savedVars.kiosks then FR.savedVars.kiosks = {} end
+    if not FR.savedVars.spreadsheetKiosks then FR.savedVars.spreadsheetKiosks = {} end
     if not FR.savedVars.staff then FR.savedVars.staff = {} end
     if not FR.savedVars.staff.bankDeposits then FR.savedVars.staff.bankDeposits = {} end
     if not FR.savedVars.staff.bids then FR.savedVars.staff.bids = {} end

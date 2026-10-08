@@ -1201,7 +1201,7 @@ namespace RedfurSync
                 if (w <= 5 || h <= 5) return;
 
                 // Deep dark CRT ribbon bed
-                using (var ribbonBg = new SolidBrush(Color.FromArgb(16, 14, 11)))
+                using (var ribbonBg = new SolidBrush(CPanelBgAlt))
                     g.FillRectangle(ribbonBg, 0, 0, w, h);
 
                 DrawTerminalMesh(g, new Rectangle(0, 0, w, h), _scale, 5);
@@ -2927,6 +2927,11 @@ namespace RedfurSync
                         c.BackColor = CBg;
                         c.ForeColor = CText;
                     }
+                    else if (c.BackColor != Color.Transparent)
+                    {
+                        c.BackColor = CPanelBg;
+                        c.ForeColor = CText;
+                    }
                 }
                 else if (c is Button btn)
                 {
@@ -4386,6 +4391,28 @@ namespace RedfurSync
                 item.viewPanel.BackColor = CBg;
                 item.viewPanel.ForeColor = CText;
                 item.panel.BackColor = CPanelBg;
+            }
+
+            // Explicit dynamic re-theming of Sync view components
+            if (_syncJobsList != null)
+            {
+                _syncJobsList.BackColor = CPanelBgAlt;
+                _syncJobsList.Invalidate();
+            }
+            if (_syncLogBox != null)
+            {
+                _syncLogBox.BackColor = CPanelBgAlt;
+                _syncLogBox.ForeColor = CText;
+            }
+            if (_oscilloscopePanel != null)
+            {
+                _oscilloscopePanel.BackColor = CPanelBg;
+                _oscilloscopePanel.Invalidate();
+            }
+            if (_tickerPanel != null)
+            {
+                _tickerPanel.BackColor = CPanelBg;
+                _tickerPanel.Invalidate();
             }
 
             // Hierarchical semantic re-theming across all views

@@ -182,8 +182,11 @@ namespace RedfurSync
             if (!_mainWindow.Visible) _mainWindow.Show();
             if (_mainWindow.WindowState == FormWindowState.Minimized)
                 _mainWindow.WindowState = FormWindowState.Normal;
-            _mainWindow.Activate();
+            _mainWindow.TopMost = true;
+            _mainWindow.TopMost = false;
             _mainWindow.BringToFront();
+            _mainWindow.Activate();
+            _mainWindow.Focus();
         }
 
         private void OpenMainWindow(string tabId = "sync")

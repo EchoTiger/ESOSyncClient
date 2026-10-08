@@ -275,40 +275,62 @@ function FR:ReplaceMotDDateRange(text, dateInfo)
     local norm = self.NormalizeDashesBytePreserving and self:NormalizeDashesBytePreserving(resolved)
         or resolved:gsub("\xE2\x80\x93", "---"):gsub("\xE2\x80\x94", "---")
 
-    -- Priority 1: Cross-month range e.g. "Sep 27 ~Oct 4", "Sep 27 - Oct 4", "Sept 27th to Oct 4th", "September 27 / October 4"
-    local patA1 = "([A-Za-z]+%.?%s+%d+[%a]*%s*[%-~/]+%s*[A-Za-z]+%.?%s+%d+[%a]*)"
-    local patA2 = "([A-Za-z]+%.?%s+%d+[%a]*%s+to%s+[A-Za-z]+%.?%s+%d+[%a]*)"
-    -- Priority 2: Same-month range e.g. "Oct 4 - 11", "Oct 4th ~ 11th", "Oct 4 to 11"
-    local patB1 = "([A-Za-z]+%.?%s+%d+[%a]*%s*[%-~/]+%s*%d+[%a]*)"
-    local patB2 = "([A-Za-z]+%.?%s+%d+[%a]*%s+to%s+%d+[%a]*)"
-    -- Priority 3: Numeric M/D - M/D e.g. "9/27 - 10/4" or "10/4 ~ 10/11"
-    local patC = "(%d%d?/%d%d?%s*[%-~/]+%s*%d%d?/%d%d?)"
+    -- Priority 1: Full Month Day - Month Day (e.g. "Oct 4 - Oct 11", "Oct 4 – Oct 11", "Sep 27 to Oct 4")
+    -- Separators: hyphens/slashes or 'to' (Strictly no '~' or '@' so we never eat approximation prefixes or times)
+    local patA1 = "([A-Za-z]+%.?%s+%d%d?%a*%s*[%-%/]+%s*[A-Za-z]+%.?%s+%d%d?%a*)"
+    local patA2 = "([A-Za-z]+%.?%s+%d%d?%a*%s+to%s+[A-Za-z]+%.?%s+%d%d?%a*)"
 
     local s, e = norm:find(patA1)
     if not s then s, e = norm:find(patA2) end
-    if not s then s, e = norm:find(patB1) end
-    if not s then s, e = norm:find(patB2) end
-    if not s then s, e = norm:find(patC) end
 
+    -- Guard: reject match if it ends with 'pm' or 'am'
     if s and e then
+        local match = norm:sub(s, e):lower()
+        if match:match("%d+pm$") or match:match("%d+am$") then
+            s, e = nil, nil
+        end
+    end
+
+    -- Priority 2: Same-month Month Day - Day (e.g. "Oct 4 - 11", "Oct 4 to 11")
+    -- CRITICAL: Ensure the second number is NOT a time like '7pm' or '7:00'
+    if not s then
+        local patB1 = "([A-Za-z]+%.?%s+%d%d?%a*%s*[%-%/]+%s*(%d%d?)(%a*))"
+        local patB2 = "([A-Za-z]+%.?%s+%d%d?%a*%s+to%s+(%d%d?)(%a*))"
+        for _, pat in ipairs({ patB1, patB2 }) do
+            local curS, curE, fullM, dayNum, suffix = norm:find(pat)
+            if curS then
+                suffix = suffix:lower()
+                local isOrd = (suffix == "" or suffix == "st" or suffix == "nd" or suffix == "rd" or suffix == "th")
+                local nextChar = norm:sub(curE + 1, curE + 1)
+                local isTime = (suffix == "pm" or suffix == "am" or nextChar == ":" or nextChar:lower() == "p" or nextChar:lower() == "a")
+                if isOrd and not isTime then
+                    s, e = curS, curE
+                    break
+                end
+            end
+        end
+    end
+
+    -- Priority 3: Numeric M/D - M/D (e.g. "9/27 - 10/4" or "10/4 - 10/11")
+    if not s then
+        local patC = "(%d%d?/%d%d?%s*[%-%/]+%s*%d%d?/%d%d?)"
+        s, e = norm:find(patC)
+    end
+
+    if s and e and targetRange and targetRange ~= "" then
         resolved = resolved:sub(1, s - 1) .. targetRange .. resolved:sub(e + 1)
     end
 
-    -- 2. Surgical Legacy Drawing Date (e.g. "Drawing Sunday, Sep 27 (7:00 PM ET)" or "Drawing Sep 27")
+    -- 2. Surgical Legacy Drawing Date (e.g. "Drawing Sunday, Sep 27 (7:00 PM ET)" or "Drawing Oct 11 ~7pm ET" or "Drawing Oct 11 @ 7pm ET")
     if not isWinnerAnnouncement and dateInfo.drawingDate and dateInfo.drawingDate ~= "" then
         local normDraw = self.NormalizeDashesBytePreserving and self:NormalizeDashesBytePreserving(resolved)
             or resolved:gsub("\xE2\x80\x93", "---"):gsub("\xE2\x80\x94", "---")
-        local drawPat1 = "([Dd]rawing%s+[%a,]-%s*[A-Za-z]+%.?%s+%d+[%a]*%s*%(?[%d:%s%a]*%)?)"
-        local ds, de, matchStr = normDraw:find(drawPat1)
+        -- Match Drawing with optional colon, weekday, month, day, and flexible time spec (~7pm, @ 7:00 PM ET, (7:00 PM ET), etc.)
+        local drawPat = "([Dd]rawing:?%s+[%a,]-%s*[A-Za-z]+%.?%s+%d%d?%a*%s*[%(@~%s%d:%a%-]*%a*%)?)"
+        local ds, de, matchStr = normDraw:find(drawPat)
         if ds and de then
-            local trailingPeriod = matchStr:match("%.$") and "." or ""
+            local trailingPeriod = matchStr:match("%.%s*$") and "." or ""
             resolved = resolved:sub(1, ds - 1) .. "Drawing " .. dateInfo.drawingDate .. trailingPeriod .. resolved:sub(de + 1)
-        else
-            local drawPat2 = "([Dd]rawing%s+[%a,]-%s*[A-Za-z]+%.?%s+%d+[%a]*)"
-            local ds2, de2 = normDraw:find(drawPat2)
-            if ds2 and de2 then
-                resolved = resolved:sub(1, ds2 - 1) .. "Drawing " .. dateInfo.drawingDate .. resolved:sub(de2 + 1)
-            end
         end
     end
 
@@ -1078,32 +1100,169 @@ function FR:PreviewMotDInChat()
     end
 end
 
-local function RegisterMotDBroadcastDialog()
-    if ESO_Dialogs and not ESO_Dialogs["FISSAL_CONFIRM_BROADCAST_MOTD"] then
-        ESO_Dialogs["FISSAL_CONFIRM_BROADCAST_MOTD"] = {
-            title = { text = "Broadcast MotD to Guild" },
-            mainText = { text = "Broadcast this Message of the Day to |c00FFCC<<1>>|r?\n\n|c888888All dynamic tokens have been resolved with live ledger data (<<2>> chars).|r\n\n|cCCCCCCPreview:|r\n|cFFFFFF<<3>>|r" },
-            buttons = {
-                {
-                    text = SI_DIALOG_CONFIRM,
-                    callback = function(dialog)
-                        if dialog.data and dialog.data.onConfirm then
-                            dialog.data.onConfirm()
-                        end
-                    end,
-                },
-                {
-                    text = SI_DIALOG_CANCEL,
-                },
-            },
-        }
+function FR:OpenMotDPushModal(guildId, guildName, resolved, charCount, byteCount)
+    local wm = WINDOW_MANAGER
+    if not self.motdPushModal then
+        local modal = wm:CreateTopLevelWindow("FissalRelay_MotDPushModal")
+        modal:SetDimensions(720, 520)
+        modal:SetAnchor(CENTER, GuiRoot, CENTER, 0, -20)
+        modal:SetClampedToScreen(true)
+        modal:SetMouseEnabled(true)
+        modal:SetMovable(true)
+
+        if UISpecialWindows then
+            table.insert(UISpecialWindows, "FissalRelay_MotDPushModal")
+        end
+
+        local bg = wm:CreateControl("$(parent)_Bg", modal, CT_BACKDROP)
+        bg:SetAnchorFill()
+        bg:SetCenterColor(0.04, 0.04, 0.06, 1.0)
+        bg:SetEdgeColor(0.95, 0.70, 0.20, 0.95)
+        bg:SetEdgeTexture("", 8, 1, 0)
+        bg:SetDrawLayer(DL_BACKGROUND)
+        bg:SetDrawLevel(0)
+
+        local defBg = wm:CreateControlFromVirtual("$(parent)_DefBg", modal, "ZO_DefaultBackdrop")
+        defBg:SetAnchorFill()
+        defBg:SetAlpha(1.0)
+        defBg:SetDrawLayer(DL_BACKGROUND)
+        defBg:SetDrawLevel(1)
+
+        local munge = wm:CreateControl("$(parent)_Munge", modal, CT_TEXTURE)
+        munge:SetAnchorFill()
+        munge:SetTexture("EsoUI/Art/Performance/StatusMeterMunge.dds")
+        munge:SetColor(0.04, 0.04, 0.06, 0.98)
+        munge:SetDrawLayer(DL_BACKGROUND)
+        munge:SetDrawLevel(2)
+
+        -- Title & Close Button
+        local titleLbl = wm:CreateControl("$(parent)_Title", modal, CT_LABEL)
+        titleLbl:SetAnchor(TOPLEFT, modal, TOPLEFT, 16, 12)
+        titleLbl:SetFont("ZoFontGameBold")
+        titleLbl:SetText("|cFF9900PUSH MESSAGE OF THE DAY LIVE|r  •  |c00FFCCPre-Flight Verification|r")
+
+        local closeBtn = wm:CreateControl("$(parent)_CloseBtn", modal, CT_BUTTON)
+        closeBtn:SetAnchor(TOPRIGHT, modal, TOPRIGHT, -12, 10)
+        closeBtn:SetDimensions(26, 26)
+        closeBtn:SetFont("ZoFontGameBold")
+        closeBtn:SetText("X")
+        self:StyleTactileButton(closeBtn, {
+            normalBg = { 0.15, 0.05, 0.05, 0.85 },
+            hoverBg = { 0.30, 0.08, 0.08, 0.95 },
+            normalEdge = { 0.60, 0.20, 0.20, 0.80 },
+            hoverEdge = { 1.00, 0.30, 0.30, 1.00 },
+            normalTextColor = { 1, 0.5, 0.5, 1 },
+        })
+        closeBtn:SetHandler("OnClicked", function()
+            modal:SetHidden(true)
+        end)
+
+        local subLbl = wm:CreateControl("$(parent)_Sub", modal, CT_LABEL)
+        subLbl:SetAnchor(TOPLEFT, titleLbl, BOTTOMLEFT, 0, 4)
+        subLbl:SetFont("ZoFontGameSmall")
+        subLbl:SetText("Carefully verify the live preview below. Dynamic tokens are interpolated with live ledger figures.")
+
+        -- Info Ribbon
+        local ribbon = wm:CreateControl("$(parent)_Ribbon", modal, CT_BACKDROP)
+        ribbon:SetAnchor(TOPLEFT, modal, TOPLEFT, 16, 56)
+        ribbon:SetAnchor(TOPRIGHT, modal, TOPRIGHT, -16, 56)
+        ribbon:SetHeight(28)
+        ribbon:SetCenterColor(0.06, 0.06, 0.09, 0.85)
+        ribbon:SetEdgeColor(0.20, 0.20, 0.25, 0.60)
+        ribbon:SetEdgeTexture("", 8, 1, 0)
+
+        local targetGuildLbl = wm:CreateControl("$(parent)_Target", ribbon, CT_LABEL)
+        targetGuildLbl:SetAnchor(LEFT, ribbon, LEFT, 10, 0)
+        targetGuildLbl:SetFont("ZoFontGameBold")
+        targetGuildLbl:SetText("Guild: --")
+
+        local charStatLbl = wm:CreateControl("$(parent)_CharStat", ribbon, CT_LABEL)
+        charStatLbl:SetAnchor(RIGHT, ribbon, RIGHT, -10, 0)
+        charStatLbl:SetFont("ZoFontGameSmall")
+        charStatLbl:SetText("Length: 0 / 1024 chars")
+
+        -- Scrollable Preview Box
+        local previewBox = wm:CreateControl("$(parent)_PreviewBox", modal, CT_BACKDROP)
+        previewBox:SetAnchor(TOPLEFT, ribbon, BOTTOMLEFT, 0, 8)
+        previewBox:SetAnchor(BOTTOMRIGHT, modal, BOTTOMRIGHT, -16, -48)
+        previewBox:SetCenterColor(0.03, 0.03, 0.04, 0.90)
+        previewBox:SetEdgeColor(0.25, 0.25, 0.30, 0.70)
+        previewBox:SetEdgeTexture("", 8, 1, 0)
+
+        local scrollContainer = wm:CreateControlFromVirtual("$(parent)_Scroll", previewBox, "ZO_ScrollContainer")
+        scrollContainer:SetAnchor(TOPLEFT, previewBox, TOPLEFT, 8, 8)
+        scrollContainer:SetAnchor(BOTTOMRIGHT, previewBox, BOTTOMRIGHT, -8, -8)
+
+        local scrollChild = scrollContainer.scrollChild or GetControl(scrollContainer, "ScrollChild")
+        local previewLbl = wm:CreateControl("$(parent)_PreviewText", scrollChild, CT_LABEL)
+        previewLbl:ClearAnchors()
+        previewLbl:SetAnchor(TOPLEFT, scrollChild, TOPLEFT, 6, 6)
+        previewLbl:SetWidth(654)
+        previewLbl:SetFont("ZoFontGame")
+        previewLbl:SetColor(1, 1, 1, 1)
+
+        -- Footer Controls
+        local warningLbl = wm:CreateControl("$(parent)_Warn", modal, CT_LABEL)
+        warningLbl:SetAnchor(BOTTOMLEFT, modal, BOTTOMLEFT, 16, -14)
+        warningLbl:SetFont("ZoFontGameSmall")
+        warningLbl:SetText("|cAAAAAA⚠ Broadcasts immediately to all guild members.|r")
+
+        local cancelBtn = wm:CreateControl("$(parent)_CancelBtn", modal, CT_BUTTON)
+        cancelBtn:SetAnchor(BOTTOMRIGHT, modal, BOTTOMRIGHT, -200, -10)
+        cancelBtn:SetDimensions(90, 28)
+        cancelBtn:SetFont("ZoFontGameBold")
+        cancelBtn:SetText("Cancel")
+        self:StyleTactileButton(cancelBtn, {
+            normalBg = { 0.12, 0.12, 0.15, 0.85 },
+            hoverBg = { 0.18, 0.18, 0.22, 0.95 },
+            normalEdge = { 0.30, 0.30, 0.35, 0.70 },
+        })
+        cancelBtn:SetHandler("OnClicked", function()
+            modal:SetHidden(true)
+        end)
+
+        local confirmBtn = wm:CreateControl("$(parent)_ConfirmBtn", modal, CT_BUTTON)
+        confirmBtn:SetAnchor(BOTTOMRIGHT, modal, BOTTOMRIGHT, -16, -10)
+        confirmBtn:SetDimensions(175, 28)
+        confirmBtn:SetFont("ZoFontGameBold")
+        confirmBtn:SetText("✓ Confirm & Push Live")
+        self:StyleTactileButton(confirmBtn, {
+            normalBg = { 0.04, 0.18, 0.10, 0.95 },
+            hoverBg = { 0.06, 0.26, 0.15, 1.00 },
+            normalEdge = { 0.20, 0.95, 0.45, 0.95 },
+            hoverEdge = { 0.30, 1.00, 0.55, 1.00 },
+            normalTextColor = { 0.2, 1, 0.5, 1 },
+        })
+
+        modal.scrollContainer = scrollContainer
+        modal.targetGuildLbl = targetGuildLbl
+        modal.charStatLbl = charStatLbl
+        modal.previewLbl = previewLbl
+        modal.confirmBtn = confirmBtn
+        self.motdPushModal = modal
     end
+
+    local modal = self.motdPushModal
+    modal.targetGuildLbl:SetText(string.format("Target Guild: |c00FFCC%s|r", guildName))
+    modal.charStatLbl:SetText(string.format("Length: |c%s%d / 1024 chars|r  (|cAAAAAA%d bytes|r)",
+        charCount > 1000 and "FF5555" or "59E08A", charCount, byteCount))
+    modal.previewLbl:SetText(resolved)
+    if modal.scrollContainer and ZO_Scroll_ResetToTop then
+        ZO_Scroll_ResetToTop(modal.scrollContainer)
+    end
+
+    modal.confirmBtn:SetHandler("OnClicked", function()
+        modal:SetHidden(true)
+        FR:BroadcastMotDToGuild(true, guildId)
+    end)
+
+    modal:SetHidden(false)
 end
 
-function FR:BroadcastMotDToGuild(bypassConfirm)
+function FR:BroadcastMotDToGuild(bypassConfirm, targetGuildId)
     if not self.motdStudioEditBox then return end
-    local gIdx = self.selectedGuildIndex or 1
-    local guildId = GetGuildId(gIdx)
+    local gIdx = self.motdSelectedGuildIndex or self.selectedGuildIndex or 1
+    local guildId = targetGuildId or GetGuildId(gIdx)
     local guildName = GetGuildName(guildId)
 
     if not DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_SET_MOTD) then
@@ -1133,18 +1292,7 @@ function FR:BroadcastMotDToGuild(bypassConfirm)
     end
 
     if not bypassConfirm then
-        RegisterMotDBroadcastDialog()
-        local previewSnippet = resolved
-        if #previewSnippet > 260 then
-            previewSnippet = string.sub(previewSnippet, 1, 260) .. "..."
-        end
-        ZO_Dialogs_ShowDialog("FISSAL_CONFIRM_BROADCAST_MOTD", {
-            onConfirm = function()
-                FR:BroadcastMotDToGuild(true)
-            end,
-        }, {
-            mainTextParams = { guildName, tostring(charCount), previewSnippet }
-        })
+        self:OpenMotDPushModal(guildId, guildName, resolved, charCount, byteCount)
         return
     end
 
