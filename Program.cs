@@ -25,10 +25,12 @@ namespace RedfurSync
             UpdateInstaller.RecoverPendingUpdate(AppDomain.CurrentDomain.BaseDirectory);
 
             // ── Post-update verification handshake ─────────────────────────────
+            bool isPostUpdateVerify = false;
             foreach (var arg in args)
             {
                 if (arg.Equals("--post-update-verify", StringComparison.OrdinalIgnoreCase))
                 {
+                    isPostUpdateVerify = true;
                     TraceLog("Executing post-update verification...");
                     try
                     {
@@ -86,40 +88,48 @@ namespace RedfurSync
             if (!isNew)
             {
                 try { AllowSetForegroundWindow(ASFW_ANY); } catch { }
-                // Try to signal the running instance to wake
-                bool signaled = false;
-                try
+
+                // During --post-update-verify, the old instance is shutting down after seeing HEALTHY.
+                // Wait up to 5 seconds to acquire the mutex before attempting any wake signal.
+                if (!isPostUpdateVerify)
                 {
-                    if (EventWaitHandle.TryOpenExisting(WakeEventName, out var wakeEvent))
+                    // Try to signal the running instance to wake
+                    bool signaled = false;
+                    try
                     {
-                        using (wakeEvent) { wakeEvent.Set(); }
-                        signaled = true;
+                        if (EventWaitHandle.TryOpenExisting(WakeEventName, out var wakeEvent))
+                        {
+                            using (wakeEvent) { wakeEvent.Set(); }
+                            signaled = true;
+                        }
+                    }
+                    catch { }
+
+                    if (signaled)
+                    {
+                        // Another instance is alive and was signaled — exit gracefully
+                        return;
                     }
                 }
-                catch { }
 
-                if (signaled)
-                {
-                    // Another instance is alive and was signaled — exit gracefully
-                    return;
-                }
-
-                // The previous instance is likely dead (crashed without releasing mutex).
-                // Try to acquire ownership with a short timeout.
-                TraceLog("Wake event not found — previous instance may be dead. Attempting mutex takeover...");
+                // Either we are in --post-update-verify waiting for the old instance to exit,
+                // or the previous instance is dead. Wait up to 5 seconds to acquire ownership.
+                TraceLog(isPostUpdateVerify
+                    ? "Post-update handover — waiting up to 5s for previous instance to release mutex..."
+                    : "Wake event not found — previous instance may be dead. Attempting mutex takeover...");
                 try
                 {
-                    bool acquired = _mutex.WaitOne(TimeSpan.FromSeconds(2), false);
+                    bool acquired = _mutex.WaitOne(TimeSpan.FromSeconds(5), false);
                     if (!acquired)
                     {
                         TraceLog("Could not acquire mutex. Another instance may still be running.");
                         return;
                     }
-                    TraceLog("Mutex acquired — previous instance was dead. Proceeding as primary.");
+                    TraceLog("Mutex acquired — proceeding as primary.");
                 }
                 catch (AbandonedMutexException)
                 {
-                    // Mutex was abandoned by the crashed process — we now own it
+                    // Mutex was abandoned by the previous process — we now own it
                     TraceLog("Abandoned mutex recovered. Proceeding as primary.");
                 }
             }
@@ -184,7 +194,15 @@ namespace RedfurSync
                 var liveDir = AddonInstallerService.FindEsoLiveDirectory();
                 if (!string.IsNullOrWhiteSpace(liveDir))
                 {
-                    try { AddonInstallerService.InstallAddonFiles(liveDir); } catch { }
+                    try
+                    {
+                        var status = AddonInstallerService.CheckAddonInstallStatus(liveDir);
+                        if (status.NeedsUpdate)
+                        {
+                            AddonInstallerService.InstallAddonFiles(liveDir);
+                        }
+                    }
+                    catch { }
                 }
             }
 

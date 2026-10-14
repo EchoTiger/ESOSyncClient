@@ -24,7 +24,7 @@
 FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
-local ROWS_PER_PAGE = 13
+local ROWS_PER_PAGE = 12
 
 FR.autoRankResults = {}
 FR.autoRankFilteredResults = {}
@@ -333,9 +333,19 @@ function FR:EvaluateAutoRanks(guildId)
         local isPerm = string.find(plainNote, "%f[%w]perm%f[%W]") ~= nil
             or string.find(plainNote, "founder") ~= nil
             or string.find(plainNote, "vip") ~= nil
-        local isProbation = (arSettings.probationDays > 0)
-            and (secsSinceLogoff < (arSettings.probationDays * 86400))
-            and (rankIndex == numRanks)
+
+        local aw = self.savedVars and self.savedVars.autoWelcome
+        local firstSeenMap = aw and aw.firstSeen and aw.firstSeen[guildId]
+        local firstSeenTs = firstSeenMap and (firstSeenMap[rawName] or firstSeenMap["@" .. rawName]) or nil
+        local isProbation = false
+        if arSettings.probationDays and arSettings.probationDays > 0 then
+            local probWindowSecs = arSettings.probationDays * 86400
+            if firstSeenTs then
+                isProbation = (nowTs - firstSeenTs) < probWindowSecs
+            else
+                isProbation = (rankIndex == numRanks or rankIndex == baseRankIndex) and ((secsSinceLogoff or 0) < probWindowSecs)
+            end
+        end
 
         local action = "KEEP"
         local targetRankIndex = rankIndex
@@ -370,12 +380,8 @@ function FR:EvaluateAutoRanks(guildId)
             statusReason = "🛡 Permanent Member"
             action = "KEEP"
             isExempt = true
-        elseif isProbation then
-            statusReason = "🛡 Probation Grace"
-            action = "KEEP"
-            isExempt = true
         else
-            -- Top-to-Bottom Ladder Walk
+            -- Top-to-Bottom Ladder Walk (recruits in probation can still PROMOTE if they meet higher rank thresholds)
             local qualifiedRankIdx = baseRankIndex
             local qualifiedReason = "Base Member Rank"
 
@@ -440,6 +446,19 @@ function FR:EvaluateAutoRanks(guildId)
             else
                 action = "KEEP"
                 statusReason = "Rank Maintained"
+            end
+
+            -- Probation Grace protects recruits from demotion and marks unpromoted recruits as exempt
+            if isProbation then
+                if action == "DEMOTE" then
+                    action = "KEEP"
+                    targetRankIndex = rankIndex
+                    statusReason = "🛡 Probation Grace"
+                    isExempt = true
+                elseif action == "KEEP" and (rankIndex == numRanks or rankIndex == baseRankIndex) then
+                    statusReason = "🛡 Probation Grace"
+                    isExempt = true
+                end
             end
 
             -- Apply Restrict Demotions safety option
@@ -537,15 +556,15 @@ function FR:StartAutoRankBatch(guildId)
         return
     end
 
-    local setRankFn = GuildSetRank or GuildSetMemberRank or SetGuildMemberRank
-    if not setRankFn then
-        self.PrintChat("|cFF5555[Error]|r Set guild rank API function not found on client! Aborting batch.")
+    if not GuildPromote or not GuildDemote then
+        self.PrintChat("|cFF5555[Error]|r GuildPromote / GuildDemote API functions not found on client! Aborting batch.")
         return
     end
 
     local tasks = {}
     for _, item in ipairs(self.autoRankResults or {}) do
         if item.selected and item.action ~= "KEEP" and item.targetRankIndex ~= item.currentRankIndex then
+            item._stepsSent = 0
             table.insert(tasks, item)
         end
     end
@@ -571,22 +590,44 @@ function FR:StartAutoRankBatch(guildId)
 
     self.PrintChat(string.format("⚡ |c00FFCC[Fissal Ranks]|r Starting paced batch for %s (%d changes)...", guildName, #tasks))
 
-    -- Register Server Ack Listener
+    local taskIdx = 1
+
+    local function OnSchemaDrift(_, driftGuildId)
+        if not FR.autoRankBatchRunning or driftGuildId ~= guildId then return end
+        FR:CleanupAutoRankBatch()
+        if FR.autoRanksProgressLbl then FR.autoRanksProgressLbl:SetText("Schema Drift") end
+        FR.PrintChat("|cFF5555[Fissal Ranks]|r Guild rank structure modified mid-batch! Batch safely aborted to prevent mis-ranking.")
+    end
+    if EVENT_GUILD_RANKS_CHANGED then
+        EVENT_MANAGER:RegisterForEvent("FissalRelay_AutoRankSchemaDrift1", EVENT_GUILD_RANKS_CHANGED, OnSchemaDrift)
+    end
+    if EVENT_GUILD_RANK_CHANGED then
+        EVENT_MANAGER:RegisterForEvent("FissalRelay_AutoRankSchemaDrift2", EVENT_GUILD_RANK_CHANGED, OnSchemaDrift)
+    end
+
+    -- Register Server Ack Listener (supports multi-step GuildPromote / GuildDemote ladders)
     EVENT_MANAGER:RegisterForEvent("FissalRelay_AutoRankAck", EVENT_GUILD_MEMBER_RANK_CHANGED, function(_, eventGuildId, displayName, newRankIndex)
         if not FR.autoRankBatchRunning or eventGuildId ~= guildId then return end
         if FR.autoRankPending and FR.autoRankPending.displayName == displayName then
-            FR.autoRankSucceeded = (FR.autoRankSucceeded or 0) + 1
-            FR.autoRankProcessedCount = (FR.autoRankProcessedCount or 0) + 1
+            local pendingItem = FR.autoRankPending
             FR.autoRankPending = nil
             FR.autoRankNextAllowedAt = GetGameTimeMilliseconds() + MIN_SPACING_MS
 
-            if FR.autoRanksProgressLbl then
-                FR.autoRanksProgressLbl:SetText(string.format("Applying: %d / %d", FR.autoRankProcessedCount, FR.autoRankTotalTasks))
+            if newRankIndex == pendingItem.targetRankIndex then
+                FR.autoRankSucceeded = (FR.autoRankSucceeded or 0) + 1
+                FR.autoRankProcessedCount = (FR.autoRankProcessedCount or 0) + 1
+                taskIdx = taskIdx + 1
+                if FR.autoRanksProgressLbl then
+                    FR.autoRanksProgressLbl:SetText(string.format("Applying: %d / %d", FR.autoRankProcessedCount, FR.autoRankTotalTasks))
+                end
+            else
+                -- Still stepping toward targetRankIndex; keep taskIdx on current item so next tick sends the next step
+                if FR.autoRanksProgressLbl then
+                    FR.autoRanksProgressLbl:SetText(string.format("Stepping: %d / %d", FR.autoRankProcessedCount, FR.autoRankTotalTasks))
+                end
             end
         end
     end)
-
-    local taskIdx = 1
 
     EVENT_MANAGER:RegisterForUpdate("FissalRelay_AutoRankBatch", 50, function()
         if not FR.autoRankBatchRunning then return end
@@ -604,6 +645,7 @@ function FR:StartAutoRankBatch(guildId)
                 end
                 FR.autoRankPending = nil
                 FR.autoRankProcessedCount = (FR.autoRankProcessedCount or 0) + 1
+                taskIdx = taskIdx + 1
                 FR.autoRankNextAllowedAt = now + MIN_SPACING_MS
 
                 if FR.autoRanksProgressLbl then
@@ -627,28 +669,49 @@ function FR:StartAutoRankBatch(guildId)
         end
 
         local item = FR.autoRankTasks[taskIdx]
-        taskIdx = taskIdx + 1
 
         if item then
             local memberIdx = GetGuildMemberIndexFromDisplayName and GetGuildMemberIndexFromDisplayName(guildId, item.displayName)
             if not memberIdx or memberIdx <= 0 then
                 FR.autoRankSkipped = (FR.autoRankSkipped or 0) + 1
                 FR.autoRankProcessedCount = (FR.autoRankProcessedCount or 0) + 1
+                taskIdx = taskIdx + 1
                 FR.autoRankNextAllowedAt = now + 100
                 return
             end
 
             local _, _, currentRank = GetGuildMemberInfo(guildId, memberIdx)
             if currentRank == item.targetRankIndex then
-                FR.autoRankSkipped = (FR.autoRankSkipped or 0) + 1
+                if (item._stepsSent or 0) > 0 then
+                    FR.autoRankSucceeded = (FR.autoRankSucceeded or 0) + 1
+                else
+                    FR.autoRankSkipped = (FR.autoRankSkipped or 0) + 1
+                end
                 FR.autoRankProcessedCount = (FR.autoRankProcessedCount or 0) + 1
+                taskIdx = taskIdx + 1
                 FR.autoRankNextAllowedAt = now + 100
+                return
+            end
+
+            item._stepsSent = (item._stepsSent or 0) + 1
+            if item._stepsSent > 12 then
+                FR.autoRankTimedOut = (FR.autoRankTimedOut or 0) + 1
+                FR.autoRankProcessedCount = (FR.autoRankProcessedCount or 0) + 1
+                taskIdx = taskIdx + 1
+                FR.autoRankNextAllowedAt = now + MIN_SPACING_MS
                 return
             end
 
             FR.autoRankPending = item
             FR.autoRankSentAt = now
-            setRankFn(guildId, item.displayName, item.targetRankIndex)
+            -- In ESO: Lower rankIndex = Higher rank authority
+            if currentRank > item.targetRankIndex then
+                GuildPromote(guildId, item.displayName)
+            else
+                GuildDemote(guildId, item.displayName)
+            end
+        else
+            taskIdx = taskIdx + 1
         end
     end)
 end
@@ -716,13 +779,13 @@ function FR:BuildAutoRanksUI(parent)
     controlRow:SetHeight(28)
     self.autoRanksControlRow = controlRow
 
-    -- Filter Buttons: All (38), Changes (56), Promote (68), Demote (68), Exempt (58)
+    -- Filter Buttons: All (36), Changes (52), Promote (64), Demote (64), Exempt (54)
     local filters = {
-        { id = "all", label = "All", width = 38 },
-        { id = "changes", label = "Changes", width = 56 },
-        { id = "promote", label = "|t14:14:EsoUI/Art/Buttons/pointsplus_up.dds|t Promote", width = 68 },
-        { id = "demote", label = "|t14:14:EsoUI/Art/Buttons/pointsplus_down.dds|t Demote", width = 68 },
-        { id = "exempt", label = "|t14:14:EsoUI/Art/Campaign/overview_guildOwner_icon.dds|t Exempt", width = 58 },
+        { id = "all", label = "All", width = 36 },
+        { id = "changes", label = "Changes", width = 52 },
+        { id = "promote", label = "|t14:14:EsoUI/Art/Buttons/pointsplus_up.dds|t Promote", width = 64 },
+        { id = "demote", label = "|t14:14:EsoUI/Art/Buttons/pointsplus_down.dds|t Demote", width = 64 },
+        { id = "exempt", label = "|t14:14:EsoUI/Art/Campaign/overview_guildOwner_icon.dds|t Exempt", width = 54 },
     }
     self.autoRankFilterBtns = {}
 
@@ -749,10 +812,10 @@ function FR:BuildAutoRanksUI(parent)
         curX = curX + f.width + 3
     end
 
-    -- Lookback Window cycle button (width 54)
+    -- Lookback Window cycle button (width 52)
     local windowBtn = wm:CreateControl("$(parent)_WindowBtn", controlRow, CT_BUTTON)
     windowBtn:SetAnchor(TOPLEFT, controlRow, TOPLEFT, curX + 3, 2)
-    windowBtn:SetDimensions(54, 24)
+    windowBtn:SetDimensions(52, 24)
     windowBtn:SetFont("ZoFontGameSmall")
     windowBtn:SetText("10 Days")
     self:StyleTactileButton(windowBtn, {
@@ -787,7 +850,7 @@ function FR:BuildAutoRanksUI(parent)
     -- Right Action Buttons: Explicit non-colliding coordinates from TOPRIGHT
     local applyBtn = wm:CreateControl("$(parent)_ApplyBtn", controlRow, CT_BUTTON)
     applyBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, 0, 2)
-    applyBtn:SetDimensions(125, 24)
+    applyBtn:SetDimensions(116, 24)
     applyBtn:SetFont("ZoFontGameBold")
     applyBtn:SetText("Apply Changes")
     self:StyleTactileButton(applyBtn, {
@@ -805,7 +868,7 @@ function FR:BuildAutoRanksUI(parent)
 
     local abortBtn = wm:CreateControl("$(parent)_AbortBtn", controlRow, CT_BUTTON)
     abortBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, 0, 2)
-    abortBtn:SetDimensions(125, 24)
+    abortBtn:SetDimensions(116, 24)
     abortBtn:SetFont("ZoFontGameBold")
     abortBtn:SetText("|cFF5555[STOP / ABORT]|r")
     abortBtn:SetHidden(true)
@@ -822,8 +885,8 @@ function FR:BuildAutoRanksUI(parent)
     self.autoRanksAbortBtn = abortBtn
 
     local evalBtn = wm:CreateControl("$(parent)_EvalBtn", controlRow, CT_BUTTON)
-    evalBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, -131, 2)
-    evalBtn:SetDimensions(72, 24)
+    evalBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, -120, 2)
+    evalBtn:SetDimensions(68, 24)
     evalBtn:SetFont("ZoFontGameBold")
     evalBtn:SetText("Evaluate")
     self:StyleTactileButton(evalBtn, {
@@ -839,10 +902,10 @@ function FR:BuildAutoRanksUI(parent)
         self:UpdateAutoRanksUI()
     end)
 
-    -- [✉ Auto-Welcome] Button (width 110, anchored at -209)
+    -- [✉ Auto-Welcome] Button (width 106, anchored at -192)
     local welcomeBtn = wm:CreateControl("$(parent)_WelcomeBtn", controlRow, CT_BUTTON)
-    welcomeBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, -209, 2)
-    welcomeBtn:SetDimensions(110, 24)
+    welcomeBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, -192, 2)
+    welcomeBtn:SetDimensions(106, 24)
     welcomeBtn:SetFont("ZoFontGameBold")
     welcomeBtn:SetText("✉ Auto-Welcome")
     self:StyleTactileButton(welcomeBtn, {
@@ -859,10 +922,10 @@ function FR:BuildAutoRanksUI(parent)
     end)
     self.autoRanksWelcomeBtn = welcomeBtn
 
-    -- [⚙ Rank Dues] Button (width 96, anchored at -331)
+    -- [⚙ Rank Dues] Button (width 92, anchored at -302)
     local configBtn = wm:CreateControl("$(parent)_ConfigBtn", controlRow, CT_BUTTON)
-    configBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, -331, 2)
-    configBtn:SetDimensions(96, 24)
+    configBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, -302, 2)
+    configBtn:SetDimensions(92, 24)
     configBtn:SetFont("ZoFontGameBold")
     configBtn:SetText("⚙ Rank Dues")
     self:StyleTactileButton(configBtn, {
@@ -881,7 +944,10 @@ function FR:BuildAutoRanksUI(parent)
     self.autoRanksConfigBtn = configBtn
 
     local progLbl = wm:CreateControl("$(parent)_ProgLbl", controlRow, CT_LABEL)
-    progLbl:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, -435, 6)
+    progLbl:SetAnchor(LEFT, windowBtn, RIGHT, 6, 0)
+    progLbl:SetAnchor(RIGHT, configBtn, LEFT, -6, 0)
+    progLbl:SetHorizontalAlignment(TEXT_ALIGN_CENTER)
+    progLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
     progLbl:SetFont("ZoFontGameSmall")
     progLbl:SetText("")
     self.autoRanksProgressLbl = progLbl
@@ -935,7 +1001,7 @@ function FR:BuildAutoRanksUI(parent)
     local hDep = MakeHdrLbl("HDep", hSales, LEFT, RIGHT, 6, 85, "BANK DUES")
     local hNote = MakeHdrLbl("HNote", hDep, LEFT, RIGHT, 6, 130, "ASSESSMENT & NOTES")
 
-    -- 5. Data Rows (13 Spacious Rows with Mouse Wheel Navigation)
+    -- 5. Data Rows (12 Spacious Rows with Mouse Wheel Navigation)
     self.autoRanksGridRows = {}
     local rowStartY = 92
     local rowHeight = 25
@@ -1074,6 +1140,7 @@ function FR:BuildAutoRanksUI(parent)
             self:RenderAutoRanksRows()
         end
     end)
+    self.autoRanksNextBtn = nextBtn
 
     local pageLbl = wm:CreateControl("$(parent)_PageLbl", card, CT_LABEL)
     pageLbl:SetAnchor(RIGHT, nextBtn, LEFT, -8, 0)
@@ -1098,6 +1165,7 @@ function FR:BuildAutoRanksUI(parent)
             self:RenderAutoRanksRows()
         end
     end)
+    self.autoRanksPrevBtn = prevBtn
 
     -- 7. Rank Dues Configuration Drawer Modal
     self:BuildRankConfigDrawer(card)
@@ -1951,18 +2019,34 @@ function FR:UpdateAutoWelcomeButtonBadge()
     end
 end
 
+function FR:CanAutoWelcomeInGuild(guildId)
+    if not guildId or guildId == 0 then return false end
+    local aw = self.savedVars and self.savedVars.autoWelcome
+    local gCfg = aw and aw.guildSettings and aw.guildSettings[guildId]
+    if not (gCfg and gCfg.enabled) then
+        return false
+    end
+    local isOfficer = (IsPlayerGuildMaster and IsPlayerGuildMaster(guildId))
+        or (DoesPlayerHaveGuildPermission and DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_INVITE))
+        or (self.CanTrackGuildBank and self:CanTrackGuildBank(guildId))
+    return isOfficer == true
+end
+
 function FR:InterpolateWelcomeLetter(template, guildId, memberName)
     if not template or template == "" then return "" end
     local guildName = GetGuildName(guildId) or "our guild"
     local kiosk = "Guild Kiosk"
-    if GetGuildKiosk and GetGuildKiosk(guildId) then
-        local kName = GetGuildKiosk(guildId)
-        if kName and kName ~= "" then kiosk = kName end
+    local kName = (GetGuildOwnedKioskInfo and GetGuildOwnedKioskInfo(guildId)) or (GetGuildKiosk and GetGuildKiosk(guildId))
+    if kName and kName ~= "" then
+        kiosk = kName
     end
 
     local rafflePot = "Active"
-    if self.savedVars and self.savedVars.raffle and self.savedVars.raffle.pot then
-        rafflePot = ZO_LocalizeDecimalNumber(self.savedVars.raffle.pot)
+    if self.CalculateRaffleMetrics then
+        local metrics = self:CalculateRaffleMetrics(guildId, 7, 1000)
+        if metrics and (tonumber(metrics.totalGold) or 0) > 0 then
+            rafflePot = ZO_LocalizeDecimalNumber(metrics.totalGold)
+        end
     end
 
     local discord = "discord.gg/redfur"
@@ -2014,7 +2098,6 @@ function FR:BuildAutoWelcomeDrawer(parent)
 
     -- Title & Subtitle
     local titleLbl = wm:CreateControl("$(parent)_Title", drawer, CT_LABEL)
-    dTitle = titleLbl
     titleLbl:SetAnchor(TOPLEFT, drawer, TOPLEFT, 16, 12)
     titleLbl:SetFont("ZoFontGameBold")
     titleLbl:SetText("|cFF9900AUTO-WELCOME RECRUIT ENGINE|r • |c00FFCCOnboarding & Letter Studio|r")
@@ -2045,7 +2128,7 @@ function FR:BuildAutoWelcomeDrawer(parent)
     -- LEFT COLUMN: Pending Recruits List (Width 360)
     local leftCol = wm:CreateControl("$(parent)_LeftCol", drawer, CT_CONTROL)
     leftCol:SetAnchor(TOPLEFT, drawer, TOPLEFT, 14, 52)
-    leftCol:SetDimensions(360, 430)
+    leftCol:SetDimensions(360, 400)
 
     local pendingHdr = wm:CreateControl("$(parent)_PendingHdr", leftCol, CT_LABEL)
     pendingHdr:SetAnchor(TOPLEFT, leftCol, TOPLEFT, 0, 0)
@@ -2450,6 +2533,16 @@ function FR:DispatchWelcomeMails(guildId)
             return
         end
 
+        if not SCENE_MANAGER or not SCENE_MANAGER:IsShowing("mailSend") then
+            self.PrintChat("|cFFCC00AutoWelcome:|r Mail window closed; paused dispatch so remaining recruits stay queued.")
+            if self.autoWelcomeStatusLbl then
+                self.autoWelcomeStatusLbl:SetText(string.format("Paused (%d / %d sent)", sentCount, total))
+            end
+            self:RefreshAutoWelcomeDrawer()
+            self:UpdateAutoWelcomeButtonBadge()
+            return
+        end
+
         local item = queue[idx]
         local subject = FR:InterpolateWelcomeLetter(subjectTpl, guildId, item.display)
         local body = FR:InterpolateWelcomeLetter(bodyTpl, guildId, item.display)
@@ -2458,21 +2551,25 @@ function FR:DispatchWelcomeMails(guildId)
             self.autoWelcomeStatusLbl:SetText(string.format("Sending (%d/%d): %s...", idx, total, item.display))
         end
 
-        pcall(function()
+        local ok = pcall(function()
             SendMail(item.display, subject, body)
         end)
 
-        aw.welcomed[guildId] = aw.welcomed[guildId] or {}
-        aw.welcomed[guildId][item.lower] = true
-        aw.pending[guildId][item.lower] = nil
-        sentCount = sentCount + 1
+        if ok then
+            aw.welcomed[guildId] = aw.welcomed[guildId] or {}
+            aw.welcomed[guildId][item.lower] = true
+            aw.pending[guildId][item.lower] = nil
+            sentCount = sentCount + 1
+        end
 
         zo_callLater(function()
             SendNext(idx + 1)
         end, mailDelay)
     end
 
-    SendNext(1)
+    zo_callLater(function()
+        SendNext(1)
+    end, 200)
 end
 
 function FR:MarkAllCurrentWelcomed(guildId)
@@ -2509,22 +2606,26 @@ function FR:ScanRosterForNewRecruits()
         return {}
     end
 
+    aw.firstSeen = aw.firstSeen or {}
+    local nowTs = GetTimeStamp()
     local found = {}
     for i = 1, GetNumGuilds() do
         local guildId = GetGuildId(i)
         aw.welcomed[guildId] = aw.welcomed[guildId] or {}
         aw.pending[guildId] = aw.pending[guildId] or {}
-        local gCfg = aw.guildSettings and aw.guildSettings[guildId]
-        local isEnabled = gCfg and gCfg.enabled
+        aw.firstSeen[guildId] = aw.firstSeen[guildId] or {}
 
-        if isEnabled then
+        if self:CanAutoWelcomeInGuild(guildId) then
             local numM = GetNumGuildMembers(guildId)
             for m = 1, numM do
                 local displayName = select(1, GetGuildMemberInfo(guildId, m))
                 if displayName then
                     local lower = string.lower(displayName)
+                    local rawLower = string.gsub(lower, "^@", "")
                     if not aw.welcomed[guildId][lower] and not aw.pending[guildId][lower] then
                         aw.pending[guildId][lower] = displayName
+                        aw.firstSeen[guildId][lower] = aw.firstSeen[guildId][lower] or nowTs
+                        aw.firstSeen[guildId][rawLower] = aw.firstSeen[guildId][rawLower] or nowTs
                         table.insert(found, { guildId = guildId, displayName = displayName })
                     end
                 end
@@ -2563,10 +2664,21 @@ function FR:OnGuildMemberAdded(guildId, displayName)
     local aw = self.savedVars.autoWelcome
     aw.welcomed = aw.welcomed or {}
     aw.pending = aw.pending or {}
+    aw.firstSeen = aw.firstSeen or {}
     aw.welcomed[guildId] = aw.welcomed[guildId] or {}
     aw.pending[guildId] = aw.pending[guildId] or {}
+    aw.firstSeen[guildId] = aw.firstSeen[guildId] or {}
 
     local lower = string.lower(displayName)
+    local rawLower = string.gsub(lower, "^@", "")
+    local nowTs = GetTimeStamp()
+    aw.firstSeen[guildId][lower] = aw.firstSeen[guildId][lower] or nowTs
+    aw.firstSeen[guildId][rawLower] = aw.firstSeen[guildId][rawLower] or nowTs
+
+    if not self:CanAutoWelcomeInGuild(guildId) then
+        return
+    end
+
     if not aw.welcomed[guildId][lower] then
         aw.pending[guildId][lower] = displayName
         self.PrintChat(string.format("✉ |c00FFCCAutoWelcome:|r New recruit queued for %s: %s", GetGuildName(guildId), displayName))
@@ -2575,7 +2687,7 @@ function FR:OnGuildMemberAdded(guildId, displayName)
             self:RefreshAutoWelcomeDrawer()
         end
 
-        if aw.autoSendWhenMailOpen and SCENE_MANAGER:IsShowing("mailSend") then
+        if aw.autoSendWhenMailOpen and SCENE_MANAGER and SCENE_MANAGER:IsShowing("mailSend") then
             self:DispatchWelcomeMails(guildId)
         end
     end
@@ -2598,7 +2710,9 @@ if SCENE_MANAGER and SCENE_MANAGER:GetScene("mailSend") then
         if (newState == SCENE_SHOWING or newState == SCENE_SHOWN) and FR.savedVars and FR.savedVars.autoWelcome and FR.savedVars.autoWelcome.autoSendWhenMailOpen then
             local gIdx = FR.selectedGuildIndex or 1
             local gId = FR:ResolveGuildId(gIdx)
-            FR:DispatchWelcomeMails(gId)
+            if FR:CanAutoWelcomeInGuild(gId) then
+                FR:DispatchWelcomeMails(gId)
+            end
         end
     end)
 end

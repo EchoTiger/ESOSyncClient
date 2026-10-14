@@ -45,7 +45,7 @@ public sealed class StartAsyncIdempotencyTests
         }
 
         // One watcher set, stable across repeated calls.
-        Assert.Equal(3, watcher.ActiveWatcherCount);
+        Assert.Equal(2, watcher.ActiveWatcherCount);
 
         // Only the first StartAsync armed the update machinery; ensure it actually ran.
         var deadline = DateTime.UtcNow.AddSeconds(10);

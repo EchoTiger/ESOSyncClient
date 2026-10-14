@@ -25,11 +25,12 @@ namespace RedfurSync
         private string _errorMessage = string.Empty;
         private bool _isExpanded = false;
 
-        public string FilePath    { get; init; } = string.Empty;
+        public string FilePath    { get; set; } = string.Empty;
         public string SourcePath  { get; init; } = string.Empty;
         public bool   IsSnapshot  { get; init; } = false;
+        public string ContentHash { get; set; } = string.Empty;
         public string FileName    { get; init; } = string.Empty;
-        public long   FileSizeBytes { get; init; } = 0;
+        public long   FileSizeBytes { get; set; } = 0;
         public DateTime QueuedAt  { get; init; } = DateTime.Now;
         public int    RetryCount  { get; set; } = 0; 
 

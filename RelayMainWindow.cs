@@ -138,6 +138,11 @@ namespace RedfurSync
         private int _dispWait = 35;
         private DoubleBufferedPanel? _titlePlatePanel;
         private DoubleBufferedPanel? _microDisplayPanel;
+        private DoubleBufferedPanel? _navBadgePanel;
+        private Font? _navFontRegular;
+        private Font? _navFontBold;
+        private float _lastAppliedTextScale = 1f;
+        private readonly Dictionary<Control, (FontFamily family, float basePxAt1x, FontStyle style)> _baseControlFonts = new();
 
         // Nav buttons
         private readonly List<(string id, Panel panel, Button btn, Panel viewPanel)> _navItems = new();
@@ -317,7 +322,8 @@ namespace RedfurSync
             _watcher = watcher;
             _applyUpdateAction = applyUpdateAction;
             _syncContext = SynchronizationContext.Current;
-            _syncCoalesceTimer = new System.Threading.Timer(OnSyncCoalesceTick, null, 200, 200);
+            _syncCoalesceTimer = new System.Threading.Timer(OnSyncCoalesceTick, null, Timeout.Infinite, Timeout.Infinite);
+            _lastAppliedTextScale = FissalTheme.GlobalTextScale;
 
             SetStyle(ControlStyles.AllPaintingInWmPaint |
                      ControlStyles.UserPaint |
@@ -422,6 +428,8 @@ namespace RedfurSync
                 _syncCoalesceTimer?.Dispose();
                 _animTimer?.Stop();
                 _animTimer?.Dispose();
+                _navFontRegular?.Dispose();
+                _navFontBold?.Dispose();
                 _watcher.JobsChanged -= OnWatcherJobsChanged;
                 _watcher.ConnectionChecked -= OnWatcherConnectionChecked;
                 FissalTheme.ThemeChanged -= OnGlobalThemeChanged;
@@ -757,58 +765,62 @@ namespace RedfurSync
                 string displayBadge = cur.text;
                 Color badgeColor = cur.color;
 
-                // 6. Draw 4 Status Indicator Lamps on the right side
+                // 6. Draw 4 Status Indicator Lamps on the right side (hide in narrow/compact mode to prevent overlap)
+                bool showLamps = w >= (int)(260 * _scale);
                 int lightDia = Math.Max(7, (int)(8 * _scale));
                 int lightSpacing = Math.Max(14, (int)(16 * _scale));
                 int totalLampsW = 3 * lightSpacing + lightDia + (int)(12 * _scale);
-                int lampsStartX = w - totalLampsW - (int)(10 * _scale);
+                int lampsStartX = showLamps ? (w - totalLampsW - (int)(10 * _scale)) : (w - (int)(10 * _scale));
                 int lampsY = (h - lightDia) / 2;
 
-                Color[] lightColors = {
-                    Color.FromArgb(50, 255, 50),   // 0: Standby / Normal (Green)
-                    Color.FromArgb(255, 200, 0),   // 1: Transmitting / Active (Amber)
-                    Color.FromArgb(255, 45, 45),   // 2: Anomaly / Error (Red)
-                    Color.FromArgb(195, 120, 255)  // 3: Upgrade Matrix (Purple)
-                };
-
-                for (int i = 0; i < 4; i++)
+                if (showLamps)
                 {
-                    bool isLampActive = statuses.Exists(s => s.type == i);
-                    bool isCurrent = cur.type == i;
-                    int lx = lampsStartX + (i * lightSpacing);
+                    Color[] lightColors = {
+                        Color.FromArgb(50, 255, 50),   // 0: Standby / Normal (Green)
+                        Color.FromArgb(255, 200, 0),   // 1: Transmitting / Active (Amber)
+                        Color.FromArgb(255, 45, 45),   // 2: Anomaly / Error (Red)
+                        Color.FromArgb(195, 120, 255)  // 3: Upgrade Matrix (Purple)
+                    };
 
-                    // Off state / dark lens
-                    using (var offBrush = new LinearGradientBrush(
-                        new Rectangle(lx, lampsY, lightDia, lightDia),
-                        Color.FromArgb(255, lightColors[i].R / 4, lightColors[i].G / 4, lightColors[i].B / 4),
-                        Color.FromArgb(255, 12, 14, 18), LinearGradientMode.ForwardDiagonal))
+                    for (int i = 0; i < 4; i++)
                     {
-                        g.FillEllipse(offBrush, lx, lampsY, lightDia, lightDia);
+                        bool isLampActive = statuses.Exists(s => s.type == i);
+                        bool isCurrent = cur.type == i;
+                        int lx = lampsStartX + (i * lightSpacing);
+
+                        // Off state / dark lens
+                        using (var offBrush = new LinearGradientBrush(
+                            new Rectangle(lx, lampsY, lightDia, lightDia),
+                            Color.FromArgb(255, lightColors[i].R / 4, lightColors[i].G / 4, lightColors[i].B / 4),
+                            Color.FromArgb(255, 12, 14, 18), LinearGradientMode.ForwardDiagonal))
+                        {
+                            g.FillEllipse(offBrush, lx, lampsY, lightDia, lightDia);
+                        }
+
+                        using (var rimPen = new Pen(Color.FromArgb(80, lightColors[i]), 1f))
+                            g.DrawEllipse(rimPen, lx, lampsY, lightDia, lightDia);
+
+                        if (isLampActive)
+                        {
+                            int alpha = (int)((isCurrent ? ((Math.Sin(_shimmer * 1.2) + 1.0) / 2.0) : 0.85) * 200 + 55);
+                            alpha = Math.Clamp(alpha, 60, 255);
+
+                            using (var litBrush = new SolidBrush(Color.FromArgb(alpha, lightColors[i])))
+                                g.FillEllipse(litBrush, lx + 1, lampsY + 1, lightDia - 2, lightDia - 2);
+
+                            // White hot core
+                            using (var whiteCore = new SolidBrush(Color.FromArgb(alpha, Color.White)))
+                                g.FillEllipse(whiteCore, lx + lightDia / 2 - 1, lampsY + lightDia / 2 - 1, 2, 2);
+
+                            // Horizontal glow flare
+                            using (var glowH = new SolidBrush(Color.FromArgb(alpha / 4, lightColors[i])))
+                                g.FillEllipse(glowH, lx - (int)(3 * _scale), lampsY + (lightDia / 4), lightDia + (int)(6 * _scale), lightDia / 2);
+                        }
+
+                        // Specular glint
+                        using (var glintBrush = new SolidBrush(Color.FromArgb(isLampActive ? 220 : 120, Color.White)))
+                            g.FillEllipse(glintBrush, lx + 2, lampsY + 1, Math.Max(2, lightDia / 3), Math.Max(1, lightDia / 4));
                     }
-
-                    using (var rimPen = new Pen(Color.FromArgb(80, lightColors[i]), 1f))
-                        g.DrawEllipse(rimPen, lx, lampsY, lightDia, lightDia);
-
-                    if (isLampActive)
-                    {
-                        int alpha = (int)((isCurrent ? ((Math.Sin(_shimmer * 1.2) + 1.0) / 2.0) : 0.85) * 200 + 55);
-                        alpha = Math.Clamp(alpha, 60, 255);
-
-                        using (var litBrush = new SolidBrush(Color.FromArgb(alpha, lightColors[i])))
-                            g.FillEllipse(litBrush, lx + 1, lampsY + 1, lightDia - 2, lightDia - 2);
-
-                        // White hot core
-                        using (var whiteCore = new SolidBrush(Color.FromArgb(alpha, Color.White)))
-                            g.FillEllipse(whiteCore, lx + lightDia / 2 - 1, lampsY + lightDia / 2 - 1, 2, 2);
-
-                        // Horizontal glow flare
-                        using (var glowH = new SolidBrush(Color.FromArgb(alpha / 4, lightColors[i])))
-                            g.FillEllipse(glowH, lx - (int)(3 * _scale), lampsY + (lightDia / 4), lightDia + (int)(6 * _scale), lightDia / 2);
-                    }
-
-                    // Specular glint
-                    using (var glintBrush = new SolidBrush(Color.FromArgb(isLampActive ? 220 : 120, Color.White)))
-                        g.FillEllipse(glintBrush, lx + 2, lampsY + 1, Math.Max(2, lightDia / 3), Math.Max(1, lightDia / 4));
                 }
 
                 // 7. Draw Marquee Phosphor Text on the left
@@ -933,11 +945,26 @@ namespace RedfurSync
                 BackColor = Color.Transparent,
             };
 
+            _navFontRegular = Body(8.5f, _scale, FontStyle.Regular);
+            _navFontBold = Body(8.5f, _scale, FontStyle.Bold);
+
             AddNavButton(navStack, "sync",        "⚡ Live Sync & Logs", "Live file sync monitor and batch history");
             AddNavButton(navStack, "addon",       "📜 ESO Addon",        "Addon install, version sync & game path");
             AddNavButton(navStack, "setup",       "🛠️ Setup & Pairing",  "Device token, display name, and pairing code");
-            AddNavButton(navStack, "themes",      "🎨 Themes & Display", "11 Terminal color palettes and UI scaling");
+            AddNavButton(navStack, "themes",      "🎨 Themes & Display", "12 Terminal color palettes and UI scaling");
             AddNavButton(navStack, "diagnostics", "⚙️ Diagnostics",      "Watcher status, log viewers, and debug controls");
+
+            // Ask Fissal launcher button in the nav rail
+            var askFissalBtn = MakeStyledButton("💬 Ask Fissal...", CGoldBrt);
+            askFissalBtn.Width = (int)(188 * _scale);
+            askFissalBtn.Height = (int)(36 * _scale);
+            askFissalBtn.Margin = new Padding((int)(4 * _scale), (int)(8 * _scale), (int)(4 * _scale), (int)(3 * _scale));
+            askFissalBtn.Click += (_, _) =>
+            {
+                using var dlg = new RelayAssistantForm(_watcher);
+                dlg.ShowDialog(this);
+            };
+            navStack.Controls.Add(askFissalBtn);
 
             _navRail.Controls.Add(navStack);
 
@@ -948,6 +975,7 @@ namespace RedfurSync
                 BackColor = Color.Transparent,
                 Padding = new Padding((int)(8 * _scale), (int)(4 * _scale), (int)(8 * _scale), (int)(4 * _scale)),
             };
+            _navBadgePanel = navBadge;
             navBadge.Paint += (s, e) =>
             {
                 var g = e.Graphics;
@@ -978,9 +1006,13 @@ namespace RedfurSync
                 using var b2 = new SolidBrush(CTextSub);
                 g.DrawString($"v{RelayVersion.Current} • WIN-X64", f2, b2, (int)(8 * _scale), (int)(24 * _scale));
 
+                bool isPaired = !string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken) || !string.IsNullOrWhiteSpace(AppConfig.Instance.ApiKey);
+                string badgeStatus = !isPaired ? "● UNPAIRED" : (_isConnected ? "● ONLINE" : "● OFFLINE");
+                Color badgeCol = !isPaired ? CWarn : (_isConnected ? CGreen : CBarFail);
+
                 using var f3 = Mono(7f, _scale, FontStyle.Bold);
-                using var b3 = new SolidBrush(CGreen);
-                g.DrawString("● ONLINE", f3, b3, (int)(8 * _scale), (int)(40 * _scale));
+                using var b3 = new SolidBrush(badgeCol);
+                g.DrawString(badgeStatus, f3, b3, (int)(8 * _scale), (int)(40 * _scale));
 
                 // Decorative corner micro-rivets on badge
                 DrawCornerRivets(g, w - 4, h - 4, (int)(2 * _scale), Color.FromArgb(100, CGoldMid));
@@ -1093,7 +1125,7 @@ namespace RedfurSync
                 FlatStyle = FlatStyle.Flat,
                 BackColor = Color.Transparent,
                 ForeColor = CTextSub,
-                Font = Body(8.5f, _scale, FontStyle.Regular),
+                Font = _navFontRegular ?? Body(8.5f, _scale, FontStyle.Regular),
                 Cursor = Cursors.Hand,
                 Margin = new Padding(0),
                 Padding = new Padding((int)(12 * _scale), 0, 0, 0),
@@ -1121,11 +1153,13 @@ namespace RedfurSync
         private void SwitchTab(string id)
         {
             _activeTabId = id;
+            _navFontRegular ??= Body(8.5f, _scale, FontStyle.Regular);
+            _navFontBold ??= Body(8.5f, _scale, FontStyle.Bold);
             foreach (var item in _navItems)
             {
                 bool active = item.id == id;
                 item.btn.ForeColor = active ? CGoldBrt : CTextSub;
-                item.btn.Font = Body(8.5f, _scale, active ? FontStyle.Bold : FontStyle.Regular);
+                item.btn.Font = active ? _navFontBold : _navFontRegular;
                 item.panel.Invalidate();
                 item.viewPanel.Visible = active;
                 if (active) item.viewPanel.BringToFront();
@@ -1501,18 +1535,30 @@ namespace RedfurSync
                        : Color.FromArgb(240, 150, 40);
 
             // Cycle marquee status message every 35 frames (~3.5 seconds)
+            bool statusRotated = false;
             _dispWait--;
             if (_dispWait <= 0)
             {
                 _dispWait = 35;
                 _dispStatusIdx++;
+                statusRotated = true;
             }
 
-            _titlePlatePanel?.Invalidate();
-            _microDisplayPanel?.Invalidate();
-            _oscilloscopePanel?.Invalidate();
-
             var activeJob = jobsSnapshot.FirstOrDefault(j => j.Status == UploadStatus.Uploading);
+            bool isLowFidelity = UploadProgressForm.AppConfig.CurrentMode == FidelityMode.Low;
+            bool shouldRepaintIdle = !isLowFidelity && (_animFrame % 10 == 0);
+
+            if (activeJob != null || statusRotated || shouldRepaintIdle)
+            {
+                _titlePlatePanel?.Invalidate();
+                _microDisplayPanel?.Invalidate();
+            }
+
+            if (_activeTabId == "sync" && (activeJob != null || shouldRepaintIdle))
+            {
+                _oscilloscopePanel?.Invalidate();
+            }
+
             if (activeJob == null)
             {
                 int queued = jobsSnapshot.Count(j => j.Status == UploadStatus.Queued);
@@ -1520,16 +1566,18 @@ namespace RedfurSync
                 {
                     if (_tickerLabel != null && !_tickerLabel.IsDisposed)
                     {
-                        _tickerLabel.Text = $"⏳ [QUEUED] {queued} file{(queued == 1 ? "" : "s")} awaiting tonal frequency window...";
-                        _tickerLabel.ForeColor = CWarn;
+                        string queuedText = $"⏳ [QUEUED] {queued} file{(queued == 1 ? "" : "s")} awaiting tonal frequency window...";
+                        if (_tickerLabel.Text != queuedText) _tickerLabel.Text = queuedText;
+                        if (_tickerLabel.ForeColor != CWarn) _tickerLabel.ForeColor = CWarn;
                     }
                 }
                 else
                 {
                     if (_tickerLabel != null && !_tickerLabel.IsDisposed)
                     {
-                        _tickerLabel.Text = "● TONAL TRANSCEIVER RESONANT • READY FOR ESO TELEMETRY";
-                        _tickerLabel.ForeColor = CGreen;
+                        const string idleText = "● TONAL TRANSCEIVER RESONANT • READY FOR ESO TELEMETRY";
+                        if (_tickerLabel.Text != idleText) _tickerLabel.Text = idleText;
+                        if (_tickerLabel.ForeColor != CGreen) _tickerLabel.ForeColor = CGreen;
                     }
                 }
                 return;
@@ -2694,6 +2742,7 @@ namespace RedfurSync
                 BackColor = CPanelBg,
             };
             layout.Controls.Add(statusLabel, 1, 0);
+            layout.SetRowSpan(statusLabel, 2);
 
             // Status progress or error detail
             var detailLabel = new Label
@@ -2883,7 +2932,7 @@ namespace RedfurSync
                 {
                     MinimumSize = new Size((int)(920 * _scale), (int)(580 * _scale));
                     _navRail.Visible = true;
-                    _rootLayout.ColumnStyles[0].Width = (int)(220 * _scale);
+                    _rootLayout.ColumnStyles[0].Width = (int)(204 * _scale);
                     Size = _normalSize.Width > 0 ? _normalSize : new Size((int)(1060 * _scale), (int)(690 * _scale));
                 }
             }
@@ -2995,7 +3044,8 @@ namespace RedfurSync
                 else if (c is RichTextBox rtb)
                 {
                     rtb.BackColor = CPanelBgAlt;
-                    rtb.ForeColor = CText;
+                    if (rtb.TextLength == 0)
+                        rtb.ForeColor = CText;
                 }
                 else if (c is ComboBox cmb)
                 {
@@ -3218,7 +3268,7 @@ namespace RedfurSync
 
             _btnInstallOrUpdateAddon = MakeStyledButton("Install / Update Addon", CGreen);
             _btnInstallOrUpdateAddon.Margin = new Padding(0, 0, (int)(8 * _scale), (int)(6 * _scale));
-            _btnInstallOrUpdateAddon.Click += (_, _) =>
+            _btnInstallOrUpdateAddon.Click += async (_, _) =>
             {
                 string? path = _txtAddonEsoPath.Text.Trim();
                 if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
@@ -3239,7 +3289,16 @@ namespace RedfurSync
                     cfg.Save();
                 }
 
-                bool ok = AddonInstallerService.InstallOrUpdateAddon(path, out string msg);
+                _btnInstallOrUpdateAddon.Enabled = false;
+                _btnInstallOrUpdateAddon.Text = "Installing...";
+                string resolvedPath = path;
+                var (ok, msg) = await Task.Run(() =>
+                {
+                    bool result = AddonInstallerService.InstallOrUpdateAddon(resolvedPath, out string statusMsg);
+                    return (result, statusMsg);
+                });
+                _btnInstallOrUpdateAddon.Enabled = true;
+
                 RefreshAddonView();
                 RefreshSetupView();
 
@@ -3315,7 +3374,7 @@ namespace RedfurSync
             };
             depsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(160 * _scale)));
             depsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            depsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(290 * _scale)));
+            depsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(240 * _scale)));
 
             var depsHeader = new Label
             {
@@ -3339,6 +3398,7 @@ namespace RedfurSync
                 Font = Mono(8.5f, _scale, FontStyle.Bold),
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
+                AutoEllipsis = true,
                 Tag = "semantic-status",
             };
             depsPanel.Controls.Add(_lblLibHistoireStatus, 1, 1);
@@ -3373,6 +3433,7 @@ namespace RedfurSync
                 Font = Mono(8.5f, _scale, FontStyle.Bold),
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
+                AutoEllipsis = true,
                 Tag = "semantic-status",
             };
             depsPanel.Controls.Add(_lblLibAddonMenuStatus, 1, 2);
@@ -3407,6 +3468,7 @@ namespace RedfurSync
                 Font = Mono(8f, _scale),
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
+                AutoEllipsis = true,
                 Tag = "sub"
             };
             depsPanel.Controls.Add(_lblTtcStatus, 1, 3);
@@ -3920,9 +3982,9 @@ namespace RedfurSync
         private void RefreshSetupView()
         {
             var cfg = AppConfig.Instance;
-            _txtDisplayName.Text = cfg.DisplayName;
-            _txtPairingCode.Text = cfg.PairingCode;
-            _txtServerUrl.Text = cfg.ServerUrl;
+            if (!_txtDisplayName.Focused) _txtDisplayName.Text = cfg.DisplayName;
+            if (!_txtPairingCode.Focused) _txtPairingCode.Text = cfg.PairingCode;
+            if (!_txtServerUrl.Focused) _txtServerUrl.Text = cfg.ServerUrl;
 
             bool hasToken = !string.IsNullOrWhiteSpace(cfg.DeviceToken);
             bool hasKey = !string.IsNullOrWhiteSpace(cfg.ApiKey);
@@ -3942,6 +4004,8 @@ namespace RedfurSync
                 _lblPairingStatus.Text = "✖ UNPAIRED / CODE REQUIRED";
                 _lblPairingStatus.ForeColor = CBarFail;
             }
+
+            _navBadgePanel?.Invalidate();
 
             string authMode = hasToken ? "Device Token (rfr_... / DPAPI Encrypted)" : hasKey ? "Master API Key (Direct Owner Access)" : "Unlinked";
             _lblDeviceInfo.Text = $"Auth Mode: {authMode}\nToken Storage: DPAPI Encrypted (CurrentUser)\nUpdate Endpoint: {cfg.UpdateUrl}";
@@ -4019,7 +4083,7 @@ namespace RedfurSync
             };
             layout.Controls.Add(header, 0, 0);
 
-            // 11 Themes Grid
+            // 12 Themes Grid
             _themeCardsHost = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
@@ -4080,13 +4144,13 @@ namespace RedfurSync
 
             var scaleLayout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, AutoSize = true };
             scaleLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            scaleLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 45));
+            scaleLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, (int)(58 * _scale)));
 
             _scaleTrackBar = new TrackBar
             {
                 Minimum = 75,
                 Maximum = 175,
-                Value = (int)(AppConfig.Instance.AppScale * 100),
+                Value = Math.Clamp((int)(AppConfig.Instance.AppScale * 100), 75, 175),
                 TickFrequency = 25,
                 Dock = DockStyle.Fill,
             };
@@ -4104,6 +4168,7 @@ namespace RedfurSync
                 _scaleValueLabel.Text = $"{_scaleTrackBar.Value}%";
                 AppConfig.Instance.AppScale = _scaleTrackBar.Value / 100f;
                 AppConfig.Instance.Save();
+                ApplyDynamicTextScale();
             };
 
             scaleLayout.Controls.Add(_scaleTrackBar, 0, 0);
@@ -4114,11 +4179,80 @@ namespace RedfurSync
             _themesView.Controls.Add(layout);
         }
 
+        private void ApplyDynamicTextScale()
+        {
+            float targetScale = FissalTheme.GlobalTextScale;
+            if (Math.Abs(targetScale - _lastAppliedTextScale) < 0.005f) return;
+
+            SuspendLayout();
+            try
+            {
+                var oldReg = _navFontRegular;
+                var oldBold = _navFontBold;
+                _navFontRegular = Body(8.5f, _scale, FontStyle.Regular);
+                _navFontBold = Body(8.5f, _scale, FontStyle.Bold);
+
+                ApplyTextScaleRecursive(this, _lastAppliedTextScale, targetScale);
+                _lastAppliedTextScale = targetScale;
+
+                foreach (var item in _navItems)
+                {
+                    item.btn.Font = item.id == _activeTabId ? _navFontBold : _navFontRegular;
+                }
+                oldReg?.Dispose();
+                oldBold?.Dispose();
+
+                PopulateThemeCards();
+                ResizeSyncJobCards();
+            }
+            finally
+            {
+                ResumeLayout(true);
+            }
+            Invalidate(true);
+        }
+
+        private void ApplyTextScaleRecursive(Control parent, float prevTextScale, float newTextScale)
+        {
+            foreach (Control c in parent.Controls)
+            {
+                bool isNavBtn = _navItems.Any(n => ReferenceEquals(n.btn, c));
+                if (!isNavBtn && c.Font != null)
+                {
+                    if (!_baseControlFonts.TryGetValue(c, out var baseFontInfo))
+                    {
+                        float basePx = c.Font.Size / Math.Max(0.5f, prevTextScale);
+                        baseFontInfo = (c.Font.FontFamily, basePx, c.Font.Style);
+                        _baseControlFonts[c] = baseFontInfo;
+                        c.Disposed += (_, _) => _baseControlFonts.Remove(c);
+                    }
+
+                    float scaledPx = Math.Max(8f, (float)Math.Round(baseFontInfo.basePxAt1x * newTextScale));
+                    var prevFont = c.Font;
+                    c.Font = new Font(baseFontInfo.family, scaledPx, baseFontInfo.style, GraphicsUnit.Pixel);
+                    if (!ReferenceEquals(prevFont, parent.Font) && !ReferenceEquals(prevFont, Font))
+                    {
+                        try { prevFont.Dispose(); } catch { }
+                    }
+                }
+
+                if (c.HasChildren)
+                {
+                    ApplyTextScaleRecursive(c, prevTextScale, newTextScale);
+                }
+            }
+        }
+
         private void PopulateThemeCards()
         {
-            _themeCardsHost.Controls.Clear();
+            for (int i = _themeCardsHost.Controls.Count - 1; i >= 0; i--)
+            {
+                var oldCard = _themeCardsHost.Controls[i];
+                _themeCardsHost.Controls.RemoveAt(i);
+                oldCard.Dispose();
+            }
             int cardW = (int)(210 * _scale);
-            int cardH = (int)(110 * _scale);
+            int cardH = (int)(116 * _scale);
 
             foreach (var kvp in FissalTheme.AllPalettes)
             {
@@ -4142,7 +4276,7 @@ namespace RedfurSync
                     RowCount = 3,
                     BackColor = Color.Transparent,
                 };
-                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, (int)(24 * _scale)));
+                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, (int)(26 * _scale)));
                 layout.RowStyles.Add(new RowStyle(SizeType.Absolute, (int)(26 * _scale)));
                 layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
@@ -4321,6 +4455,14 @@ namespace RedfurSync
             };
             btnBar.Controls.Add(_btnRestartWatcher);
 
+            var btnAskFissal = MakeStyledButton("💬 Ask Fissal", CGoldBrt);
+            btnAskFissal.Click += (_, _) =>
+            {
+                using var dlg = new RelayAssistantForm(_watcher);
+                dlg.ShowDialog(this);
+            };
+            btnBar.Controls.Add(btnAskFissal);
+
             layout.Controls.Add(btnBar, 0, 2);
             _diagnosticsView.Controls.Add(layout);
         }
@@ -4402,7 +4544,6 @@ namespace RedfurSync
             if (_syncLogBox != null)
             {
                 _syncLogBox.BackColor = CPanelBgAlt;
-                _syncLogBox.ForeColor = CText;
             }
             if (_oscilloscopePanel != null)
             {
@@ -4445,7 +4586,6 @@ namespace RedfurSync
             long currentVer = _watcher.CurrentJobVersion;
             if (currentVer != _lastRenderedJobVersion)
             {
-                _lastRenderedJobVersion = currentVer;
                 _syncContext?.Post(_ =>
                 {
                     if (!IsDisposed && IsHandleCreated && Visible && WindowState != FormWindowState.Minimized)
@@ -4458,7 +4598,11 @@ namespace RedfurSync
 
         private void OnWatcherJobsChanged()
         {
-            // Coalesced 150ms timer handles rendering dispatching to prevent UI thrashing during file bursts
+            try
+            {
+                _syncCoalesceTimer?.Change(120, Timeout.Infinite);
+            }
+            catch (ObjectDisposedException) { }
         }
 
         private void OnWatcherConnectionChecked(bool ok, string msg)
@@ -4469,6 +4613,7 @@ namespace RedfurSync
                 return;
             }
             _isConnected = ok;
+            _navBadgePanel?.Invalidate();
             _titleStatusLabel.Text = ok ? "● CONNECTED TO REDFUR RELAY" : "⚠ DISCONNECTED";
             _titleStatusLabel.ForeColor = ok ? CGreen : CBarFail;
             _messageBoardText = ok ? "All guild trader lines & bank deposits verified • Watching ESO" : "Connection Degraded — Check server URL in Setup";

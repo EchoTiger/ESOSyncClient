@@ -214,7 +214,7 @@ function FR:CreateConsoleUI()
     title:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     title:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
     title:SetFont("ZoFontGameBold")
-    title:SetText(string.format("|cFF9900FISSAL RELAY PRIME|r  |c00FFCCCOMMAND CONSOLE|r  |c888888v%s|r", self.version or "1.7.0"))
+    title:SetText(string.format("|cFF9900FISSAL RELAY PRIME|r  |c00FFCCCOMMAND CONSOLE|r  |c888888v%s|r", self.version or "1.9.0"))
 
     -- 7. Top Divider Line
     local topDiv = wm:CreateControl("$(parent)_DivTop", console, CT_TEXTURE)
@@ -373,6 +373,7 @@ function FR:CreateConsoleUI()
         tooltipText = "Open the LibAddonMenu settings panel to configure automation thresholds, HUD positioning, and features.",
     })
     settingsBtn:SetHandler("OnClicked", function()
+        self:ToggleConsole(false)
         if LibAddonMenu2 then
             LibAddonMenu2:OpenToPanel(FissalRelay_Options)
         end
@@ -781,11 +782,28 @@ function FR:BuildTTCBumperTab(parent)
     autoReloadBtn:SetDimensions(320, 26)
     autoReloadBtn:SetFont("ZoFontGame")
 
+    local waitLHBtn = wm:CreateControl("$(parent)_WaitLHBtn", card, CT_BUTTON)
+    waitLHBtn:SetAnchor(TOPLEFT, card, TOPLEFT, 14, 201)
+    waitLHBtn:SetDimensions(320, 26)
+    waitLHBtn:SetFont("ZoFontGame")
+
     local function UpdateAutoReloadBtn()
         local isAR = self.savedVars and self.savedVars.settings and self.savedVars.settings.bumperAutoReload
         autoReloadBtn:SetText(string.format("Auto-Reload UI After Bump: %s",
             isAR and ColorText("Enabled", "59E08A") or ColorText("Disabled", "888888")))
     end
+
+    local function UpdateWaitLHBtn()
+        local isAR = self.savedVars and self.savedVars.settings and self.savedVars.settings.bumperAutoReload
+        local isWait = self.savedVars and self.savedVars.settings and self.savedVars.settings.bumperWaitForLibHistoire
+        if not isAR then
+            waitLHBtn:SetText(string.format("Wait for LibHistoire: %s", ColorText("Off (Requires Auto-Reload)", "555555")))
+        else
+            waitLHBtn:SetText(string.format("Wait for LibHistoire: %s",
+                isWait and ColorText("Enabled", "00FFCC") or ColorText("Disabled", "888888")))
+        end
+    end
+
     UpdateAutoReloadBtn()
     self:StyleTactileButton(autoReloadBtn, {
         normalBg = { 0.05, 0.08, 0.08, 0.85 },
@@ -800,24 +818,10 @@ function FR:BuildTTCBumperTab(parent)
     autoReloadBtn:SetHandler("OnClicked", function()
         self.savedVars.settings.bumperAutoReload = not (self.savedVars.settings.bumperAutoReload)
         UpdateAutoReloadBtn()
+        UpdateWaitLHBtn()
         if self.UpdateBumperUI then self:UpdateBumperUI() end
     end)
 
-    local waitLHBtn = wm:CreateControl("$(parent)_WaitLHBtn", card, CT_BUTTON)
-    waitLHBtn:SetAnchor(TOPLEFT, card, TOPLEFT, 14, 201)
-    waitLHBtn:SetDimensions(320, 26)
-    waitLHBtn:SetFont("ZoFontGame")
-
-    local function UpdateWaitLHBtn()
-        local isAR = self.savedVars and self.savedVars.settings and self.savedVars.settings.bumperAutoReload
-        local isWait = self.savedVars and self.savedVars.settings and self.savedVars.settings.bumperWaitForLibHistoire
-        if not isAR then
-            waitLHBtn:SetText(string.format("Wait for LibHistoire: %s", ColorText("Off (Requires Auto-Reload)", "555555")))
-        else
-            waitLHBtn:SetText(string.format("Wait for LibHistoire: %s",
-                isWait and ColorText("Enabled", "00FFCC") or ColorText("Disabled", "888888")))
-        end
-    end
     UpdateWaitLHBtn()
     self:StyleTactileButton(waitLHBtn, {
         normalBg = { 0.05, 0.08, 0.08, 0.85 },
@@ -830,10 +834,17 @@ function FR:BuildTTCBumperTab(parent)
         tooltipText = "When auto-reloading UI after a bump, wait for any active LibHistoire guild history requests or event queues to settle before reloading.",
     })
     waitLHBtn:SetHandler("OnClicked", function()
+        if not (self.savedVars and self.savedVars.settings and self.savedVars.settings.bumperAutoReload) then return end
         self.savedVars.settings.bumperWaitForLibHistoire = not (self.savedVars.settings.bumperWaitForLibHistoire)
         UpdateWaitLHBtn()
         if self.UpdateBumperUI then self:UpdateBumperUI() end
     end)
+
+    self.UpdateTTCBumperTab = function()
+        UpdateAutoBumpBtn()
+        UpdateAutoReloadBtn()
+        UpdateWaitLHBtn()
+    end
 
     local bumpStatus = wm:CreateControl("$(parent)_Status", card, CT_LABEL)
     bumpStatus:SetAnchor(TOPLEFT, card, TOPLEFT, 14, 236)
@@ -899,11 +910,14 @@ function FR:SelectConsoleGuild(guildIndex)
     if self.activeConsoleTab == 1 then
         self:UpdateOverviewTab()
     elseif self.activeConsoleTab == 2 and self.UpdateMotDUI then
-        self:UpdateMotDUI(true)
+        self:UpdateMotDUI(false)
     elseif self.activeConsoleTab == 3 and self.UpdateAuditorUI then
         self:UpdateAuditorUI()
     elseif self.activeConsoleTab == 4 and self.UpdateBidsUI then
         self:UpdateBidsUI()
+    elseif self.activeConsoleTab == 5 then
+        if self.UpdateTTCBumperTab then self:UpdateTTCBumperTab() end
+        if self.UpdateBumperUI then self:UpdateBumperUI() end
     elseif self.activeConsoleTab == 6 and self.UpdateAutoRanksUI then
         self:UpdateAutoRanksUI()
     end
@@ -933,6 +947,7 @@ function FR:SelectConsoleTab(tabId)
     if self.CloseRankConfigDrawer then self:CloseRankConfigDrawer() end
     if self.CloseAutoWelcomeDrawer then self:CloseAutoWelcomeDrawer() end
     if self.CloseAuditExclusionsDrawer then self:CloseAuditExclusionsDrawer() end
+    if self.motdPushModal then self.motdPushModal:SetHidden(true) end
 
     -- Switch visible panel
     for id, panel in pairs(self.consoleTabs or {}) do
@@ -952,6 +967,9 @@ function FR:SelectConsoleTab(tabId)
         self:UpdateAuditorUI()
     elseif tabId == 4 and self.UpdateBidsUI then
         self:UpdateBidsUI()
+    elseif tabId == 5 then
+        if self.UpdateTTCBumperTab then self:UpdateTTCBumperTab() end
+        if self.UpdateBumperUI then self:UpdateBumperUI() end
     elseif tabId == 6 and self.UpdateAutoRanksUI then
         self:UpdateAutoRanksUI()
     end
@@ -965,9 +983,15 @@ function FR:UpdateOverviewTab()
     if not self.consoleWindow or self.consoleWindow:IsHidden() then return end
     local gIdx = self.selectedGuildIndex or 1
     local numGuilds = GetNumGuilds()
-    if gIdx < 1 or gIdx > numGuilds then return end
+    local guildId = (numGuilds > 0 and gIdx >= 1 and gIdx <= numGuilds) and GetGuildId(gIdx) or 0
+    if not guildId or guildId == 0 then
+        if self.overviewGuildNameLbl then self.overviewGuildNameLbl:SetText("Guild: No Active Guilds") end
+        if self.overviewMembersLbl then self.overviewMembersLbl:SetText("• Roster: |c8888880 members|r") end
+        if self.overviewKioskLbl then self.overviewKioskLbl:SetText("• Trader Stall: |c888888○ None|r") end
+        if self.overviewPermsLbl then self.overviewPermsLbl:SetText("• Access Tier: None") end
+        return
+    end
 
-    local guildId = GetGuildId(gIdx)
     local guildName = GetGuildName(guildId)
     local memberCount = GetNumGuildMembers(guildId)
     local onlineCount = 0
@@ -1004,7 +1028,7 @@ function FR:UpdateOverviewTab()
 
     -- Staff Permissions
     local hasMotD = DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_SET_MOTD)
-    local hasBank = DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_BANK_VIEW_DEPOSIT_HISTORY)
+    local hasBank = self:CanTrackGuildBank(guildId)
     local hasClaim = DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_CLAIM_KIOSK)
     if self.overviewPermsLbl then
         self.overviewPermsLbl:SetText(string.format("• Authority: %s  %s  %s",
@@ -1025,10 +1049,12 @@ function FR:UpdateOverviewTab()
     local totalCategories, linkedCategories, totalPendingEvents, totalSpeed = 0, 0, 0, 0
     if LibHistoire and LibHistoire.internal and LibHistoire.internal.historyCache then
         for _, cat in ipairs({ GUILD_HISTORY_EVENT_CATEGORY_TRADER, GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY }) do
-            totalCategories = totalCategories + 1
-            local cache = LibHistoire.internal.historyCache:GetCategoryCache(guildId, cat)
-            if cache and cache.HasLinked and cache:HasLinked() then
-                linkedCategories = linkedCategories + 1
+            if self:CanTrackCategory(guildId, cat) then
+                totalCategories = totalCategories + 1
+                local cache = LibHistoire.internal.historyCache:GetCategoryCache(guildId, cat)
+                if cache and cache.HasLinked and cache:HasLinked() then
+                    linkedCategories = linkedCategories + 1
+                end
             end
         end
     end
@@ -1104,7 +1130,8 @@ function FR:UpdateOverviewTab()
             self.overviewTixLbl:SetText(string.format("• Tickets: |c00FFCC%s|r", ZO_LocalizeDecimalNumber(raffleData.tickets or 0)))
         end
         if self.overviewEntLbl then
-            self.overviewEntLbl:SetText(string.format("• Entrants: |cFFFFFF%d members|r", raffleData.entrants or 0))
+            local entCount = type(raffleData.entrants) == "number" and raffleData.entrants or NonContiguousCount(raffleData.entrants or {})
+            self.overviewEntLbl:SetText(string.format("• Entrants: |cFFFFFF%d members|r", entCount))
         end
         if self.overviewPrizesLbl and raffleData.prizes then
             local p = raffleData.prizes
@@ -1127,7 +1154,7 @@ function FR:UpdateOverviewTab()
         if self.overviewTixLbl then self.overviewTixLbl:SetText("• Tickets: |c888888--|r") end
         if self.overviewEntLbl then self.overviewEntLbl:SetText("• Entrants: |c888888--|r") end
         if self.overviewPrizesLbl then self.overviewPrizesLbl:SetText("• Payouts: |c888888No sealed ledger for this guild.|r") end
-        if self.overviewWinnersLbl then self.overviewWinnersLbl:SetText("• Winners: |c888888(Switch to Redfur Trading Post or Redfur Dealers)|r") end
+        if self.overviewWinnersLbl then self.overviewWinnersLbl:SetText("|c888888• Winners: No sealed raffle ledger for this guild yet|r") end
     end
 
     -- Update Personal Tickets Label
@@ -1166,6 +1193,10 @@ function FR:ToggleConsole(show)
 
     if show == nil then
         show = self.consoleWindow:IsHidden()
+    end
+
+    if self.motdPushModal then
+        self.motdPushModal:SetHidden(true)
     end
 
     if show then

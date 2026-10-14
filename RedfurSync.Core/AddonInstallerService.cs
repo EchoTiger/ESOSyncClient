@@ -40,8 +40,8 @@ namespace RedfurSync
         public const string AddonDirectoryName = "FissalRelay";
         public const string ClientDirectoryName = "Client";
         public const string TargetExeName = "RedfurSync.exe";
-        public const string LatestAddonVersion = "1.8.0";
-        public const int LatestAddonVersionCode = 10800;
+        public const string LatestAddonVersion = "1.9.0";
+        public const int LatestAddonVersionCode = 10900;
         public static readonly string[] AddonFiles = new[]
         {
             "FissalRelay.txt",
@@ -52,6 +52,7 @@ namespace RedfurSync
             "FissalRelay_Console.lua",
             "FissalRelay_MotD.lua",
             "FissalRelay_Audit.lua",
+            "FissalRelay_KioskRecon.lua",
             "FissalRelay_Bids.lua",
             "FissalRelay_Ranks.lua"
         };
@@ -132,6 +133,15 @@ namespace RedfurSync
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Documents", "Elder Scrolls Online", "live"),
                 Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "OneDrive", "Documents", "Elder Scrolls Online", "live"),
             };
+
+            foreach (var envVar in new[] { "OneDrive", "OneDriveConsumer" })
+            {
+                var oneDriveRoot = Environment.GetEnvironmentVariable(envVar);
+                if (!string.IsNullOrWhiteSpace(oneDriveRoot))
+                {
+                    candidates.Add(Path.Combine(oneDriveRoot, "Documents", "Elder Scrolls Online", "live"));
+                }
+            }
 
             // Check standard drives
             foreach (var drive in DriveInfo.GetDrives())
@@ -329,13 +339,34 @@ namespace RedfurSync
                     ? luaVer
                     : (installedVer ?? luaVer ?? "unknown");
 
+                string? missingFile = null;
+                foreach (var reqFile in AddonFiles)
+                {
+                    var reqPath = Path.Combine(addonDir, reqFile);
+                    var fi = new FileInfo(reqPath);
+                    if (!fi.Exists || fi.Length <= 0)
+                    {
+                        missingFile = reqFile;
+                        updateNeeded = true;
+                        break;
+                    }
+                }
+
                 var state = updateNeeded ? AddonInstallState.UpdateAvailable : AddonInstallState.UpToDate;
                 string msg;
                 if (updateNeeded)
                 {
-                    if (!string.IsNullOrWhiteSpace(luaVer) && !string.IsNullOrWhiteSpace(installedVer) && luaVer != installedVer)
+                    if (missingFile != null && !string.IsNullOrWhiteSpace(installedVer) && !RelayVersion.IsServerNewer(effectiveLatest, installedVer))
+                    {
+                        msg = $"Update required: Required addon file '{missingFile}' is missing or empty. Reinstall or update to v{effectiveLatest}.";
+                    }
+                    else if (!string.IsNullOrWhiteSpace(luaVer) && !string.IsNullOrWhiteSpace(installedVer) && luaVer != installedVer)
                     {
                         msg = $"Update required: In-game scripts (v{luaVer}) do not match manifest (v{installedVer}). Reinstall or update to v{effectiveLatest}.";
+                    }
+                    else if (missingFile != null)
+                    {
+                        msg = $"Update available: v{displayedVer} is installed (missing '{missingFile}'), latest is v{effectiveLatest}.";
                     }
                     else
                     {
@@ -379,7 +410,7 @@ namespace RedfurSync
         {
             var assembly = typeof(AddonInstallerService).Assembly;
             var resourceNames = assembly.GetManifestResourceNames();
-            var match = resourceNames.FirstOrDefault(r => r.EndsWith(filename, StringComparison.OrdinalIgnoreCase));
+            var match = resourceNames.FirstOrDefault(r => r.EndsWith("." + filename, StringComparison.OrdinalIgnoreCase) || r.Equals(filename, StringComparison.OrdinalIgnoreCase));
             if (match != null)
             {
                 using var s = assembly.GetManifestResourceStream(match);
@@ -432,8 +463,8 @@ namespace RedfurSync
                 var clientDir = Path.Combine(addonDir, ClientDirectoryName);
                 Directory.CreateDirectory(clientDir);
 
-                // Priority 1: Download latest verified archive if remote URL is available
-                if (!string.IsNullOrWhiteSpace(RemoteAddonDownloadUrl))
+                // Priority 1: Download latest verified archive ONLY if remote URL is available AND server is strictly newer than embedded version
+                if (!string.IsNullOrWhiteSpace(RemoteAddonDownloadUrl) && RelayVersion.IsServerNewer(ActiveLatestAddonVersion, LatestAddonVersion))
                 {
                     try
                     {
@@ -441,6 +472,7 @@ namespace RedfurSync
                         using var response = client.GetAsync(RemoteAddonDownloadUrl).GetAwaiter().GetResult();
                         if (response.IsSuccessStatusCode)
                         {
+                            string canonicalAddonRoot = Path.GetFullPath(addonDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
                             using var stream = response.Content.ReadAsStream();
                             using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
                             foreach (var entry in archive.Entries)
@@ -459,7 +491,20 @@ namespace RedfurSync
                                     continue; // protect running client binary
                                 }
 
+                                if (entryPath.Equals("FissalRelay_RaffleData.lua", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    string existingRafflePath = Path.Combine(addonDir, entryPath);
+                                    if (File.Exists(existingRafflePath) && new FileInfo(existingRafflePath).Length > 0)
+                                    {
+                                        continue; // preserve live synced raffle ledger
+                                    }
+                                }
+
                                 string destFile = Path.Combine(addonDir, entryPath);
+                                if (!Path.GetFullPath(destFile).StartsWith(canonicalAddonRoot, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    throw new InvalidDataException($"Archive entry '{entry.FullName}' escapes addon directory.");
+                                }
                                 Directory.CreateDirectory(Path.GetDirectoryName(destFile)!);
                                 entry.ExtractToFile(destFile, overwrite: true);
                             }
@@ -490,6 +535,14 @@ namespace RedfurSync
                         addonFile.Equals("FissalRelay_UI.lua", StringComparison.OrdinalIgnoreCase))
                     {
                         continue;
+                    }
+                    if (addonFile.Equals("FissalRelay_RaffleData.lua", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var existingRaffle = Path.Combine(addonDir, addonFile);
+                        if (File.Exists(existingRaffle) && new FileInfo(existingRaffle).Length > 0)
+                        {
+                            continue; // preserve live synced raffle ledger
+                        }
                     }
                     var extraContent = GetAddonFileContent(addonFile);
                     if (!string.IsNullOrWhiteSpace(extraContent))
@@ -662,10 +715,11 @@ namespace RedfurSync
                 var addonsRoot = Path.Combine(esoLiveDir, "AddOns");
                 var targetDir = Path.Combine(addonsRoot, depName);
                 Directory.CreateDirectory(targetDir);
+                string canonicalTargetRoot = Path.GetFullPath(targetDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
 
                 var client = httpClient ?? new HttpClient();
                 using var request = new HttpRequestMessage(HttpMethod.Get, downloadUrl);
-                request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) FissalRelay/1.8.0");
+                request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) FissalRelay/1.9.0");
 
                 using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 if (!response.IsSuccessStatusCode) return false;
@@ -698,6 +752,10 @@ namespace RedfurSync
 
                     relPath = relPath.Replace('/', Path.DirectorySeparatorChar);
                     var destPath = Path.Combine(targetDir, relPath);
+                    if (!Path.GetFullPath(destPath).StartsWith(canonicalTargetRoot, StringComparison.OrdinalIgnoreCase))
+                    {
+                        throw new InvalidDataException($"Dependency archive entry '{entry.FullName}' escapes target directory.");
+                    }
 
                     if (string.IsNullOrEmpty(entry.Name))
                     {
@@ -751,7 +809,8 @@ namespace RedfurSync
 
                 if (File.Exists(manifestFilePath))
                 {
-                    var existingContent = await File.ReadAllTextAsync(manifestFilePath, cancellationToken);
+                    luaContent = luaContent.TrimStart('\uFEFF');
+                    var existingContent = (await File.ReadAllTextAsync(manifestFilePath, cancellationToken)).TrimStart('\uFEFF');
                     if (string.Equals(existingContent.Trim(), luaContent.Trim(), StringComparison.Ordinal))
                     {
                         return true;
@@ -759,7 +818,7 @@ namespace RedfurSync
                 }
 
                 var tmpPath = manifestFilePath + ".tmp";
-                await File.WriteAllTextAsync(tmpPath, luaContent, System.Text.Encoding.UTF8, cancellationToken);
+                await File.WriteAllTextAsync(tmpPath, luaContent, new System.Text.UTF8Encoding(encoderShouldEmitUTF8Identifier: false), cancellationToken);
                 File.Move(tmpPath, manifestFilePath, overwrite: true);
 
                 log?.Invoke($"[Raffle Sync] ✓ Updated in-game raffle manifest ({weekLabel ?? "latest"}) at {manifestFilePath}");
@@ -774,8 +833,8 @@ namespace RedfurSync
 
         private const string AddonManifestTemplate = @"## Title: |cFF9900Fissal's|r Cogwork Relay
 ## Author: Echo & Fissal
-## Version: 1.8.0
-## AddOnVersion: 10800
+## Version: 1.9.0
+## AddOnVersion: 10900
 ## APIVersion: 101048 101049
 ## SavedVariables: FissalRelay_SavedVariables
 ## DependsOn: LibHistoire>=1062 LibAddonMenu-2.0>=41
@@ -788,6 +847,7 @@ FissalRelay_RaffleMail.lua
 FissalRelay_Console.lua
 FissalRelay_MotD.lua
 FissalRelay_Audit.lua
+FissalRelay_KioskRecon.lua
 FissalRelay_Bids.lua
 FissalRelay_Ranks.lua
 ";

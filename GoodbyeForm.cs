@@ -27,7 +27,7 @@ namespace RedfurSync
         private static readonly string[] Farewells =
         {
             "Safe travels! Fissal's ears will be listening for your return!",
-            "Harmonic tunneling prepared to shut down!\nThis one will rest his chassis until you return.",
+            "Harmonic tunneling prepared to shut down!\nThis one will rest her chassis until you return.",
             "Powering down the tonal matrix!\nUntil next time friend!\nMay your coffers overflow.",
             "Until next time, friend! The moons grow quiet.\nRemember to log your sales!",
             "The Lunar Relay closes for the eve.\nYour sale data is safely stored in the records!",

@@ -773,19 +773,36 @@ namespace RedfurSync
             }
         }
 
-        /// <summary>
+        [ThreadStatic]
+        private static Dictionary<(int step, int alpha), (Bitmap bmp, TextureBrush brush)>? _meshBrushCache;
+
         /// <summary>
         /// Renders the signature retro CRT phosphor grid mesh pattern across the background.
+        /// Uses a cached TextureBrush tile to avoid thousands of GDI+ DrawLine calls per repaint.
         /// </summary>
         public static void DrawTerminalMesh(Graphics g, Rectangle bounds, float scale, int alpha = 8)
         {
             if (bounds.Width <= 0 || bounds.Height <= 0) return;
             int step = Math.Max(2, (int)(3 * scale));
-            using var meshPen = new Pen(Color.FromArgb(alpha, 255, 255, 255), 1f);
-            for (int i = bounds.Left; i < bounds.Right; i += step)
-                g.DrawLine(meshPen, i, bounds.Top, i, bounds.Bottom);
-            for (int j = bounds.Top; j < bounds.Bottom; j += step)
-                g.DrawLine(meshPen, bounds.Left, j, bounds.Right, j);
+            alpha = Math.Clamp(alpha, 0, 255);
+
+            _meshBrushCache ??= new Dictionary<(int step, int alpha), (Bitmap bmp, TextureBrush brush)>();
+            if (!_meshBrushCache.TryGetValue((step, alpha), out var cached))
+            {
+                var tile = new Bitmap(step, step);
+                using (var tg = Graphics.FromImage(tile))
+                {
+                    tg.Clear(Color.Transparent);
+                    using var meshPen = new Pen(Color.FromArgb(alpha, 255, 255, 255), 1f);
+                    tg.DrawLine(meshPen, 0, 0, 0, step);
+                    tg.DrawLine(meshPen, 0, 0, step, 0);
+                }
+                var brush = new TextureBrush(tile, WrapMode.Tile);
+                cached = (tile, brush);
+                _meshBrushCache[(step, alpha)] = cached;
+            }
+
+            g.FillRectangle(cached.brush, bounds);
         }
 
         /// <summary>
@@ -981,7 +998,7 @@ namespace RedfurSync
 
             // 5. Label text beneath the lamp
             int labelY = tubeY + tubeDiameter + (int)(2 * scale);
-            var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Near };
+            using var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Near };
             using var font = Mono(6.8f, scale, FontStyle.Bold);
             Color textCol = isActive ? lampColor : CTextSub;
 
@@ -1090,13 +1107,14 @@ namespace RedfurSync
             int textX = jewelX + jewelSize + (int)(6 * scale);
             using var font = Body(8f, scale, isChecked ? FontStyle.Bold : FontStyle.Regular);
             using var textBrush = new SolidBrush(isChecked ? activeColor : CTextSub);
-            var sf = new StringFormat { LineAlignment = StringAlignment.Center };
+            using var sf = new StringFormat { LineAlignment = StringAlignment.Center };
             g.DrawString(label, font, textBrush, new RectangleF(textX, bounds.Y, bounds.Right - textX - 4, bounds.Height), sf);
         }
 
         public static void DrawGlowingText(Graphics g, string text, Font font, Color color, float x, float y, int glowAlpha = 40, bool centered = false)
         {
-            var sf = centered ? new StringFormat { Alignment = StringAlignment.Center } : StringFormat.GenericDefault;
+            using var centeredSf = centered ? new StringFormat { Alignment = StringAlignment.Center } : null;
+            var sf = centeredSf ?? StringFormat.GenericDefault;
 
             if (glowAlpha > 0)
             {

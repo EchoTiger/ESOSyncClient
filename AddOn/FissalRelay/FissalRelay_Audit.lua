@@ -113,21 +113,32 @@ function FR:InvalidateDepositCache(guildId)
     end
 end
 
-function FR:GetMemberDeposits(guildId)
-    if self.depositCache[guildId] then
-        return self.depositCache[guildId]
+function FR:GetMemberDeposits(guildId, scanWindowDays)
+    local windowDays = tonumber(scanWindowDays) or 14
+    local windowKey = tostring(windowDays)
+    if self.depositCache[guildId] and self.depositCache[guildId][windowKey] then
+        return self.depositCache[guildId][windowKey]
     end
 
+    local cutoffTs = (windowDays > 0) and (GetTimeStamp() - (windowDays * 86400)) or 0
     local lookup = {}
     if self.savedVars and self.savedVars.staff and self.savedVars.staff.bankDeposits then
         for _, dep in pairs(self.savedVars.staff.bankDeposits) do
             if dep.guildId == guildId and dep.depositor then
-                local lowerDep = string.lower(dep.depositor)
-                lookup[lowerDep] = (lookup[lowerDep] or 0) + (dep.amount or 0)
+                local depTs = tonumber(dep.timestamp) or 0
+                if depTs >= cutoffTs then
+                    local lowerDep = string.gsub(string.lower(dep.depositor), "^@", "")
+                    local newTotal = (lookup[lowerDep] or 0) + (dep.amount or 0)
+                    lookup[lowerDep] = newTotal
+                    lookup["@" .. lowerDep] = newTotal
+                end
             end
         end
     end
-    self.depositCache[guildId] = lookup
+    if not self.depositCache[guildId] then
+        self.depositCache[guildId] = {}
+    end
+    self.depositCache[guildId][windowKey] = lookup
     return lookup
 end
 
@@ -144,8 +155,8 @@ function FR:RunRosterAudit()
     local duesRule = self.GetRedfurDuesRule and self:GetRedfurDuesRule(guildId) or { windowDays = 10 }
     local scanWindowDays = math.max(self.auditFilterDays or 14, duesRule.windowDays or 10)
 
-    -- Retrieve memoized deposit lookup for this guild (case-insensitive)
-    local depositsByMember = self:GetMemberDeposits(guildId)
+    -- Retrieve memoized deposit lookup for this guild and window (case-insensitive)
+    local depositsByMember = self:GetMemberDeposits(guildId, scanWindowDays)
     -- Retrieve member sales lookup for this guild (case-insensitive)
     local salesByMember = self.GetMemberSales and self:GetMemberSales(guildId, scanWindowDays) or {}
 
@@ -391,7 +402,7 @@ function FR:BuildAuditorUI(parent)
     -- Toggle: Exclude Officers (anchored cleanly after 30d button at X=222)
     local offToggle = wm:CreateControl("$(parent)_OffToggle", card, CT_BUTTON)
     offToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 222, 7)
-    offToggle:SetDimensions(78, 22)
+    offToggle:SetDimensions(74, 22)
     offToggle:SetFont("ZoFontGameSmall")
     offToggle:SetText("No Officers")
     self:StyleTactileButton(offToggle, {
@@ -411,9 +422,9 @@ function FR:BuildAuditorUI(parent)
     end)
     self.auditOffToggle = offToggle
 
-    -- Toggle: Exclude LOA (anchored cleanly after No Officers at X=304)
+    -- Toggle: Exclude LOA (anchored cleanly after No Officers at X=300)
     local loaToggle = wm:CreateControl("$(parent)_LoaToggle", card, CT_BUTTON)
-    loaToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 304, 7)
+    loaToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 300, 7)
     loaToggle:SetDimensions(68, 22)
     loaToggle:SetFont("ZoFontGameSmall")
     loaToggle:SetText("No [LOA]")
@@ -434,10 +445,10 @@ function FR:BuildAuditorUI(parent)
     end)
     self.auditLoaToggle = loaToggle
 
-    -- Toggle: Shield Active Sellers (Invisible Players) (anchored cleanly at X=376)
+    -- Toggle: Shield Active Sellers (Invisible Players) (anchored cleanly at X=372)
     local shieldToggle = wm:CreateControl("$(parent)_ShieldToggle", card, CT_BUTTON)
-    shieldToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 376, 7)
-    shieldToggle:SetDimensions(90, 22)
+    shieldToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 372, 7)
+    shieldToggle:SetDimensions(84, 22)
     shieldToggle:SetFont("ZoFontGameSmall")
     shieldToggle:SetText("Shield Sellers")
     self:StyleTactileButton(shieldToggle, {
@@ -524,7 +535,7 @@ function FR:BuildAuditorUI(parent)
     -- Rank Filter Cycle Button (anchored left of void button)
     local rankBtn = wm:CreateControl("$(parent)_RankFilterBtn", card, CT_BUTTON)
     rankBtn:SetAnchor(RIGHT, exclusionsBtn, LEFT, -6, 0)
-    rankBtn:SetDimensions(95, 22)
+    rankBtn:SetDimensions(86, 22)
     rankBtn:SetFont("ZoFontGameSmall")
     rankBtn:SetText("Rank: All")
     self:StyleTactileButton(rankBtn, {
@@ -557,6 +568,12 @@ function FR:BuildAuditorUI(parent)
     h1:SetAnchor(LEFT, colHeader, LEFT, 10, 0)
     h1:SetFont("ZoFontGameBold")
     h1:SetText(ColorText("MEMBER", "FF9900"))
+    h1:SetMouseEnabled(true)
+    h1:SetHandler("OnMouseDown", function()
+        if self.auditSortBy == "name" then self.auditSortAsc = not self.auditSortAsc else self.auditSortBy = "name"; self.auditSortAsc = true end
+        self:UpdateAuditorUI()
+    end)
+    self.auditHdrMember = h1
 
     local h2 = wm:CreateControl("$(parent)_H2", colHeader, CT_LABEL)
     h2:SetAnchor(LEFT, colHeader, LEFT, 190, 0)
@@ -608,7 +625,7 @@ function FR:BuildAuditorUI(parent)
     h6:SetText(ColorText("NOTE / MAIL", "00FFCC"))
 
     local h8 = wm:CreateControl("$(parent)_H8", colHeader, CT_LABEL)
-    h8:SetAnchor(LEFT, colHeader, LEFT, 640, 0)
+    h8:SetAnchor(LEFT, colHeader, LEFT, 632, 0)
     h8:SetFont("ZoFontGameBold")
     h8:SetText(ColorText("ACTION / DISPATCH", "FF9900"))
 
@@ -669,7 +686,7 @@ function FR:BuildAuditorUI(parent)
 
         local noteLbl = wm:CreateControl("$(parent)_Note", row, CT_LABEL)
         noteLbl:SetAnchor(LEFT, row, LEFT, 525, 0)
-        noteLbl:SetDimensions(110, 22)
+        noteLbl:SetDimensions(102, 22)
         noteLbl:SetFont("ZoFontGameSmall")
         noteLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
         noteLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
@@ -678,7 +695,7 @@ function FR:BuildAuditorUI(parent)
 
         -- Action Selector Button (Cycles actions across 5 color themes)
         local actionBtn = wm:CreateControl("$(parent)_ActionBtn", row, CT_BUTTON)
-        actionBtn:SetAnchor(LEFT, row, LEFT, 640, 0)
+        actionBtn:SetAnchor(LEFT, row, LEFT, 632, 0)
         actionBtn:SetDimensions(125, 22)
         actionBtn:SetFont("ZoFontGameSmall")
         row.actionIndex = 1
@@ -876,10 +893,12 @@ function FR:UpdateAuditorUI()
     local guildId = GetGuildId(gIdx)
 
     -- Dynamic ASCII sort indicators
+    local nameSort = (self.auditSortBy == "name") and (self.auditSortAsc and " ^" or " v") or ""
     local rankSort = (self.auditSortBy == "rank") and (self.auditSortAsc and " ^" or " v") or ""
     local daysSort = (self.auditSortBy == "days") and (self.auditSortAsc and " ^" or " v") or ""
     local salesSort = (self.auditSortBy == "sales") and (self.auditSortAsc and " ^" or " v") or ""
     local duesSort = (self.auditSortBy == "dues") and (self.auditSortAsc and " ^" or " v") or ""
+    if self.auditHdrMember then self.auditHdrMember:SetText(ColorText("MEMBER" .. nameSort, "FF9900")) end
     if self.auditHdrRank then self.auditHdrRank:SetText(ColorText("RANK" .. rankSort, "00FFCC")) end
     if self.auditHdrOffline then self.auditHdrOffline:SetText(ColorText("OFFLINE" .. daysSort, "FFD700")) end
     if self.auditHdrSales then self.auditHdrSales:SetText(ColorText("SALES" .. salesSort, "59E08A")) end
@@ -1404,7 +1423,7 @@ function FR:SetAuditTableHidden(hidden)
     if self.auditColHeader then self.auditColHeader:SetHidden(hidden) end
     if self.auditRows then
         for _, r in ipairs(self.auditRows) do
-            if r.row then r.row:SetHidden(hidden) end
+            if r.SetHidden then r:SetHidden(hidden) elseif r.row then r.row:SetHidden(hidden) end
         end
     end
     if self.auditExportBtn then self.auditExportBtn:SetHidden(hidden) end
@@ -1583,26 +1602,53 @@ function FR:StartAuditBatch()
     local guildName = GetGuildName(guildId)
 
     local queue = {}
+    local firstMailItem = nil
     local warnCount, kickMailCount, kickCount, loaCount, voidCount = 0, 0, 0, 0, 0
     for _, m in ipairs(members) do
         local act = m.stagedAction or "Warn Mail"
-        table.insert(queue, { member = m, action = act })
-        if act == "Warn Mail" then warnCount = warnCount + 1
-        elseif act == "Kick & Mail" then kickMailCount = kickMailCount + 1
-        elseif act == "Kick Only" then kickCount = kickCount + 1
-        elseif act == "Exempt [LOA]" then loaCount = loaCount + 1
-        elseif act == "Void / Hide" then voidCount = voidCount + 1
+        if act == "Warn Mail" then
+            warnCount = warnCount + 1
+            if not firstMailItem then firstMailItem = { member = m, action = act } end
+        elseif act == "Kick & Mail" then
+            kickMailCount = kickMailCount + 1
+            if not firstMailItem then firstMailItem = { member = m, action = act } end
+        elseif act == "Kick Only" then
+            kickCount = kickCount + 1
+            table.insert(queue, { member = m, action = act })
+        elseif act == "Exempt [LOA]" then
+            loaCount = loaCount + 1
+            table.insert(queue, { member = m, action = act })
+        elseif act == "Void / Hide" then
+            voidCount = voidCount + 1
+            table.insert(queue, { member = m, action = act })
         end
     end
 
+    if #queue == 0 then
+        if firstMailItem then
+            self.PrintChat(string.format("|cFFCC00[Mail Safety]|r ESO requires manual confirmation per outgoing letter. Staging first %s for %s — use each row's Apply button to send letters one at a time.",
+                ColorText(firstMailItem.action, "FFD700"),
+                ColorText(firstMailItem.member.name, "00FFCC")))
+            self:ApplyAuditAction(firstMailItem.member, firstMailItem.action, false)
+        else
+            self.PrintChat("|cFFCC00Notice:|r No batchable actions selected.")
+        end
+        return
+    end
+
     local total = #queue
-    local summaryStr = string.format("Batch process |c00FFCC%d|r members for |cFF9900%s|r?\n\n|cCCCCCCPlanned Actions:|r\n• Warn Mail: |cFFCC00%d|r\n• Kick & Mail: |cFF6600%d|r\n• Kick Only: |cFF4444%d|r\n• Exempt [LOA]: |c59E08A%d|r\n• Void / Hide: |cAA66FF%d|r\n\n|cFF9900Actions execute sequentially with 1.5s safe pacing to prevent server throttling.|r",
-        total, guildName, warnCount, kickMailCount, kickCount, loaCount, voidCount)
+    local skippedMailCount = warnCount + kickMailCount
+    local mailNotice = ""
+    if skippedMailCount > 0 then
+        mailNotice = string.format("\n\n|cFFCC00Note: %d mail action(s) (Warn Mail / Kick & Mail) require manual ESO mail sending and are excluded from automated batching (first mail will be staged upon completion).|r", skippedMailCount)
+    end
+    local summaryStr = string.format("Batch process |c00FFCC%d|r non-mail member action(s) for |cFF9900%s|r?\n\n|cCCCCCCPlanned Batch Actions:|r\n• Kick Only: |cFF4444%d|r\n• Exempt [LOA]: |c59E08A%d|r\n• Void / Hide: |cAA66FF%d|r%s\n\n|cFF9900Actions execute sequentially with 1.5s safe pacing to prevent server throttling.|r",
+        total, guildName, kickCount, loaCount, voidCount, mailNotice)
 
     RegisterAuditorCustomDialogs()
     ZO_Dialogs_ShowDialog("FISSAL_CONFIRM_AUDIT_BATCH", {
         onConfirm = function()
-            FR:ExecuteAuditBatchQueue(guildId, queue)
+            FR:ExecuteAuditBatchQueue(guildId, queue, firstMailItem)
         end,
     }, {
         mainTextParams = { summaryStr }
@@ -1621,7 +1667,7 @@ function FR:AbortAuditBatch()
     self:UpdateAuditorUI()
 end
 
-function FR:ExecuteAuditBatchQueue(guildId, queue)
+function FR:ExecuteAuditBatchQueue(guildId, queue, firstMailItem)
     if not queue or #queue == 0 then return end
     self.isAuditBatchRunning = true
     self.auditBatchQueue = queue
@@ -1645,6 +1691,9 @@ function FR:ExecuteAuditBatchQueue(guildId, queue)
             self.PrintChat(string.format("|c59E08ABatch Processing Complete:|r Successfully executed actions for %d member(s).", self.auditBatchTotal))
             self:RunRosterAudit()
             self:UpdateAuditorUI()
+            if firstMailItem and firstMailItem.member then
+                self:ApplyAuditAction(firstMailItem.member, firstMailItem.action, false)
+            end
             return
         end
 
@@ -1692,7 +1741,10 @@ function FR:RenderAuditorRows()
                 row.nameLbl:SetMouseEnabled(true)
                 row.nameLbl:SetHandler("OnMouseEnter", function(ctrl)
                     InitializeTooltip(InformationTooltip, ctrl, TOP, 0, -4)
-                    local sDetails = FR.GetMemberDetailedSales and FR:GetMemberDetailedSales(guildId, m.name)
+                    if m.detailedSales == nil and FR.GetMemberDetailedSales then
+                        m.detailedSales = FR:GetMemberDetailedSales(guildId, m.name) or false
+                    end
+                    local sDetails = m.detailedSales or nil
                     local lines = {
                         string.format("|c00FFCC%s|r  |c888888(Rank: %s • %d days offline)|r", m.name, m.rank, m.days),
                     }

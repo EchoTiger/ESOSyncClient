@@ -138,70 +138,190 @@ end
 
 function FR:CollectReconData()
     local reconMap = {}
+    local curWeekStart = self.GetTuesdayTradeWeek and self:GetTuesdayTradeWeek(GetTimeStamp()) or 0
 
     local function IsKioskVacant(k)
+        if k.guildId and tonumber(k.guildId) and tonumber(k.guildId) > 0 then return false end
+        local src = tostring(k.source or "")
+        if src == "Guild Finder Sweep" or src == "Guild ID Probe" or src == "Owned Guild Stall" or src == "Owned Ledger" then
+            return false
+        end
         if k.isOpen == true or k.isVacant == true then return true end
         local gName = string.lower(k.guildName or "")
-        if gName == "" or gName == "none" or gName == "empty" or gName == "open" or gName == "vacant" or gName == "unhired" or gName == "no trader" or gName == "open spot" then
-            return true
-        end
-        if string.find(gName, "open") or string.find(gName, "vacant") or string.find(gName, "empty") then
+        if gName == "" or gName == "none" or gName == "empty" or gName == "open" or gName == "vacant" or gName == "unhired" or gName == "no trader" or gName == "open spot" or gName == "none (open spot)" or gName == "no hiring guild (vacant)" or gName == "unclaimed" then
             return true
         end
         return false
     end
 
+    -- 0. Seed all 291 canonical Tamriel kiosks from KIOSK_DIRECTORY
+    if self.KIOSK_DIRECTORY then
+        for traderName, dirInfo in pairs(self.KIOSK_DIRECTORY) do
+            local traderKey = string.lower(traderName)
+            reconMap[traderKey] = {
+                trader = dirInfo.trader or traderName,
+                city = dirInfo.city or "Tamriel",
+                zone = dirInfo.zone or "Tamriel",
+                guildId = 0,
+                guildName = "Unverified",
+                timestamp = 0,
+                isOpen = false,
+                isCurrentWeek = false,
+                isPriorWeek = false,
+                isUnverified = true,
+                source = "Directory",
+                notes = dirInfo.isOutlaw and "Outlaws Refuge" or "",
+            }
+        end
+    end
+
     -- 1. Ingest synced spreadsheet kiosks from Fissal Relay
     local sheetKiosks = (self.savedVars and self.savedVars.spreadsheetKiosks) or self.SpreadsheetKiosks or {}
     for key, sk in pairs(sheetKiosks) do
-        local traderKey = (sk.trader or key):lower()
-        local isOpen = IsKioskVacant(sk)
-        reconMap[traderKey] = {
-            trader = sk.trader or key,
-            city = sk.city or "Unknown",
-            zone = sk.zone or "Unknown",
-            guildName = isOpen and "None (Open Spot)" or (sk.guildName or "Unknown"),
-            timestamp = sk.timestamp or sk.updatedAt or 0,
-            isOpen = isOpen,
-            source = "Spreadsheet",
-            notes = sk.notes or "",
-        }
+        local rawName = sk.trader or key
+        local resolved = self.ResolveCanonicalKiosk and self:ResolveCanonicalKiosk(rawName, sk.city, sk.zone) or nil
+        if not resolved or resolved.matchedDirectory then
+            local canonicalName = (resolved and resolved.trader) or rawName
+            local traderKey = string.lower(canonicalName)
+            local isOpen = IsKioskVacant(sk)
+            local ts = tonumber(sk.timestamp or sk.updatedAt) or 0
+            local isCur = (ts >= curWeekStart and curWeekStart > 0)
+            reconMap[traderKey] = {
+                trader = canonicalName,
+                city = (resolved and resolved.city) or sk.city or "Unknown",
+                zone = (resolved and resolved.zone) or sk.zone or "Unknown",
+                guildId = tonumber(sk.guildId) or 0,
+                guildName = isOpen and "None (Open Spot)" or (sk.guildName or "Unknown"),
+                timestamp = ts,
+                isOpen = isOpen,
+                isCurrentWeek = isCur,
+                isPriorWeek = (ts > 0 and not isCur),
+                isUnverified = (ts == 0),
+                source = "Spreadsheet",
+                notes = sk.notes or "",
+            }
+        end
     end
 
-    -- 2. Ingest in-game ground truth scouted observations (authoritative ground recon)
+    -- 2. Ingest in-game ground truth & Guild Finder sweep observations (authoritative recon)
     if self.savedVars and self.savedVars.kiosks then
         for trader, k in pairs(self.savedVars.kiosks) do
-            local traderKey = (k.trader or trader):lower()
-            local isOpen = IsKioskVacant(k)
-            local existing = reconMap[traderKey]
-            if not existing or (k.timestamp or 0) >= (existing.timestamp or 0) then
-                reconMap[traderKey] = {
-                    trader = k.trader or trader,
-                    city = k.city or (existing and existing.city) or "?",
-                    zone = k.zone or (existing and existing.zone) or "?",
-                    guildName = isOpen and "None (Open Spot)" or (k.guildName or "None"),
-                    timestamp = k.timestamp or 0,
-                    isOpen = isOpen,
-                    source = "Scouted",
-                    notes = k.notes or (existing and existing.notes) or "",
-                }
+            local rawName = k.trader or trader
+            local resolved = self.ResolveCanonicalKiosk and self:ResolveCanonicalKiosk(rawName, k.city, k.zone) or nil
+            if not self.ResolveCanonicalKiosk or (resolved and resolved.matchedDirectory and not self:IsBlacklistedTrader(resolved.trader)) then
+                local canonicalName = (resolved and resolved.trader) or rawName
+                local traderKey = string.lower(canonicalName)
+                local isOpen = IsKioskVacant(k)
+                local existing = reconMap[traderKey]
+                local ts = tonumber(k.timestamp) or 0
+                if not existing or ts >= (existing.timestamp or 0) then
+                    local isCur = (ts >= curWeekStart and curWeekStart > 0)
+                    local effGuildName = k.guildName or "None"
+                    if not isOpen and string.lower(effGuildName) == "vacant" then
+                        effGuildName = "Available Trader Kiosk"
+                    end
+                    reconMap[traderKey] = {
+                        trader = canonicalName,
+                        city = (resolved and resolved.city) or k.city or (existing and existing.city) or "?",
+                        zone = (resolved and resolved.zone) or k.zone or (existing and existing.zone) or "?",
+                        guildId = tonumber(k.guildId) or 0,
+                        guildName = isOpen and "None (Open Spot)" or effGuildName,
+                        timestamp = ts,
+                        isOpen = isOpen,
+                        isCurrentWeek = isCur,
+                        isPriorWeek = (ts > 0 and not isCur),
+                        isUnverified = (ts == 0),
+                        source = k.source or "Scouted",
+                        notes = k.notes or (existing and existing.notes) or "",
+                    }
+                end
             end
         end
     end
 
     local recon = {}
+    local verifiedThisWeekCount = 0
+    local vacantCount = 0
+    local unverifiedCount = 0
     for _, k in pairs(reconMap) do
+        if k.isCurrentWeek then
+            verifiedThisWeekCount = verifiedThisWeekCount + 1
+            if k.isOpen then
+                vacantCount = vacantCount + 1
+            end
+        elseif k.isUnverified then
+            unverifiedCount = unverifiedCount + 1
+        end
         table.insert(recon, k)
     end
+    self.reconVerifiedThisWeekCount = verifiedThisWeekCount
+    self.reconVacantCount = vacantCount
+    self.reconUnverifiedCount = unverifiedCount
 
-    -- 3. Prioritize Open / Vacant Kiosks at the top of the list!
-    table.sort(recon, function(a, b)
-        local aOpen = a.isOpen and 1 or 0
-        local bOpen = b.isOpen and 1 or 0
-        if aOpen ~= bOpen then
-            return aOpen > bOpen -- 1 (open) before 0 (occupied)
+    local sortCol = self.reconSortCol
+    local asc = self.reconSortAsc or false
+
+    local function DefaultPriorityCompare(a, b)
+        local aOpenCur = (a.isOpen and a.isCurrentWeek) and 1 or 0
+        local bOpenCur = (b.isOpen and b.isCurrentWeek) and 1 or 0
+        if aOpenCur ~= bOpenCur then
+            return aOpenCur > bOpenCur
         end
-        return (a.timestamp or 0) > (b.timestamp or 0)
+        local aCur = a.isCurrentWeek and 1 or 0
+        local bCur = b.isCurrentWeek and 1 or 0
+        if aCur ~= bCur then
+            return aCur > bCur
+        end
+        if (a.timestamp or 0) ~= (b.timestamp or 0) then
+            return (a.timestamp or 0) > (b.timestamp or 0)
+        end
+        if (a.zone or "") ~= (b.zone or "") then
+            return (a.zone or "") < (b.zone or "")
+        end
+        return (a.trader or "") < (b.trader or "")
+    end
+
+    local function ReconStatusTier(item)
+        if item.isOpen and item.isCurrentWeek then return 4 end
+        if item.isCurrentWeek then return 3 end
+        if item.isPriorWeek then return 2 end
+        return 1
+    end
+
+    -- 3. Sort by selected Recon column header or default 4-tier priority
+    table.sort(recon, function(a, b)
+        if not sortCol then
+            return DefaultPriorityCompare(a, b)
+        end
+        local valA, valB
+        if sortCol == "guild" then -- TRADER NPC
+            valA = string.lower(a.trader or "")
+            valB = string.lower(b.trader or "")
+        elseif sortCol == "kiosk" then -- CITY / ZONE
+            valA = string.lower((a.city or "") .. " " .. (a.zone or ""))
+            valB = string.lower((b.city or "") .. " " .. (b.zone or ""))
+        elseif sortCol == "bidder" then -- STATUS
+            valA = ReconStatusTier(a)
+            valB = ReconStatusTier(b)
+        elseif sortCol == "amount" then -- CONTROLLING GUILD
+            valA = string.lower(a.guildName or "")
+            valB = string.lower(b.guildName or "")
+        elseif sortCol == "status" then -- SOURCE
+            valA = string.lower(a.source or "")
+            valB = string.lower(b.source or "")
+        else -- "timestamp" / SCOUTED
+            valA = tonumber(a.timestamp) or 0
+            valB = tonumber(b.timestamp) or 0
+        end
+
+        if valA == valB then
+            return DefaultPriorityCompare(a, b)
+        end
+        if asc then
+            return valA < valB
+        else
+            return valA > valB
+        end
     end)
 
     self.reconList = recon
@@ -274,7 +394,7 @@ function FR:BuildBidsReconUI(parent)
         normalTextColor = { 0.7, 0.7, 0.7, 1 },
         hoverTextColor = { 0, 1, 0.9, 1 },
         tooltipTitle = "Ground Recon Vault",
-        tooltipText = "View all trader kiosks scouted in-person across Tamriel, with zone, city, and merchant details.",
+        tooltipText = "View all trader kiosks scouted in-person or harvested via Guild Finder across Tamriel.",
     })
     reconBtn:SetHandler("OnClicked", function()
         self.bidsSubView = "recon"
@@ -285,7 +405,7 @@ function FR:BuildBidsReconUI(parent)
 
     local scoutNowBtn = wm:CreateControl("$(parent)_ScoutNowBtn", card, CT_BUTTON)
     scoutNowBtn:SetAnchor(TOPRIGHT, card, TOPRIGHT, -12, 6)
-    scoutNowBtn:SetDimensions(150, 24)
+    scoutNowBtn:SetDimensions(145, 24)
     scoutNowBtn:SetFont("ZoFontGameSmall")
     scoutNowBtn:SetText("Scout Current Kiosk")
     self:StyleTactileButton(scoutNowBtn, {
@@ -296,17 +416,45 @@ function FR:BuildBidsReconUI(parent)
         normalTextColor = { 0, 1, 0.8, 1 },
         hoverTextColor = { 0.4, 1, 0.9, 1 },
         tooltipTitle = "Scout Current Kiosk",
-        tooltipText = "Record an instant reconnaissance log of the guild trader you are currently interacting with in the world.",
+        tooltipText = "Record an instant reconnaissance log of the guild trader you are currently interacting with or targeting in the world.",
     })
     scoutNowBtn:SetHandler("OnClicked", function()
         local recorded = self:RecordKioskObservation()
+        if not recorded and self.InspectUnitKiosk then
+            recorded = self:InspectUnitKiosk("interact", "Manual Scout", false)
+                or self:InspectUnitKiosk("reticleover", "Manual Scout", false)
+        end
         if recorded then
             self.PrintChat("Ground recon observation captured!")
             self:UpdateBidsUI()
         else
-            self.PrintChat("No trader interaction active. Open a trader store to scout.")
+            self.PrintChat("No trader interaction or reticle target active. Aim at or open a guild trader to scout.")
         end
     end)
+
+    local sweepTamrielBtn = wm:CreateControl("$(parent)_SweepTamrielBtn", card, CT_BUTTON)
+    sweepTamrielBtn:SetAnchor(RIGHT, scoutNowBtn, LEFT, -8, 0)
+    sweepTamrielBtn:SetDimensions(155, 24)
+    sweepTamrielBtn:SetFont("ZoFontGameSmall")
+    sweepTamrielBtn:SetText("Sweep Tamriel Kiosks")
+    self:StyleTactileButton(sweepTamrielBtn, {
+        normalBg = { 0.14, 0.10, 0.04, 0.90 },
+        hoverBg = { 0.22, 0.16, 0.06, 0.98 },
+        normalEdge = { 0.85, 0.65, 0.15, 0.80 },
+        hoverEdge = { 1.0, 0.85, 0.25, 1.0 },
+        normalTextColor = { 1.0, 0.85, 0.30, 1 },
+        hoverTextColor = { 1.0, 0.95, 0.60, 1 },
+        tooltipTitle = "Autonomous Tamriel Kiosk Sweep",
+        tooltipText = "Sweeps all Guild Finder categories, alliances, and languages + probes 630+ known PC-NA trading guild IDs to map Tamriel guild traders without porting.",
+    })
+    sweepTamrielBtn:SetHandler("OnClicked", function()
+        if self.StartKioskSweep then
+            self:StartKioskSweep()
+        else
+            self.PrintChat("Kiosk Recon Sweep engine not loaded.")
+        end
+    end)
+    self.sweepTamrielBtn = sweepTamrielBtn
 
     -- 3. Secondary Filter Bar (Guild Filter Tabs & Trade-Week Cycler)
     local filterBar = wm:CreateControl("$(parent)_FilterBar", card, CT_CONTROL)
@@ -319,7 +467,7 @@ function FR:BuildBidsReconUI(parent)
     self.bidsGuildBtns = {}
     local allGuildBtn = wm:CreateControl("$(parent)_G_ALL", filterBar, CT_BUTTON)
     allGuildBtn:SetAnchor(LEFT, filterBar, LEFT, 0, 0)
-    allGuildBtn:SetDimensions(80, 22)
+    allGuildBtn:SetDimensions(74, 22)
     allGuildBtn:SetFont("ZoFontGameSmall")
     allGuildBtn:SetText("All Guilds")
     self:StyleTactileButton(allGuildBtn, {
@@ -338,7 +486,7 @@ function FR:BuildBidsReconUI(parent)
 
     local prevCtrl = allGuildBtn
     local numGuilds = GetNumGuilds()
-    for g = 1, math.min(numGuilds, 4) do
+    for g = 1, math.min(numGuilds, 5) do
         local gId = GetGuildId(g)
         local gName = GetGuildName(gId)
         local shortName = gName
@@ -346,12 +494,12 @@ function FR:BuildBidsReconUI(parent)
         elseif string.find(string.lower(gName), "caravan") then shortName = "Caravan"
         elseif string.find(string.lower(gName), "dealer") then shortName = "Dealers"
         else
-            shortName = string.sub(gName, 1, 10)
+            shortName = string.sub(gName, 1, 9)
         end
 
         local gBtn = wm:CreateControl("$(parent)_G_" .. gId, filterBar, CT_BUTTON)
-        gBtn:SetAnchor(LEFT, prevCtrl, RIGHT, 6, 0)
-        gBtn:SetDimensions(75, 22)
+        gBtn:SetAnchor(LEFT, prevCtrl, RIGHT, 5, 0)
+        gBtn:SetDimensions(68, 22)
         gBtn:SetFont("ZoFontGameSmall")
         gBtn:SetText(shortName)
         self:StyleTactileButton(gBtn, {
@@ -469,15 +617,27 @@ function FR:BuildBidsReconUI(parent)
         btn:SetNormalFontColor(0.8, 0.75, 0.65, 1)
         btn:SetText(text)
         btn:SetHandler("OnClicked", function()
-            if self.bidsSortCol == sortKey then
-                self.bidsSortAsc = not self.bidsSortAsc
+            if self.bidsSubView == "recon" then
+                if self.reconSortCol == sortKey then
+                    self.reconSortAsc = not self.reconSortAsc
+                else
+                    self.reconSortCol = sortKey
+                    self.reconSortAsc = true
+                end
+                self:UpdateHeaderArrows()
+                self:CollectReconData()
+                self:RenderBidsRows()
             else
-                self.bidsSortCol = sortKey
-                self.bidsSortAsc = false
+                if self.bidsSortCol == sortKey then
+                    self.bidsSortAsc = not self.bidsSortAsc
+                else
+                    self.bidsSortCol = sortKey
+                    self.bidsSortAsc = false
+                end
+                self:UpdateHeaderArrows()
+                self:CollectBidsData()
+                self:RenderBidsRows()
             end
-            self:UpdateHeaderArrows()
-            self:CollectBidsData()
-            self:RenderBidsRows()
         end)
         return btn
     end
@@ -566,6 +726,22 @@ function FR:BuildBidsReconUI(parent)
                 end
                 local dateStr = os.date("%A, %b %d at %H:%M UTC", b.timestamp)
                 InformationTooltip:AddLine(string.format("• Timestamp: |c888888%s|r", dateStr), "ZoFontGameSmall")
+            elseif control.reconData then
+                local rData = control.reconData
+                InitializeTooltip(InformationTooltip, control, RIGHT, 5, 0)
+                InformationTooltip:AddLine(string.format("|c00FFCC%s|r", rData.trader or "Trader"), "ZoFontGameBold")
+                InformationTooltip:AddLine(string.format("• Location: |cFFFFFF%s, %s|r", rData.city or "?", rData.zone or "?"), "ZoFontGameSmall")
+                InformationTooltip:AddLine(string.format("• Controlling Guild: |cFFD700%s|r", rData.guildName or "Unverified"), "ZoFontGameSmall")
+                InformationTooltip:AddLine(string.format("• Source: |c59E08A%s|r", rData.source or "Directory"), "ZoFontGameSmall")
+                if rData.notes and rData.notes ~= "" then
+                    InformationTooltip:AddLine(string.format("• Notes: |cCCCCCC%s|r", rData.notes), "ZoFontGameSmall")
+                end
+                if rData.timestamp and rData.timestamp > 0 then
+                    local dateStr = os.date("%A, %b %d at %H:%M UTC", rData.timestamp)
+                    InformationTooltip:AddLine(string.format("• Scouted: |c888888%s|r", dateStr), "ZoFontGameSmall")
+                else
+                    InformationTooltip:AddLine("• Scouted: |c888888Unverified this week|r", "ZoFontGameSmall")
+                end
             end
         end)
         row:SetHandler("OnMouseExit", function(control)
@@ -684,15 +860,25 @@ function FR:UpdateBidsFilterButtons()
 end
 
 function FR:UpdateHeaderArrows()
-    local arrow = self.bidsSortAsc and " ▲" or " ▼"
-    local col = self.bidsSortCol
-
-    if self.bidsH1 then self.bidsH1:SetText("GUILD" .. (col == "guild" and arrow or "")) end
-    if self.bidsH2 then self.bidsH2:SetText("KIOSK TRADER & LOCATION" .. (col == "kiosk" and arrow or "")) end
-    if self.bidsH3 then self.bidsH3:SetText("BIDDER" .. (col == "bidder" and arrow or "")) end
-    if self.bidsH4 then self.bidsH4:SetText("AMOUNT" .. (col == "amount" and arrow or "")) end
-    if self.bidsH5 then self.bidsH5:SetText("STATUS" .. (col == "status" and arrow or "")) end
-    if self.bidsH6 then self.bidsH6:SetText("DATE" .. (col == "timestamp" and arrow or "")) end
+    if self.bidsSubView == "recon" then
+        local arrow = self.reconSortAsc and " ▲" or " ▼"
+        local col = self.reconSortCol
+        if self.bidsH1 then self.bidsH1:SetText("TRADER NPC" .. (col == "guild" and arrow or "")) end
+        if self.bidsH2 then self.bidsH2:SetText("CITY / ZONE" .. (col == "kiosk" and arrow or "")) end
+        if self.bidsH3 then self.bidsH3:SetText("STATUS" .. (col == "bidder" and arrow or "")) end
+        if self.bidsH4 then self.bidsH4:SetText("CONTROLLING GUILD" .. (col == "amount" and arrow or "")) end
+        if self.bidsH5 then self.bidsH5:SetText("SOURCE" .. (col == "status" and arrow or "")) end
+        if self.bidsH6 then self.bidsH6:SetText("SCOUTED" .. (col == "timestamp" and arrow or "")) end
+    else
+        local arrow = self.bidsSortAsc and " ▲" or " ▼"
+        local col = self.bidsSortCol
+        if self.bidsH1 then self.bidsH1:SetText("GUILD" .. (col == "guild" and arrow or "")) end
+        if self.bidsH2 then self.bidsH2:SetText("KIOSK TRADER & LOCATION" .. (col == "kiosk" and arrow or "")) end
+        if self.bidsH3 then self.bidsH3:SetText("BIDDER" .. (col == "bidder" and arrow or "")) end
+        if self.bidsH4 then self.bidsH4:SetText("AMOUNT" .. (col == "amount" and arrow or "")) end
+        if self.bidsH5 then self.bidsH5:SetText("STATUS" .. (col == "status" and arrow or "")) end
+        if self.bidsH6 then self.bidsH6:SetText("DATE" .. (col == "timestamp" and arrow or "")) end
+    end
 end
 
 --[[ =========================================================================
@@ -700,12 +886,14 @@ end
 ========================================================================= ]]--
 
 function FR:UpdateBidsUI()
-    self:CollectBidsData()
-    self:CollectReconData()
+    local isBids = (self.bidsSubView == "bids")
+    if isBids then
+        self:CollectBidsData()
+    else
+        self:CollectReconData()
+    end
     self:UpdateBidsFilterButtons()
     self:UpdateHeaderArrows()
-
-    local isBids = (self.bidsSubView == "bids")
 
     -- Toggle Sub-view Tab Buttons
     if self.bidsTabBtn and self.bidsTabBtn.bg then
@@ -735,46 +923,48 @@ function FR:UpdateBidsUI()
         end
     end
 
-    -- Toggle filter bar and ribbon visibility based on view
+    -- Toggle filter bar and keep ribbon visible in both views
     if self.bidsFilterBar then self.bidsFilterBar:SetHidden(not isBids) end
-    if self.bidsRibbon then self.bidsRibbon:SetHidden(not isBids) end
+    if self.bidsRibbon then self.bidsRibbon:SetHidden(false) end
 
     -- Update column header labels
-    if isBids then
-        self:UpdateHeaderArrows()
-    else
-        if self.bidsH1 then self.bidsH1:SetText("TRADER NPC") end
-        if self.bidsH2 then self.bidsH2:SetText("CITY / ZONE") end
-        if self.bidsH3 then self.bidsH3:SetText("STATUS") end
-        if self.bidsH4 then self.bidsH4:SetText("CONTROLLING GUILD") end
-        if self.bidsH5 then self.bidsH5:SetText("VERIFIED") end
-        if self.bidsH6 then self.bidsH6:SetText("SCOUTED") end
-    end
+    self:UpdateHeaderArrows()
 
-    -- Financial Telemetry calculation
-    if isBids and self.bidsRibbonLbl then
-        local totalBids = #self.bidsList
-        local totalCommitted = 0
-        local totalRefunded = 0
-        local wonTrader = "None"
+    -- Financial & Recon Telemetry calculation
+    if self.bidsRibbonLbl then
+        if isBids then
+            local totalBids = #self.bidsList
+            local totalCommitted = 0
+            local totalRefunded = 0
+            local wonTrader = "None"
 
-        for _, b in ipairs(self.bidsList) do
-            totalCommitted = totalCommitted + b.amount
-            if string.find(b.statusText, "Won") then
-                wonTrader = b.kioskName
-            elseif string.find(b.statusText, "Refund") then
-                totalRefunded = totalRefunded + b.amount
+            for _, b in ipairs(self.bidsList) do
+                totalCommitted = totalCommitted + b.amount
+                if string.find(b.statusText, "Won") then
+                    wonTrader = b.kioskName
+                elseif string.find(b.statusText, "Refund") then
+                    totalRefunded = totalRefunded + b.amount
+                end
             end
+
+            local roundLabel = (self.bidsRoundFilter == "CURRENT" and "Active Round")
+                or (self.bidsRoundFilter == "PRIOR" and "Prior Round")
+                or "All History"
+
+            self.bidsRibbonLbl:SetText(string.format(
+                "• |cE6C387%s:|r |cFFFFFF%d|r bids  |  Committed: |cFFD700%sg|r  |  Won: |c59E08A%s|r  |  Refunded: |c888888%sg|r",
+                roundLabel, totalBids, ZO_LocalizeDecimalNumber(totalCommitted), wonTrader, ZO_LocalizeDecimalNumber(totalRefunded)
+            ))
+        else
+            local verifiedWk = self.reconVerifiedThisWeekCount or 0
+            local vacantCnt = self.reconVacantCount or 0
+            local unverifiedCnt = self.reconUnverifiedCount or 0
+            local totalDir = #(self.reconList or {})
+            self.bidsRibbonLbl:SetText(string.format(
+                "• |c00FFCCGround Recon:|r Verified This Week: |c59E08A%d / %d|r  |  Vacant: |cFFD700%d|r  |  Unverified: |c888888%d|r",
+                verifiedWk, totalDir, vacantCnt, unverifiedCnt
+            ))
         end
-
-        local roundLabel = (self.bidsRoundFilter == "CURRENT" and "Active Round")
-            or (self.bidsRoundFilter == "PRIOR" and "Prior Round")
-            or "All History"
-
-        self.bidsRibbonLbl:SetText(string.format(
-            "• |cE6C387%s:|r |cFFFFFF%d|r bids  |  Committed: |cFFD700%sg|r  |  Won: |c59E08A%s|r  |  Refunded: |c888888%sg|r",
-            roundLabel, totalBids, ZO_LocalizeDecimalNumber(totalCommitted), wonTrader, ZO_LocalizeDecimalNumber(totalRefunded)
-        ))
     end
 
     self:RenderBidsRows()
@@ -800,6 +990,7 @@ function FR:RenderBidsRows()
                 local item = list[itemIndex]
                 row:SetHidden(false)
                 row.bidData = isBids and item or nil
+                row.reconData = (not isBids) and item or nil
 
                 if r % 2 == 0 then
                     row:SetCenterColor(0.04, 0.04, 0.06, 0.60)
@@ -820,26 +1011,41 @@ function FR:RenderBidsRows()
                 else
                     -- Recon item
                     local timeAgo = (item.timestamp and item.timestamp > 0) and ZO_FormatDurationAgo(GetTimeStamp() - item.timestamp) or "--"
-                    if item.isOpen then
+                    if item.isOpen and item.isCurrentWeek then
                         row:SetCenterColor(0.06, 0.16, 0.08, 0.75)
                         row.col1:SetText(string.format("|cFFD700⭐ %s|r", item.trader or "Trader"))
                         row.col2:SetText(string.format("%s, %s", item.city or "?", item.zone or "?"))
                         row.col3:SetText("|c59E08A⭐ VACANT / OPEN|r")
                         row.col4:SetText("|c00FFCC(No Guild Claimed)|r")
-                        row.col5:SetText(string.format("|c00FFCC%s|r", item.source or "Spreadsheet"))
+                        row.col5:SetText(string.format("|c00FFCC%s|r", item.source or "Recon"))
                         row.col6:SetText(timeAgo)
-                    else
+                    elseif item.isCurrentWeek then
                         row.col1:SetText(string.format("|cFFFFFF%s|r", item.trader or "Trader"))
                         row.col2:SetText(string.format("%s, %s", item.city or "?", item.zone or "?"))
-                        row.col3:SetText("|c59E08AVerified|r")
+                        row.col3:SetText("|c59E08A● Verified (Week)|r")
                         row.col4:SetText(string.format("|c00FFCC%s|r", item.guildName or "None"))
-                        row.col5:SetText(string.format("|c888888%s|r", item.source or "Logged"))
+                        row.col5:SetText(string.format("|c59E08A%s|r", item.source or "Scouted"))
                         row.col6:SetText(timeAgo)
+                    elseif item.isPriorWeek then
+                        row.col1:SetText(string.format("|cCCCCCC%s|r", item.trader or "Trader"))
+                        row.col2:SetText(string.format("%s, %s", item.city or "?", item.zone or "?"))
+                        row.col3:SetText("|cE6C387○ Prior Week|r")
+                        row.col4:SetText(string.format("|c888888%s|r", item.guildName or "None"))
+                        row.col5:SetText(string.format("|c888888%s|r", item.source or "Prior"))
+                        row.col6:SetText(timeAgo)
+                    else
+                        row.col1:SetText(string.format("|c777777%s|r", item.trader or "Trader"))
+                        row.col2:SetText(string.format("|c777777%s, %s|r", item.city or "?", item.zone or "?"))
+                        row.col3:SetText("|c666666○ Unscavenged|r")
+                        row.col4:SetText("|c555555Unverified|r")
+                        row.col5:SetText("|c555555Directory|r")
+                        row.col6:SetText("--")
                     end
                 end
             else
                 row:SetHidden(true)
                 row.bidData = nil
+                row.reconData = nil
             end
         end
     end
@@ -852,7 +1058,9 @@ function FR:RenderBidsRows()
         if isBids then
             self.bidsStatLbl:SetText(string.format("Bids Ledger: %d records  •  Scroll wheel to page", total))
         else
-            self.bidsStatLbl:SetText(string.format("Ground Recon: %d trader kiosks cataloged in Tamriel", total))
+            local verifiedWk = self.reconVerifiedThisWeekCount or 0
+            local knownGuilds = NonContiguousCount((self.savedVars and self.savedVars.knownTradingGuilds) or {})
+            self.bidsStatLbl:SetText(string.format("Ground Recon: %d/%d Tamriel kiosks verified this week  •  %d trading guilds indexed", verifiedWk, total, knownGuilds))
         end
     end
 end

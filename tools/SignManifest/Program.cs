@@ -24,8 +24,8 @@ var manifestObj = new
     schema = 1,
     product = "fissal-relay",
     channel = "stable",
-    sequence = 65,
-    version = "1.8.0",
+    sequence = 67,
+    version = "1.9.0",
     issued_at = DateTimeOffset.UtcNow.ToString("O"),
     expires_at = DateTimeOffset.UtcNow.AddYears(1).ToString("O"),
     min_updater_version = "1.4.0",
@@ -42,7 +42,7 @@ var manifestObj = new
     downloadUrl = "https://redfur.ech-o.net/api/relay/v1/update-download",
     sizeBytes = exeSize,
     sha256 = exeHash,
-    changelog = "- feat(relay): Fissal Relay Prime v1.8.0 Unified Courier\n- feat(motd): Multi-Format Date Replacer with drawing schedule parsing\n- feat(audit): Automated Inactive Member Auditing with Void List exclusions\n- feat(ranks): Continuous Bank Deposit Consensus & Auto-Ranks\n- feat(ui): Real-time SSE assistant streaming & Dwemer Tonal Terminal UI overhaul"
+    changelog = "- feat(relay): Fissal Relay Prime v1.9.0 full production overhaul\n- perf(client): eliminate 10Hz WS_EX_COMPOSITED idle repaints, 5Hz polling, and GDI+ mesh/handle leaks\n- perf(addon): O(1) rank lookups, cached bump/raffle telemetry, and zero-keystroke-lag MotD Studio\n- fix(addon): step-based GuildPromote/GuildDemote Auto-Ranks, probation logic fix, and Bumper drag/close fix\n- security(gateway): strict witness consensus, bounds validation, multi-account Lua parsing, and SyncPoints attribution"
 };
 
 var jsonOpts = new JsonSerializerOptions { WriteIndented = true };
@@ -54,7 +54,7 @@ var alg = SignatureAlgorithm.Ed25519;
 using var key = Key.Import(alg, privateKeyBytes, KeyBlobFormat.RawPrivateKey);
 var signature = alg.Sign(key, manifestBytes);
 
-var (ok, parsed, err) = UpdateTrustVerifier.VerifyAndParse(manifestBytes, signature, lastVerifiedSequence: 64);
+var (ok, parsed, err) = UpdateTrustVerifier.VerifyAndParse(manifestBytes, signature, lastVerifiedSequence: 66);
 if (!ok || parsed == null)
 {
     Console.Error.WriteLine($"Verification failed: {err}");

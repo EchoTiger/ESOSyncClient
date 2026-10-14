@@ -577,7 +577,7 @@ namespace RedfurSync
                 }
 
                 await using var fileStream = new FileStream(
-                    job.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+                    job.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
 
                 await using var progressStream = new ProgressStream(
                     fileStream, fileInfo.Length, p => job.Progress = p);

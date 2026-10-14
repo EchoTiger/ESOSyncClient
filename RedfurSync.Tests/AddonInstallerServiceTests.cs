@@ -108,6 +108,11 @@ public sealed class AddonInstallerServiceTests
         var addonDir = Path.Combine(liveDir, "AddOns", "FissalRelay");
         Directory.CreateDirectory(addonDir);
 
+        foreach (var file in AddonInstallerService.AddonFiles)
+        {
+            if (file == "FissalRelay.txt") continue;
+            File.WriteAllText(Path.Combine(addonDir, file), "-- non-empty module\n");
+        }
         File.WriteAllText(Path.Combine(addonDir, "FissalRelay.txt"),
             $"## Title: Fissal\n## Version: {AddonInstallerService.LatestAddonVersion}\n## AddOnVersion: {AddonInstallerService.LatestAddonVersionCode}\n");
 
@@ -117,6 +122,24 @@ public sealed class AddonInstallerServiceTests
         Assert.True(status.AddonInstalled);
         Assert.False(status.NeedsUpdate);
         Assert.Equal(AddonInstallerService.LatestAddonVersion, status.InstalledVersion);
+    }
+
+    [Fact]
+    public void CheckAddonInstallStatus_DetectsUpdateAvailable_WhenRequiredFileMissing()
+    {
+        using var temp = new TemporaryDirectory();
+        var liveDir = Path.Combine(temp.Path, "live");
+        var addonDir = Path.Combine(liveDir, "AddOns", "FissalRelay");
+        Directory.CreateDirectory(addonDir);
+
+        File.WriteAllText(Path.Combine(addonDir, "FissalRelay.txt"),
+            $"## Title: Fissal\n## Version: {AddonInstallerService.LatestAddonVersion}\n## AddOnVersion: {AddonInstallerService.LatestAddonVersionCode}\n");
+
+        var status = AddonInstallerService.CheckAddonInstallStatus(liveDir);
+
+        Assert.Equal(AddonInstallState.UpdateAvailable, status.State);
+        Assert.True(status.NeedsUpdate);
+        Assert.Contains("missing or empty", status.StatusMessage);
     }
 
     [Fact]

@@ -42,4 +42,38 @@ FissalRelay_SavedVariables = {
         Assert.Contains("10001", saleIds);
         Assert.Contains("10002", saleIds);
     }
+
+    [Fact]
+    public void ReadSaleIds_IgnoresDepositsBidsAndAuditsOutsideSalesBlock()
+    {
+        using var tempDir = new TemporaryDirectory();
+        var sampleLua = @"
+FissalRelay_SavedVariables = {
+    [""deposits""] = {
+        [""99001""] = {
+            [""id""] = ""99001"",
+            [""amount""] = 10000
+        }
+    },
+    [""sales""] = {
+        [""10001""] = {
+            [""id""] = ""10001"",
+            [""price""] = 500
+        }
+    },
+    [""audits""] = {
+        [""88001""] = {
+            [""id""] = ""88001""
+        }
+    }
+}
+";
+        var filePath = tempDir.WriteFile("FissalRelay.lua", sampleLua);
+        var saleIds = FissalRelayScanner.ReadSaleIds(filePath);
+
+        Assert.Single(saleIds);
+        Assert.Contains("10001", saleIds);
+        Assert.DoesNotContain("99001", saleIds);
+        Assert.DoesNotContain("88001", saleIds);
+    }
 }

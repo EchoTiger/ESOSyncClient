@@ -30,32 +30,55 @@ namespace RedfurSync
             var saleIds = new HashSet<string>(StringComparer.Ordinal);
             if (!File.Exists(filePath)) return new List<string>();
 
-            foreach (var line in File.ReadLines(filePath))
+            using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            using var reader = new StreamReader(stream);
+
+            bool inSales = false;
+            int depth = 0;
+            string? line;
+
+            while ((line = reader.ReadLine()) != null)
             {
-                var span = line.AsSpan().TrimStart();
+                var span = line.AsSpan().Trim();
+                if (span.IsEmpty || span.StartsWith("--")) continue;
+
+                if (!inSales)
+                {
+                    if (span.Contains("[\"sales\"]", StringComparison.OrdinalIgnoreCase) && span.Contains("{", StringComparison.Ordinal))
+                    {
+                        int openIdx = span.IndexOf('{');
+                        inSales = true;
+                        depth = 0;
+                        CountBraces(span.Slice(openIdx), ref depth);
+                        if (depth <= 0)
+                        {
+                            inSales = false;
+                            depth = 0;
+                        }
+                    }
+                    continue;
+                }
 
                 if (span.StartsWith("[\"id\"]"))
                 {
-                    // Fix: ReadOnlySpan<char>.IndexOf(char, int) removed in .NET 8+.
-                    // Use Slice(offset).IndexOf('"') and add offset back.
                     int startQuote = span.Slice(6).IndexOf('"');
                     if (startQuote != -1)
                     {
-                        startQuote += 6; // absolute index
+                        startQuote += 6;
                         int endQuote = span.Slice(startQuote + 1).IndexOf('"');
                         if (endQuote != -1)
                         {
-                            endQuote += startQuote + 1; // absolute index
+                            endQuote += startQuote + 1;
                             saleIds.Add(span.Slice(startQuote + 1, endQuote - startQuote - 1).ToString());
                         }
                     }
                 }
-                else if (span.StartsWith("[\"") && span.EndsWith("{"))
+                else if (depth == 1 && span.StartsWith("[\"") && span.EndsWith("{"))
                 {
                     int endQuote = span.Slice(2).IndexOf('"');
                     if (endQuote != -1)
                     {
-                        endQuote += 2; // absolute index
+                        endQuote += 2;
                         var idPart = span.Slice(2, endQuote - 2);
                         if (idPart.Length > 0 && char.IsDigit(idPart[0]))
                         {
@@ -64,11 +87,43 @@ namespace RedfurSync
                     }
                 }
 
+                CountBraces(span, ref depth);
+                if (depth <= 0)
+                {
+                    inSales = false;
+                    depth = 0;
+                }
+
                 if (saleIds.Count > maxIds)
                     throw new InvalidDataException($"FissalRelay file contains more than {maxIds:N0} sale IDs.");
             }
 
             return new List<string>(saleIds);
+        }
+
+        private static void CountBraces(ReadOnlySpan<char> span, ref int depth)
+        {
+            for (int i = 0; i < span.Length; i++)
+            {
+                char c = span[i];
+                if (c == '"')
+                {
+                    i++;
+                    while (i < span.Length)
+                    {
+                        if (span[i] == '\\') { i += 2; continue; }
+                        if (span[i] == '"') break;
+                        i++;
+                    }
+                    continue;
+                }
+                if (c == '{') depth++;
+                else if (c == '}')
+                {
+                    depth--;
+                    if (depth <= 0) return;
+                }
+            }
         }
     }
 }

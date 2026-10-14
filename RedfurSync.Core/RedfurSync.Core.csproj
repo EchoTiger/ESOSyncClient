@@ -24,6 +24,7 @@
     <EmbeddedResource Include="..\AddOn\FissalRelay\FissalRelay_Console.lua" Link="Resources\FissalRelay_Console.lua" />
     <EmbeddedResource Include="..\AddOn\FissalRelay\FissalRelay_MotD.lua" Link="Resources\FissalRelay_MotD.lua" />
     <EmbeddedResource Include="..\AddOn\FissalRelay\FissalRelay_Audit.lua" Link="Resources\FissalRelay_Audit.lua" />
+    <EmbeddedResource Include="..\AddOn\FissalRelay\FissalRelay_KioskRecon.lua" Link="Resources\FissalRelay_KioskRecon.lua" />
     <EmbeddedResource Include="..\AddOn\FissalRelay\FissalRelay_Bids.lua" Link="Resources\FissalRelay_Bids.lua" />
     <EmbeddedResource Include="..\AddOn\FissalRelay\FissalRelay_Ranks.lua" Link="Resources\FissalRelay_Ranks.lua" />
   </ItemGroup>

@@ -12,11 +12,10 @@ namespace RedfurSync;
 /// </summary>
 public static class LuaStreamingReader
 {
-    private const int BufferSize = 64 * 1024; // 64 KB (safely below 85 KB LOH threshold)
+    private const int BufferSize = 32 * 1024; // 32 KB (char[32768] = 64 KB, safely below 85 KB LOH threshold)
 
     /// <summary>
-    /// Stream-reads kiosk observations from a SavedVariables file.
-    /// Stops reading as soon as the kiosks table block completes.
+    /// Stream-reads kiosk observations from a SavedVariables file across all account profiles.
     /// </summary>
     public static List<KioskObservation> ReadKioskObservations(string filePath)
     {
@@ -50,8 +49,19 @@ public static class LuaStreamingReader
                 {
                     if (span.Contains("[\"kiosks\"]", StringComparison.OrdinalIgnoreCase) && span.Contains("{", StringComparison.Ordinal))
                     {
+                        int openIdx = span.IndexOf('{');
                         inKiosks = true;
-                        depth = 1;
+                        depth = 0;
+                        for (int i = openIdx; i < span.Length; i++)
+                        {
+                            if (span[i] == '{') depth++;
+                            else if (span[i] == '}') depth--;
+                        }
+                        if (depth <= 0)
+                        {
+                            inKiosks = false;
+                            depth = 0;
+                        }
                     }
                     continue;
                 }
@@ -97,11 +107,14 @@ public static class LuaStreamingReader
                         depth--;
                         if (depth <= 0)
                         {
-                            // End of kiosks block; stop parsing to save CPU & I/O
-                            return observations;
+                            inKiosks = false;
+                            depth = 0;
+                            break;
                         }
                     }
                 }
+
+                if (!inKiosks) continue;
 
                 // If inside a trader's table (depth == 2), extract key = value properties
                 if (depth >= 2)

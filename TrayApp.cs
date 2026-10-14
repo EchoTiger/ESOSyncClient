@@ -13,6 +13,9 @@ namespace RedfurSync
 {
     public sealed class TrayApp : IDisposable
     {
+        [DllImport("user32.dll", SetLastError = true)]
+        private static extern bool DestroyIcon(IntPtr hIcon);
+
         private static void TraceLog(string msg)
         {
             try {
@@ -80,7 +83,7 @@ namespace RedfurSync
                         if (_disposed) return;
                         if (_uiContext != null)
                             _uiContext.Post(_ => OpenMainWindow("sync"), null);
-                        else if (!_menu.IsDisposed)
+                        else if (!_menu.IsDisposed && _menu.IsHandleCreated)
                             _menu.BeginInvoke(() => OpenMainWindow("sync"));
                     },
                     null,
@@ -142,6 +145,7 @@ namespace RedfurSync
 
         private void OnConnectionChecked(bool ok, string msg)
         {
+            if (_disposed) return;
             if (ok)
             {
                 if (!AppConfig.Instance.SilentSync)
@@ -191,9 +195,11 @@ namespace RedfurSync
 
         private void OpenMainWindow(string tabId = "sync")
         {
+            if (_disposed) return;
             TraceLog("OpenMainWindow tab: " + tabId);
             if (_menu.InvokeRequired)
             {
+                if (_disposed || _menu.IsDisposed || !_menu.IsHandleCreated) return;
                 _menu.BeginInvoke(() => OpenMainWindow(tabId));
                 return;
             }
@@ -206,18 +212,36 @@ namespace RedfurSync
             _mainWindow.NavigateToTab(tabId);
             ActivateMainWindow();
         }
+
+        private void OpenAssistantDialog()
+        {
+            if (_disposed) return;
+            if (_menu.InvokeRequired)
+            {
+                if (_disposed || _menu.IsDisposed || !_menu.IsHandleCreated) return;
+                _menu.BeginInvoke(OpenAssistantDialog);
+                return;
+            }
+
+            using var dlg = new RelayAssistantForm(_watcher);
+            if (_mainWindow != null && !_mainWindow.IsDisposed && _mainWindow.Visible)
+                dlg.ShowDialog(_mainWindow);
+            else
+                dlg.ShowDialog();
+        }
         
         private void OnJobsChanged()
         {
+            if (_disposed) return;
             if (_uiContext != null)
             {
                 _uiContext.Post(_ => HandleJobsChangedOnUI(), null);
             }
-            else if (_menu != null && !_menu.IsDisposed && _menu.InvokeRequired)
+            else if (_menu != null && !_menu.IsDisposed && _menu.IsHandleCreated && _menu.InvokeRequired)
             {
                 _menu.BeginInvoke(new Action(HandleJobsChangedOnUI));
             }
-            else
+            else if (!_disposed)
             {
                 HandleJobsChangedOnUI();
             }
@@ -225,6 +249,7 @@ namespace RedfurSync
 
         private void HandleJobsChangedOnUI()
         {
+            if (_disposed) return;
             // [Req 1 & Req 5] Delay slightly to group alerts together and prevent spam
             if (_batchAlertTimer == null)
             {
@@ -239,8 +264,9 @@ namespace RedfurSync
             _batchAlertTimer.Start();
         }
 
-private void CheckBatchCompletion()
+        private void CheckBatchCompletion()
         {
+            if (_disposed) return;
             try
             {
                 var jobs = _watcher.GetJobsSnapshot();
@@ -399,9 +425,12 @@ private void CheckBatchCompletion()
             menu.Items.Add(new ToolStripSeparator());
 
             menu.Items.Add("⚡  Open Relay Terminal",     null, (_, _) => OpenMainWindow("sync"));
+            menu.Items.Add("💬  Ask Fissal...",          null, (_, _) => OpenAssistantDialog());
             menu.Items.Add("◱  Toggle Compact Mode",     null, (_, _) => {
+                bool wasCreated = _mainWindow != null && !_mainWindow.IsDisposed;
                 OpenMainWindow("sync");
-                _mainWindow?.ToggleCompactMode();
+                if (wasCreated || !AppConfig.Instance.CompactMode)
+                    _mainWindow?.ToggleCompactMode();
             });
             menu.Items.Add("🛠️  Setup & Pairing",         null, (_, _) => OpenMainWindow("setup"));
             menu.Items.Add("🎨  Terminal Themes",         null, (_, _) => OpenMainWindow("themes"));
@@ -430,20 +459,38 @@ private void CheckBatchCompletion()
 
         private void UpdateStartupText(bool on)
         {
-            if (_menu.InvokeRequired) { _menu.BeginInvoke(() => UpdateStartupText(on)); return; }
+            if (_disposed) return;
+            if (_menu.InvokeRequired)
+            {
+                if (_disposed || _menu.IsDisposed || !_menu.IsHandleCreated) return;
+                _menu.BeginInvoke(() => UpdateStartupText(on));
+                return;
+            }
             _startupItem.Text = (on ? Checked : Unchecked) + "Run Fissal on startup";
         }
 
         private void UpdateSilentSyncText(bool silent)
         {
-            if (_menu.InvokeRequired) { _menu.BeginInvoke(() => UpdateSilentSyncText(silent)); return; }
+            if (_disposed) return;
+            if (_menu.InvokeRequired)
+            {
+                if (_disposed || _menu.IsDisposed || !_menu.IsHandleCreated) return;
+                _menu.BeginInvoke(() => UpdateSilentSyncText(silent));
+                return;
+            }
             if (_silentSyncItem != null)
                 _silentSyncItem.Text = (silent ? Checked : Unchecked) + "Silent Background Sync";
         }
 
         private void UpdateStatus(string msg)
         {
-            if (_menu.InvokeRequired) { _menu.BeginInvoke(() => UpdateStatus(msg)); return; }
+            if (_disposed) return;
+            if (_menu.InvokeRequired)
+            {
+                if (_disposed || _menu.IsDisposed || !_menu.IsHandleCreated) return;
+                _menu.BeginInvoke(() => UpdateStatus(msg));
+                return;
+            }
             _statusItem.Text = "⚙  " + msg;
             var full = "" + msg;
             _trayIcon.Text = full.Length > 63 ? full[..63] : full;
@@ -469,13 +516,25 @@ private void CheckBatchCompletion()
 
         private void ShowAlert(string title, string text, FissalAlert.AlertLevel level = FissalAlert.AlertLevel.Normal, int timeoutMs = 7000, Action? onClick = null)
         {
-            if (_menu.InvokeRequired) { _menu.BeginInvoke(() => ShowAlert(title, text, level, timeoutMs, onClick)); return; }
+            if (_disposed) return;
+            if (_menu.InvokeRequired)
+            {
+                if (_disposed || _menu.IsDisposed || !_menu.IsHandleCreated) return;
+                _menu.BeginInvoke(() => ShowAlert(title, text, level, timeoutMs, onClick));
+                return;
+            }
             FissalAlert.Show(title, text, level, timeoutMs, onClick);
         }
 
         private void ShowCustomAlert(string title, string text, Color lightColor, int flashSpeed, int timeoutMs = 7000, Action? onClick = null)
         {
-            if (_menu.InvokeRequired) { _menu.BeginInvoke(() => ShowCustomAlert(title, text, lightColor, flashSpeed, timeoutMs, onClick)); return; }
+            if (_disposed) return;
+            if (_menu.InvokeRequired)
+            {
+                if (_disposed || _menu.IsDisposed || !_menu.IsHandleCreated) return;
+                _menu.BeginInvoke(() => ShowCustomAlert(title, text, lightColor, flashSpeed, timeoutMs, onClick));
+                return;
+            }
             FissalAlert.ShowCustom(title, text, lightColor, flashSpeed, timeoutMs, onClick);
         }
         
@@ -548,7 +607,13 @@ private void CheckBatchCompletion()
 
         private void OpenProgressForm()
         {
-            if (_menu.InvokeRequired) { _menu.BeginInvoke(OpenProgressForm); return; }
+            if (_disposed) return;
+            if (_menu.InvokeRequired)
+            {
+                if (_disposed || _menu.IsDisposed || !_menu.IsHandleCreated) return;
+                _menu.BeginInvoke(OpenProgressForm);
+                return;
+            }
             OpenMainWindow("sync");
         }
         
@@ -587,7 +652,8 @@ private void CheckBatchCompletion()
                 }
                 else
                 {
-                    g.FillEllipse(new SolidBrush(Color.FromArgb(22, 17, 10)), 2, 2, 60, 60);
+                    using var fillBrush = new SolidBrush(Color.FromArgb(22, 17, 10));
+                    g.FillEllipse(fillBrush, 2, 2, 60, 60);
                 }
             }
             catch { }
@@ -595,7 +661,16 @@ private void CheckBatchCompletion()
             using var ring = new Pen(Color.FromArgb(160, 128, 48), 2.5f);
             g.DrawEllipse(ring, 2, 2, 60, 60);
 
-            return Icon.FromHandle(bmp.GetHicon());
+            IntPtr hIcon = bmp.GetHicon();
+            try
+            {
+                using var tempIcon = Icon.FromHandle(hIcon);
+                return (Icon)tempIcon.Clone();
+            }
+            finally
+            {
+                DestroyIcon(hIcon);
+            }
         }
 
         public void Dispose()
@@ -604,13 +679,16 @@ private void CheckBatchCompletion()
             if (_disposed) return;
             _disposed = true;
 
+            _watcher.JobsChanged       -= OnJobsChanged;
+            _watcher.ConnectionChecked -= OnConnectionChecked;
+            _watcher.Dispose();
+
             _wakeRegistration?.Unregister(null);
             _wakeEvent?.Dispose();
 
             _batchAlertTimer?.Stop();
             _batchAlertTimer?.Dispose();
             _mainWindow?.Dispose();
-            _watcher.Dispose();
             _trayIcon.Dispose();
             _menu.Dispose();
         }
@@ -619,16 +697,14 @@ private void CheckBatchCompletion()
     internal sealed class FissalMenuRenderer : ToolStripRenderer
     {
         // Derived from FissalTheme — single source of truth (tokens.css parity).
-        // CBg kept at 18,14,8 (slightly raised vs FissalTheme.CBg 15,12,6) so
-        // the context menu lifts off the main panel; all other values follow theme.
-        private static readonly Color CBg    = Color.FromArgb(18, 14, 8); // raised menu surface — intentional vs FissalTheme.CBg
-        private static readonly Color CHover = Color.FromArgb(50, 40, 20);
-        private static readonly Color CText  = FissalTheme.CText;
-        private static readonly Color CDim   = FissalTheme.CTextSub;
-        private static readonly Color CGold  = FissalTheme.CGoldBrt; // was 218,182,88 -> 212,162,78 (#d4a24e)
-        private static readonly Color CSep   = FissalTheme.CSep;
-        private static readonly Color CBord  = FissalTheme.CBorder;
-        private static readonly Color CDmnd  = FissalTheme.CGoldDim;
+        private static Color CBg    => FissalTheme.CPanelBg;
+        private static Color CHover => FissalTheme.CBarBg;
+        private static Color CText  => FissalTheme.CText;
+        private static Color CDim   => FissalTheme.CTextSub;
+        private static Color CGold  => FissalTheme.CGoldBrt;
+        private static Color CSep   => FissalTheme.CSep;
+        private static Color CBord  => FissalTheme.CBorder;
+        private static Color CDmnd  => FissalTheme.CGoldDim;
 
         protected override void OnRenderToolStripBackground(ToolStripRenderEventArgs e)
         {

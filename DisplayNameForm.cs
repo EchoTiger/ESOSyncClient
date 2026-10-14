@@ -256,7 +256,7 @@ namespace RedfurSync
 
             codeHousing.Controls.Add(_codeInput);
 
-            _checkBtn = MakeBtn(isAlreadyPaired && string.IsNullOrWhiteSpace(_codeInput.Text) ? "Linked ✔" : "Check Sync",
+            _checkBtn = MakeBtn(isAlreadyPaired && string.IsNullOrWhiteSpace(_codeInput.Text) ? "Linked ✔" : "Pair Code",
                 isAlreadyPaired && string.IsNullOrWhiteSpace(_codeInput.Text) ? CGreen : Color.FromArgb(60, 180, 220),
                 new Point(codeHousing.Right + S(10), curY));
             _checkBtn.Size = new Size(checkBtnW, inputH);
@@ -265,7 +265,7 @@ namespace RedfurSync
             {
                 if (_checkBtn.Text == "Linked ✔" && _codeInput.Text.Trim().Length > 0)
                 {
-                    _checkBtn.Text = "Check Sync";
+                    _checkBtn.Text = "Pair Code";
                     _checkBtn.ForeColor = Color.FromArgb(60, 180, 220);
                     _checkBtn.FlatAppearance.BorderColor = Color.FromArgb(60, 180, 220);
                 }
@@ -310,7 +310,7 @@ namespace RedfurSync
                 await System.Threading.Tasks.Task.Delay(2000);
                 if (!IsDisposed)
                 {
-                    _checkBtn.Text = ok ? "Linked ✔" : "Check Sync";
+                    _checkBtn.Text = ok ? "Linked ✔" : "Pair Code";
                     _checkBtn.Enabled = true;
                     _checkBtn.ForeColor = ok ? CGreen : Color.FromArgb(60, 180, 220);
                     _checkBtn.FlatAppearance.BorderColor = ok ? CGreen : Color.FromArgb(60, 180, 220);
@@ -411,11 +411,17 @@ namespace RedfurSync
                     {
                         AddConsoleLine("# [FIS-DBG] Data stream ready!", Color.FromArgb(120, 210, 255));
                         _isTuning = false; 
-                        _lightColor = CGreen; 
+                        _lightColor = CGreen;
+                        if (_cameraY >= _targetCameraY)
+                            _pulseTimer.Interval = 200;
                     }
                 }
+                else if (_cameraY >= _targetCameraY && _pulseTimer.Interval != 200)
+                {
+                    _pulseTimer.Interval = 200;
+                }
 
-                int targetStep = _isTuning ? 24 : 4; 
+                int targetStep = _isTuning ? 24 : 8; 
                 _glowStep = _glowStep > 0 ? targetStep : -targetStep;
                 _glowAlpha += _glowStep;
 
@@ -434,6 +440,8 @@ namespace RedfurSync
             if (_consoleLines.Count > 2)
             {
                 _targetCameraY += S(12);
+                if (_pulseTimer != null && _pulseTimer.Interval != 40)
+                    _pulseTimer.Interval = 40;
             }
         }
 
@@ -453,6 +461,8 @@ namespace RedfurSync
 
         private async void TrySave()
         {
+            if (!_saveBtn.Enabled) return;
+
             var name = _input.Text.Trim();
             if (string.IsNullOrWhiteSpace(name))
             {
@@ -462,16 +472,26 @@ namespace RedfurSync
                 t.Start();
                 return;
             }
-            
-            AppConfig.Instance.DisplayName = name;
-            var code = _codeInput.Text.Trim();
-            if (!string.IsNullOrWhiteSpace(code))
-            {
-                AppConfig.Instance.PairingCode = code;
 
-                // Auto-pair on Transmit if user entered 6 digits and is not yet paired
-                if (code.Length == 6 && string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken))
+            _saveBtn.Enabled = false;
+            _cancelBtn.Enabled = false;
+            _checkBtn.Enabled = false;
+            _checkNameBtn.Enabled = false;
+
+            try
+            {
+                AppConfig.Instance.DisplayName = name;
+                var code = _codeInput.Text.Trim();
+                if (!string.IsNullOrWhiteSpace(code))
                 {
+                    if (code.Length != 6)
+                    {
+                        AddConsoleLine("# [FIS-DBG] Pairing code must be exactly 6 digits.", Color.IndianRed);
+                        FissalBox.Show("Your pairing code must be a 6-digit number from /relay pair in Discord.", "Pairing Code Required");
+                        return;
+                    }
+
+                    AppConfig.Instance.PairingCode = code;
                     try
                     {
                         using var svc = new UploadService(AppConfig.Instance);
@@ -483,32 +503,45 @@ namespace RedfurSync
                         else
                         {
                             AddConsoleLine("# [FIS-DBG] Auto-pair failed: " + msg, Color.IndianRed);
+                            FissalBox.Show($"Could not pair with the Redfur Relay:\n\n{msg}\n\nPlease verify your 6-digit code and try again.", "Pairing Failed");
+                            return;
                         }
                     }
                     catch (Exception ex)
                     {
                         AddConsoleLine("# [FIS-DBG] Pair error: " + ex.Message, Color.IndianRed);
+                        FissalBox.Show($"Pairing encountered an error:\n\n{ex.Message}", "Pairing Error");
+                        return;
                     }
                 }
-            }
-            AppConfig.Instance.Save();
+                AppConfig.Instance.Save();
 
-            // Track D: propagate DisplayName to server device label when paired (fire-and-forget, best-effort)
-            try
-            {
-                if (!string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken) || !string.IsNullOrWhiteSpace(AppConfig.Instance.ApiKey))
+                // Track D: propagate DisplayName to server device label when paired (best-effort)
+                try
                 {
-                    var label = AppConfig.Instance.DisplayName;
-                    using var svc = new UploadService(AppConfig.Instance);
-                    // synchronous wait with short window so UI doesn't hang long
-                    var task = svc.UpdateDeviceLabelAsync(label);
-                    if (!task.Wait(3000)) { /* timeout — best-effort */ }
+                    if (!string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken) || !string.IsNullOrWhiteSpace(AppConfig.Instance.ApiKey))
+                    {
+                        var label = AppConfig.Instance.DisplayName;
+                        using var svc = new UploadService(AppConfig.Instance);
+                        var task = svc.UpdateDeviceLabelAsync(label);
+                        await System.Threading.Tasks.Task.WhenAny(task, System.Threading.Tasks.Task.Delay(3000));
+                    }
+                }
+                catch { /* non-fatal: local save already succeeded */ }
+
+                DialogResult = DialogResult.OK;
+                Close();
+            }
+            finally
+            {
+                if (!IsDisposed && DialogResult != DialogResult.OK)
+                {
+                    _saveBtn.Enabled = true;
+                    _cancelBtn.Enabled = true;
+                    _checkBtn.Enabled = true;
+                    _checkNameBtn.Enabled = true;
                 }
             }
-            catch { /* non-fatal: local save already succeeded */ }
-
-            DialogResult = DialogResult.OK;
-            Close();
         }
 
         protected override void OnPaint(PaintEventArgs e)

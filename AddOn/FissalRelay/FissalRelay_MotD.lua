@@ -17,12 +17,12 @@
 FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
-local MAX_MOTD_CHARS = MAX_GUILD_MOTD_LENGTH or 1024
+local MAX_MOTD_CHARS = MAX_GUILD_MOTD_LENGTH or 2048
 
 -- Clean UTF-8 byte boundary & tag-aware truncation preventing mojibake & leaked color tags (Fable 5.1 S3 & S4)
 function FR:TruncateUtf8(str, maxBytes)
     if not str then return "" end
-    maxBytes = maxBytes or (MAX_GUILD_MOTD_LENGTH or 1024)
+    maxBytes = maxBytes or MAX_MOTD_CHARS
     if #str <= maxBytes then return str end
 
     -- Reserve 2 bytes in budget in case we need to append |r for an open color tag
@@ -146,9 +146,15 @@ end
 
 function FR:NormalizeDashesBytePreserving(str)
     if not str then return "" end
-    -- Replace multi-byte UTF-8 dashes with equal-length ASCII hyphens so byte indices match 1:1
-    local out = str:gsub("\xE2\x80\x93", "---"):gsub("\xE2\x80\x94", "---"):gsub("\xE2\x80\x92", "---"):gsub("\xE2\x80\x91", "---")
-    out = out:gsub("\xC2\xA0", "  ")
+    -- Lua 5.1 compatible decimal byte escapes for UTF-8 dashes (3 bytes -> "---") and NBSP (2 bytes -> "  ")
+    local out = str
+        :gsub("\226\128\147", "---") -- U+2013 EN DASH (–)
+        :gsub("\226\128\148", "---") -- U+2014 EM DASH (—)
+        :gsub("\226\128\146", "---") -- U+2012 FIGURE DASH (‒)
+        :gsub("\226\128\145", "---") -- U+2011 NON-BREAKING HYPHEN (‑)
+        :gsub("\226\128\144", "---") -- U+2010 HYPHEN (‐)
+        :gsub("\226\136\146", "---") -- U+2212 MINUS SIGN (−)
+        :gsub("\194\160", "  ")      -- U+00A0 NO-BREAK SPACE
     return out
 end
 
@@ -181,7 +187,7 @@ function FR:GetRaffleDateInfo(guildId)
 
     local curRange
     if startMonth ~= "" and endMonth ~= "" then
-        curRange = string.format("%s %s – %s %s", startMonth, tostring(startDay), endMonth, tostring(endDay))
+        curRange = string.format("%s %s - %s %s", startMonth, tostring(startDay), endMonth, tostring(endDay))
     else
         curRange = "Active Cycle"
     end
@@ -190,11 +196,7 @@ function FR:GetRaffleDateInfo(guildId)
     local prevDay = tonumber(SafeDate("%d", prevStart)) or ""
     local prevRange
     if prevMonth ~= "" and startMonth ~= "" then
-        if prevMonth == startMonth then
-            prevRange = string.format("%s %s – %s", prevMonth, tostring(prevDay), tostring(startDay))
-        else
-            prevRange = string.format("%s %s – %s %s", prevMonth, tostring(prevDay), startMonth, tostring(startDay))
-        end
+        prevRange = string.format("%s %s - %s %s", prevMonth, tostring(prevDay), startMonth, tostring(startDay))
     else
         prevRange = "Prior Week"
     end
@@ -204,11 +206,7 @@ function FR:GetRaffleDateInfo(guildId)
     local prevPrevDay = tonumber(SafeDate("%d", prevPrevStart)) or ""
     local prevPrevRange
     if prevPrevMonth ~= "" and prevMonth ~= "" then
-        if prevPrevMonth == prevMonth then
-            prevPrevRange = string.format("%s %s – %s", prevPrevMonth, tostring(prevPrevDay), tostring(prevDay))
-        else
-            prevPrevRange = string.format("%s %s – %s %s", prevPrevMonth, tostring(prevPrevDay), prevMonth, tostring(prevDay))
-        end
+        prevPrevRange = string.format("%s %s - %s %s", prevPrevMonth, tostring(prevPrevDay), prevMonth, tostring(prevDay))
     else
         prevPrevRange = "Archived Cycle"
     end
@@ -249,6 +247,39 @@ end
      TOKEN RESOLUTION ENGINE & SURGICAL REPLACERS
 ========================================================================= ]]--
 
+local VALID_MONTHS = {
+    jan = true, january = true,
+    feb = true, february = true,
+    mar = true, march = true,
+    apr = true, april = true,
+    may = true,
+    jun = true, june = true,
+    jul = true, july = true,
+    aug = true, august = true,
+    sep = true, sept = true, september = true,
+    oct = true, october = true,
+    nov = true, november = true,
+    dec = true, december = true,
+}
+
+local function IsValidMonth(m)
+    if not m then return false end
+    local clean = m:lower():gsub("%.", "")
+    return VALID_MONTHS[clean] == true
+end
+
+local function IsTimeAfter(str, endPos, suffix)
+    suffix = (suffix or ""):lower()
+    if suffix ~= "" and suffix ~= "st" and suffix ~= "nd" and suffix ~= "rd" and suffix ~= "th" then
+        return true
+    end
+    local after = str:sub(endPos + 1, endPos + 6):lower()
+    if after:match("^:") or after:match("^%s*am") or after:match("^%s*pm") then
+        return true
+    end
+    return false
+end
+
 function FR:ReplaceMotDDateRange(text, dateInfo)
     if not text or text == "" or not dateInfo then return text end
 
@@ -272,64 +303,88 @@ function FR:ReplaceMotDDateRange(text, dateInfo)
     end
 
     local resolved = text
-    local norm = self.NormalizeDashesBytePreserving and self:NormalizeDashesBytePreserving(resolved)
-        or resolved:gsub("\xE2\x80\x93", "---"):gsub("\xE2\x80\x94", "---")
+    local norm = self:NormalizeDashesBytePreserving(resolved)
 
-    -- Priority 1: Full Month Day - Month Day (e.g. "Oct 4 - Oct 11", "Oct 4 – Oct 11", "Sep 27 to Oct 4")
-    -- Separators: hyphens/slashes or 'to' (Strictly no '~' or '@' so we never eat approximation prefixes or times)
-    local patA1 = "([A-Za-z]+%.?%s+%d%d?%a*%s*[%-%/]+%s*[A-Za-z]+%.?%s+%d%d?%a*)"
-    local patA2 = "([A-Za-z]+%.?%s+%d%d?%a*%s+to%s+[A-Za-z]+%.?%s+%d%d?%a*)"
+    local s, e
+    local healClobberedHour = false
 
-    local s, e = norm:find(patA1)
-    if not s then s, e = norm:find(patA2) end
-
-    -- Guard: reject match if it ends with 'pm' or 'am'
-    if s and e then
-        local match = norm:sub(s, e):lower()
-        if match:match("%d+pm$") or match:match("%d+am$") then
-            s, e = nil, nil
+    -- Priority 0: Self-heal corrupted 3-part date chains (e.g. "Oct 4 - Oct 11 - Oct 18:00pm ET" or "Oct 4 - Oct 11 - Oct 18")
+    local patChain = "([A-Za-z]+%.?)%s+%d%d?%a*%s*[%-%/~]+%s*([A-Za-z]+%.?)%s+%d%d?%a*%s*[%-%/~]+%s*([A-Za-z]+%.?)%s+(%d%d?)(%a*)"
+    local cs, ce, cm1, cm2, cm3, _, csuf = norm:find(patChain)
+    if cs and IsValidMonth(cm1) and IsValidMonth(cm2) and IsValidMonth(cm3) then
+        s, e = cs, ce
+        if (csuf == "" or not csuf) and norm:sub(ce + 1, ce + 3) == ":00" then
+            healClobberedHour = true
         end
     end
 
-    -- Priority 2: Same-month Month Day - Day (e.g. "Oct 4 - 11", "Oct 4 to 11")
-    -- CRITICAL: Ensure the second number is NOT a time like '7pm' or '7:00'
+    -- Priority 1: Full Month1 Day1 [sep] Month2 Day2 (e.g. "Oct 4 - Oct 11", "Oct 4 – Oct 11", "Oct 4 ~Oct 11", "Sep 27 to Oct 4")
     if not s then
-        local patB1 = "([A-Za-z]+%.?%s+%d%d?%a*%s*[%-%/]+%s*(%d%d?)(%a*))"
-        local patB2 = "([A-Za-z]+%.?%s+%d%d?%a*%s+to%s+(%d%d?)(%a*))"
+        local patA1 = "([A-Za-z]+%.?)%s+%d%d?%a*%s*[%-%/~]+%s*([A-Za-z]+%.?)%s+(%d%d?)(%a*)"
+        local patA2 = "([A-Za-z]+%.?)%s+%d%d?%a*%s+to%s+([A-Za-z]+%.?)%s+(%d%d?)(%a*)"
+        local patA3 = "([A-Za-z]+%.?)%s+%d%d?%a*|r%s*[%-%/~]+%s*|c%x%x%x%x%x%x([A-Za-z]+%.?)%s+(%d%d?)(%a*)"
+        for _, pat in ipairs({ patA1, patA2, patA3 }) do
+            local searchPos = 1
+            while searchPos <= #norm do
+                local curS, curE, m1, m2, _, suf2 = norm:find(pat, searchPos)
+                if not curS then break end
+                if IsValidMonth(m1) and IsValidMonth(m2) then
+                    if (suf2 == "" or not suf2) and norm:sub(curE + 1, curE + 3) == ":00" then
+                        s, e = curS, curE
+                        healClobberedHour = true
+                        break
+                    elseif not IsTimeAfter(norm, curE, suf2) then
+                        s, e = curS, curE
+                        break
+                    end
+                end
+                searchPos = curS + 1
+            end
+            if s then break end
+        end
+    end
+
+    -- Priority 2: Same-month Month1 Day1 [sep] Day2 (e.g. "Oct 4 - 11", "Oct 4 to 11")
+    -- Strictly excludes '~' and time values so "Oct 11 ~ 7:00pm" is never matched as a date range
+    if not s then
+        local patB1 = "([A-Za-z]+%.?)%s+%d%d?%a*%s*[%-%/]+%s*(%d%d?)(%a*)"
+        local patB2 = "([A-Za-z]+%.?)%s+%d%d?%a*%s+to%s+(%d%d?)(%a*)"
         for _, pat in ipairs({ patB1, patB2 }) do
-            local curS, curE, fullM, dayNum, suffix = norm:find(pat)
-            if curS then
-                suffix = suffix:lower()
-                local isOrd = (suffix == "" or suffix == "st" or suffix == "nd" or suffix == "rd" or suffix == "th")
-                local nextChar = norm:sub(curE + 1, curE + 1)
-                local isTime = (suffix == "pm" or suffix == "am" or nextChar == ":" or nextChar:lower() == "p" or nextChar:lower() == "a")
-                if isOrd and not isTime then
+            local searchPos = 1
+            while searchPos <= #norm do
+                local curS, curE, m1, _, suffix = norm:find(pat, searchPos)
+                if not curS then break end
+                if IsValidMonth(m1) and not IsTimeAfter(norm, curE, suffix) then
                     s, e = curS, curE
                     break
                 end
+                searchPos = curS + 1
             end
+            if s then break end
         end
     end
 
     -- Priority 3: Numeric M/D - M/D (e.g. "9/27 - 10/4" or "10/4 - 10/11")
     if not s then
-        local patC = "(%d%d?/%d%d?%s*[%-%/]+%s*%d%d?/%d%d?)"
-        s, e = norm:find(patC)
+        local patC = "(%d%d?/%d%d?%s*[%-%/]+%s*%d%d?/(%d%d?)(%a*))"
+        local curS, curE, _, _, suffix = norm:find(patC)
+        if curS and not IsTimeAfter(norm, curE, suffix) then
+            s, e = curS, curE
+        end
     end
 
     if s and e and targetRange and targetRange ~= "" then
-        resolved = resolved:sub(1, s - 1) .. targetRange .. resolved:sub(e + 1)
+        local replacement = healClobberedHour and (targetRange .. " @ 7") or targetRange
+        resolved = resolved:sub(1, s - 1) .. replacement .. resolved:sub(e + 1)
     end
 
-    -- 2. Surgical Legacy Drawing Date (e.g. "Drawing Sunday, Sep 27 (7:00 PM ET)" or "Drawing Oct 11 ~7pm ET" or "Drawing Oct 11 @ 7pm ET")
+    -- 2. Surgical Legacy Drawing Date (single-line bounded so it never crosses newlines or date ranges)
     if not isWinnerAnnouncement and dateInfo.drawingDate and dateInfo.drawingDate ~= "" then
-        local normDraw = self.NormalizeDashesBytePreserving and self:NormalizeDashesBytePreserving(resolved)
-            or resolved:gsub("\xE2\x80\x93", "---"):gsub("\xE2\x80\x94", "---")
-        -- Match Drawing with optional colon, weekday, month, day, and flexible time spec (~7pm, @ 7:00 PM ET, (7:00 PM ET), etc.)
-        local drawPat = "([Dd]rawing:?%s+[%a,]-%s*[A-Za-z]+%.?%s+%d%d?%a*%s*[%(@~%s%d:%a%-]*%a*%)?)"
-        local ds, de, matchStr = normDraw:find(drawPat)
-        if ds and de then
-            local trailingPeriod = matchStr:match("%.%s*$") and "." or ""
+        local normDraw = self:NormalizeDashesBytePreserving(resolved)
+        local drawPat = "([Dd]rawing:?[ \t]+[%a,]*[ \t]*([A-Za-z]+%.?)[ \t]+%d%d?%a*[ \t]*[%(@~ \t%d:%a%-]*%a*%)?)"
+        local ds, de, matchStr, drawMonth = normDraw:find(drawPat)
+        if ds and de and IsValidMonth(drawMonth) then
+            local trailingPeriod = matchStr:match("%.[ \t]*$") and "." or ""
             resolved = resolved:sub(1, ds - 1) .. "Drawing " .. dateInfo.drawingDate .. trailingPeriod .. resolved:sub(de + 1)
         end
     end
@@ -1032,8 +1087,6 @@ function FR:UpdateMotDStudioGauge()
         self.motdStudioGaugeLbl:SetText(string.format("Length: |c%s%d / %d characters|r (|c888888%s bytes|r) • %s",
             colorCode, charCount, MAX_MOTD_CHARS, ZO_LocalizeDecimalNumber(byteCount), statusNote))
     end
-
-    self:UpdateMotDTelemetryBar(guildId)
 end
 
 function FR:InsertTokenIntoMotDEditBox(token)
@@ -1109,6 +1162,9 @@ function FR:OpenMotDPushModal(guildId, guildName, resolved, charCount, byteCount
         modal:SetClampedToScreen(true)
         modal:SetMouseEnabled(true)
         modal:SetMovable(true)
+        modal:SetDrawLayer(DL_OVERLAY)
+        modal:SetDrawTier(DT_HIGH)
+        modal:SetDrawLevel(100)
 
         if UISpecialWindows then
             table.insert(UISpecialWindows, "FissalRelay_MotDPushModal")
@@ -1179,7 +1235,7 @@ function FR:OpenMotDPushModal(guildId, guildName, resolved, charCount, byteCount
         local charStatLbl = wm:CreateControl("$(parent)_CharStat", ribbon, CT_LABEL)
         charStatLbl:SetAnchor(RIGHT, ribbon, RIGHT, -10, 0)
         charStatLbl:SetFont("ZoFontGameSmall")
-        charStatLbl:SetText("Length: 0 / 1024 chars")
+        charStatLbl:SetText(string.format("Length: 0 / %d chars", MAX_MOTD_CHARS))
 
         -- Scrollable Preview Box
         local previewBox = wm:CreateControl("$(parent)_PreviewBox", modal, CT_BACKDROP)
@@ -1244,8 +1300,8 @@ function FR:OpenMotDPushModal(guildId, guildName, resolved, charCount, byteCount
 
     local modal = self.motdPushModal
     modal.targetGuildLbl:SetText(string.format("Target Guild: |c00FFCC%s|r", guildName))
-    modal.charStatLbl:SetText(string.format("Length: |c%s%d / 1024 chars|r  (|cAAAAAA%d bytes|r)",
-        charCount > 1000 and "FF5555" or "59E08A", charCount, byteCount))
+    modal.charStatLbl:SetText(string.format("Length: |c%s%d / %d chars|r  (|cAAAAAA%d bytes|r)",
+        charCount > (MAX_MOTD_CHARS - 100) and "FF5555" or "59E08A", charCount, MAX_MOTD_CHARS, byteCount))
     modal.previewLbl:SetText(resolved)
     if modal.scrollContainer and ZO_Scroll_ResetToTop then
         ZO_Scroll_ResetToTop(modal.scrollContainer)
@@ -1257,21 +1313,29 @@ function FR:OpenMotDPushModal(guildId, guildName, resolved, charCount, byteCount
     end)
 
     modal:SetHidden(false)
+    if modal.BringWindowToTop then
+        modal:BringWindowToTop()
+    end
 end
 
 function FR:BroadcastMotDToGuild(bypassConfirm, targetGuildId)
     if not self.motdStudioEditBox then return end
-    local gIdx = self.motdSelectedGuildIndex or self.selectedGuildIndex or 1
-    local guildId = targetGuildId or GetGuildId(gIdx)
+    local gIdx = self.selectedGuildIndex or self.motdSelectedGuildIndex or 1
+    local guildId = targetGuildId or (self.ResolveGuildId and self:ResolveGuildId(gIdx)) or GetGuildId(gIdx)
+    if not guildId or guildId == 0 then
+        self.PrintChat("|cFF5555Error:|r Unable to resolve target guild ID for MotD broadcast.")
+        return
+    end
     local guildName = GetGuildName(guildId)
 
-    if not DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_SET_MOTD) then
+    local isGM = IsPlayerGuildMaster and IsPlayerGuildMaster(guildId)
+    if not (isGM or DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_SET_MOTD)) then
         self.PrintChat(string.format("|cFF5555Permission Denied:|r You do not have permission to change the MotD in %s.", guildName))
         return
     end
 
     local raw = self.motdStudioEditBox:GetText() or ""
-    if string.find(raw, "{raffle_") or string.find(raw, "{guild_") or string.find(raw, "{drawing_date}") or string.find(raw, "{date_week}") then
+    if string.find(raw, "{raffle_") or string.find(raw, "{guild_") or string.find(raw, "{drawing_date}") or string.find(raw, "{date_week}") or string.find(raw, "{kiosk_") then
         self:SetGuildMotDTemplate(guildId, raw)
     end
     local resolved = self:ResolveMotDTokens(raw, guildId)
@@ -1297,6 +1361,7 @@ function FR:BroadcastMotDToGuild(bypassConfirm, targetGuildId)
     end
 
     SetGuildMotD(guildId, resolved)
+    self.motdLoadedGuildId = guildId
     self.PrintChat(string.format("|c59E08ASuccess:|r Pushed updated MotD to %s! (%d chars, %d bytes)", guildName, charCount, byteCount))
     PlaySound(SOUNDS.GUILD_ROSTER_ADDED or SOUNDS.NOTE_SAVED)
 end
@@ -1304,24 +1369,41 @@ end
 function FR:UpdateMotDUI(forceServerPull)
     if not self.motdStudioEditBox then return end
     local gIdx = self.selectedGuildIndex or 1
-    local guildId = GetGuildId(gIdx)
+    local guildId = (self.ResolveGuildId and self:ResolveGuildId(gIdx)) or GetGuildId(gIdx)
     local guildName = GetGuildName(guildId)
 
-    -- Update permission indicator
-    local hasPerm = DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_SET_MOTD)
+    -- Update permission indicator (keep button clickable so unauthorized click surfaces permission alert)
+    local isGM = IsPlayerGuildMaster and IsPlayerGuildMaster(guildId)
+    local hasPerm = isGM or DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_SET_MOTD)
     if self.motdAuthLbl then
         self.motdAuthLbl:SetText(string.format("MotD Authority: %s",
             hasPerm and "|c59E08A[AUTHORIZED]|r" or "|cFF5555[READ-ONLY]|r"))
     end
     if self.motdPushBtn then
-        self.motdPushBtn:SetEnabled(hasPerm)
+        self.motdPushBtn:SetEnabled(true)
+        self.motdPushBtn:SetAlpha(hasPerm and 1.0 or 0.5)
     end
 
-    -- Pull server MotD if requested or empty
-    if forceServerPull or self.motdStudioEditBox:GetText() == "" then
+    -- Pull saved template on guild switch/init, or live server MotD when forceServerPull ("Revert to Server") is requested
+    if forceServerPull or self.motdLoadedGuildId ~= guildId or self.motdStudioEditBox:GetText() == "" then
+        self:EnsureMotDState()
+        local savedTmpl = self.savedVars and self.savedVars.motdTemplates and self.savedVars.motdTemplates[guildId]
         local liveMotD = GetGuildMotD(guildId) or ""
-        self.motdStudioEditBox:SetText(liveMotD)
+        if forceServerPull then
+            self.motdStudioEditBox:SetText(liveMotD)
+            if liveMotD ~= "" then
+                self.PrintChat(string.format("Reverted MotD editor to live server message for %s.", guildName))
+            end
+        elseif savedTmpl and savedTmpl ~= "" then
+            self.motdStudioEditBox:SetText(savedTmpl)
+        elseif liveMotD ~= "" then
+            self.motdStudioEditBox:SetText(liveMotD)
+        else
+            self.motdStudioEditBox:SetText(self:GetGuildMotDTemplate(guildId))
+        end
+        self.motdLoadedGuildId = guildId
     end
 
+    self:UpdateMotDTelemetryBar(guildId)
     self:UpdateMotDStudioGauge()
 end

@@ -30,6 +30,11 @@ namespace RedfurSync
         private readonly float _scale;
         private readonly List<(string role, string text)> _history = new();
 
+        public RelayAssistantForm(FileWatcherService watcher)
+            : this(watcher.AskFissalAsync, watcher.GetAssistantContext)
+        {
+        }
+
         public RelayAssistantForm(
             Func<string, Task<(bool ok, string message, string model)>> ask,
             Func<string> getHarnessContext)
@@ -145,7 +150,7 @@ namespace RedfurSync
             };
             Shown += (_, _) =>
             {
-                AddMessage(false, "Hello! I can help verify Relay setup, explain sync activity, and troubleshoot files. The **Fissal Harness** is an optional bridge that gives me local Relay diagnostics for the current conversation. It starts read-only; you can separately allow carefully limited Relay settings changes.");
+                AddMessage(false, "Greetings, friend! This one can help verify Relay setup, explain sync activity, and troubleshoot files. The **Fissal Harness** is an optional bridge that gives Fissal local Relay diagnostics for the current conversation. It starts read-only; you can separately allow carefully limited Relay settings changes.");
                 _prompt.Focus();
             };
         }
@@ -424,7 +429,7 @@ namespace RedfurSync
             }
             catch (Exception ex)
             {
-                AddMessage(false, $"I could not complete that request. `{ex.Message}`", true);
+                AddMessage(false, $"This one could not complete that request. `{ex.Message}`", true);
                 _status.Text = "Request failed. You can edit your question and try again.";
             }
             finally
@@ -609,7 +614,8 @@ namespace RedfurSync
                     box.SelectedText = match.Groups[1].Value;
                 }
                 box.Select(match.Index, match.Groups[1].Value.Length);
-                box.SelectionFont = monospace ? Mono(8.5f, _scale, style) : Body(9f, _scale, style);
+                using var selectionFont = monospace ? Mono(8.5f, _scale, style) : Body(9f, _scale, style);
+                box.SelectionFont = selectionFont;
                 box.SelectionColor = color;
             }
             box.Select(0, 0);
