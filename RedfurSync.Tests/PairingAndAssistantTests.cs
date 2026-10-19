@@ -154,4 +154,68 @@ public sealed class PairingAndAssistantTests
         Assert.Empty(config.PairingCode);
         Assert.Single(handler.Requests);
     }
+
+    [Fact]
+    public async Task EnrollAnonymousAsync_EnrollsWithServerAndStoresAnonToken()
+    {
+        var config = new AppConfig
+        {
+            ServerUrl = "https://redfur.ech-o.net/upload",
+            DeviceToken = string.Empty,
+            PairingCode = string.Empty,
+        };
+
+        var handler = new FakeHttpMessageHandler((req, _) =>
+        {
+            Assert.Equal(HttpMethod.Post, req.Method);
+            Assert.Equal("https://redfur.ech-o.net/api/relay/v1/pair/anonymous", req.RequestUri?.ToString());
+            var json = JsonSerializer.Serialize(new { token = "rfr_anon_test_token_123", anonymous = true });
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Created)
+            {
+                Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+            });
+        });
+
+        using var uploader = new UploadService(config, handler, FakeHttpMessageHandler.Returning(HttpStatusCode.OK));
+        var (ok, message) = await uploader.EnrollAnonymousAsync();
+
+        Assert.True(ok);
+        Assert.True(config.IsAnonymousToken);
+        Assert.Equal("rfr_anon_test_token_123", config.DeviceToken);
+        Assert.Contains("Anonymous", message);
+    }
+
+    [Fact]
+    public async Task PairAsync_WhenUpgradingFromAnonymousToken_SendsBearerHeaderAndClearsSyncedHashes()
+    {
+        var config = new AppConfig
+        {
+            ServerUrl = "https://redfur.ech-o.net/upload",
+            DeviceToken = "rfr_anon_existing_123",
+            PairingCode = "654321",
+            DisplayName = "its_chu",
+        };
+        config.SyncedFileHashes["C:\\fake\\FissalRelay.lua"] = "deadbeef";
+
+        var handler = new FakeHttpMessageHandler((req, _) =>
+        {
+            Assert.Equal(HttpMethod.Post, req.Method);
+            Assert.Equal("https://redfur.ech-o.net/api/relay/v1/pair", req.RequestUri?.ToString());
+            Assert.Equal("Bearer", req.Headers.Authorization?.Scheme);
+            Assert.Equal("rfr_anon_existing_123", req.Headers.Authorization?.Parameter);
+            var json = JsonSerializer.Serialize(new { token = "rfr_verified_chu_999" });
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Created)
+            {
+                Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+            });
+        });
+
+        using var uploader = new UploadService(config, handler, FakeHttpMessageHandler.Returning(HttpStatusCode.OK));
+        var (ok, _) = await uploader.PairAsync();
+
+        Assert.True(ok);
+        Assert.False(config.IsAnonymousToken);
+        Assert.Equal("rfr_verified_chu_999", config.DeviceToken);
+        Assert.Empty(config.SyncedFileHashes);
+    }
 }

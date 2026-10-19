@@ -67,6 +67,12 @@ namespace RedfurSync
             }
         }
 
+        [JsonPropertyName("InstallId")]
+        public string InstallId    { get; set; } = Guid.NewGuid().ToString("N");
+
+        [JsonIgnore]
+        public bool IsAnonymousToken => !string.IsNullOrWhiteSpace(DeviceToken) && DeviceToken.StartsWith("rfr_anon_", StringComparison.OrdinalIgnoreCase);
+
         [JsonPropertyName("PairingCode")]
         public string PairingCode  { get; set; } = string.Empty;
         
@@ -207,6 +213,8 @@ namespace RedfurSync
                     return d; 
                 }
                 var config = JsonSerializer.Deserialize<AppConfig>(json, _opts) ?? new AppConfig();
+                if (string.IsNullOrWhiteSpace(config.InstallId))
+                    config.InstallId = Guid.NewGuid().ToString("N");
                 if (string.IsNullOrWhiteSpace(config.ServerUrl))
                     config.ServerUrl = "https://redfur.ech-o.net/upload";
                 else if (config.ServerUrl.StartsWith("http://redfur.ech-o.net", StringComparison.OrdinalIgnoreCase))

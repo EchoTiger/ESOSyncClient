@@ -228,13 +228,55 @@ namespace RedfurSync
             ? BuildRelayUri("/health")
             : new Uri(_config.ServerUrl, UriKind.Absolute);
 
+        public async Task<(bool ok, string message)> EnrollAnonymousAsync()
+        {
+            if (!string.IsNullOrWhiteSpace(_config.DeviceToken) || !string.IsNullOrWhiteSpace(_config.ApiKey))
+                return (true, _config.IsAnonymousToken ? "Anonymous mode active" : "Already paired");
+
+            try
+            {
+                var initialDeviceName = NormalizeLabel(_config.DisplayName);
+                if (string.IsNullOrWhiteSpace(initialDeviceName) || initialDeviceName.Equals("Redfur Trader", StringComparison.OrdinalIgnoreCase))
+                    initialDeviceName = Environment.MachineName;
+
+                if (string.IsNullOrWhiteSpace(_config.InstallId))
+                    _config.InstallId = Guid.NewGuid().ToString("N");
+
+                var payload = JsonSerializer.Serialize(new { deviceName = initialDeviceName, installId = _config.InstallId });
+                using var request = new HttpRequestMessage(HttpMethod.Post, BuildRelayUri("/pair/anonymous"))
+                {
+                    Content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json"),
+                };
+                request.Headers.TryAddWithoutValidation("X-Relay-Version", RelayVersion.Current);
+                request.Headers.TryAddWithoutValidation("X-Relay-Platform", "windows");
+
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                using var response = await _syncHttp.SendAsync(request, cts.Token);
+                if (!response.IsSuccessStatusCode)
+                    return (false, $"Anonymous enrollment unavailable ({(int)response.StatusCode})");
+
+                using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cts.Token));
+                if (!json.RootElement.TryGetProperty("token", out var token) || string.IsNullOrWhiteSpace(token.GetString()))
+                    return (false, "Anonymous enrollment response did not include a device token.");
+
+                _config.DeviceToken = token.GetString()!;
+                _config.Save();
+                return (true, "Anonymous sync mode active (guild bank only)");
+            }
+            catch (Exception ex)
+            {
+                return (false, $"Anonymous enrollment failed: {ex.Message}");
+            }
+        }
+
         // Pairing uses Environment.MachineName as initial label; post-pair renames flow via PATCH /api/relay/v1/devices/{id} (UpdateDeviceLabelAsync).
         public async Task<(bool ok, string message)> PairAsync()
         {
             var cleanCode = (_config.PairingCode ?? string.Empty).Replace(" ", "").Replace("-", "").Trim();
             if (string.IsNullOrWhiteSpace(cleanCode))
             {
-                if (!string.IsNullOrWhiteSpace(_config.DeviceToken)) return (true, "Already paired");
+                if (!string.IsNullOrWhiteSpace(_config.DeviceToken))
+                    return (true, _config.IsAnonymousToken ? "Anonymous sync mode active" : "Already paired");
                 if (!string.IsNullOrWhiteSpace(_config.ApiKey)) return (true, "API key mode active");
                 return (false, "A pairing code is required.");
             }
@@ -245,7 +287,12 @@ namespace RedfurSync
                 if (string.IsNullOrWhiteSpace(initialDeviceName) || initialDeviceName.Equals("Redfur Trader", StringComparison.OrdinalIgnoreCase))
                     initialDeviceName = Environment.MachineName;
 
-                var payload = JsonSerializer.Serialize(new { code = cleanCode, deviceName = initialDeviceName });
+                var payload = JsonSerializer.Serialize(new
+                {
+                    code = cleanCode,
+                    deviceName = initialDeviceName,
+                    installId = _config.InstallId
+                });
                 using var request = new HttpRequestMessage(HttpMethod.Post, BuildRelayUri("/pair"))
                 {
                     Content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json"),
@@ -253,6 +300,10 @@ namespace RedfurSync
                 if (!string.IsNullOrWhiteSpace(_config.ApiKey))
                 {
                     request.Headers.Add("X-Api-Key", _config.ApiKey.Trim());
+                }
+                if (_config.IsAnonymousToken)
+                {
+                    request.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", _config.DeviceToken.Trim());
                 }
 
                 using var response = await _syncHttp.SendAsync(request);
@@ -266,6 +317,11 @@ namespace RedfurSync
                             errDetail = errProp.GetString()!;
                     }
                     catch { }
+                    if (!string.IsNullOrWhiteSpace(_config.DeviceToken))
+                    {
+                        _config.PairingCode = string.Empty;
+                        _config.Save();
+                    }
                     return (false, errDetail);
                 }
                 using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
@@ -273,6 +329,7 @@ namespace RedfurSync
                     return (false, "Pairing response did not include a device token.");
                 _config.DeviceToken = token.GetString()!;
                 _config.PairingCode = string.Empty;
+                _config.SyncedFileHashes.Clear();
                 _config.Save();
                 return (true, "Device paired successfully with the Redfur Lattice");
             }

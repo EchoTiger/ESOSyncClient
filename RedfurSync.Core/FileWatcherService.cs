@@ -22,7 +22,7 @@ namespace RedfurSync
             "GS08Data.lua",  "GS09Data.lua",  "GS10Data.lua",  "GS11Data.lua",
             "GS12Data.lua",  "GS13Data.lua",  "GS14Data.lua",  "GS15Data.lua",
             "GS16Data.lua",  "GS17Data.lua",  "RaffleGold.lua", "RaffleGoldRTP.lua", "RaffleGoldRD.lua",
-            "PriceTableNA.lua", "ItemLookUpTable_EN.lua", "FissalRelay.lua"
+            "FissalRelay.lua"
         };
 
         public static bool IsGsFile(string? fileName)
@@ -79,8 +79,33 @@ namespace RedfurSync
         public Task<(bool ok, string msg)> PingServerAsync()
             => _uploader.PingAsync();
 
-        public Task<(bool ok, string msg)> PairDeviceAsync()
-            => _uploader.PairAsync();
+        public async Task<(bool ok, string msg)> PairDeviceAsync()
+        {
+            var res = await _uploader.PairAsync().ConfigureAwait(false);
+            if (res.ok)
+            {
+                lock (_hashLock)
+                {
+                    _lastFileHashes.Clear();
+                }
+            }
+            return res;
+        }
+
+        public Task<(bool ok, string msg)> EnrollAnonymousDeviceAsync()
+            => _uploader.EnrollAnonymousAsync();
+
+        public async Task ForceSyncNowAsync()
+        {
+            lock (_hashLock)
+            {
+                _lastFileHashes.Clear();
+                _config.SyncedFileHashes.Clear();
+            }
+            _saveConfig(_config);
+            if (_watchers.Count == 0) SetupWatchers();
+            await ReconcileExistingFilesAsync().ConfigureAwait(false);
+        }
 
         public Task<(bool ok, string message, string model)> AskFissalAsync(string prompt)
             => _uploader.AskFissalAsync(prompt);
@@ -97,7 +122,6 @@ namespace RedfurSync
             var folders = new[]
             {
                 Path.Combine(esoBase, "SavedVariables"),
-                Path.Combine(esoBase, "AddOns", "TamrielTradeCentre"),
             };
             var discovered = folders.Where(Directory.Exists).ToArray();
             var files = discovered
@@ -117,8 +141,12 @@ namespace RedfurSync
             lock (_jobLock) jobs = Jobs.OrderByDescending(job => job.QueuedAt).Take(8).ToArray();
 
             var builder = new System.Text.StringBuilder();
+            string authMode = _config.IsAnonymousToken
+                ? "Anonymous (Quarantine-Isolated Bank Sync)"
+                : (!string.IsNullOrWhiteSpace(_config.DeviceToken) ? "Verified Paired" : (!string.IsNullOrWhiteSpace(_config.ApiKey) ? "Master Key" : "Unpaired"));
             builder.AppendLine($"Machine: {Environment.MachineName}");
-            builder.AppendLine($"Paired: {!string.IsNullOrWhiteSpace(_config.DeviceToken)}");
+            builder.AppendLine($"Paired: {!string.IsNullOrWhiteSpace(_config.DeviceToken) || !string.IsNullOrWhiteSpace(_config.ApiKey)} ({authMode})");
+            builder.AppendLine($"Active FileSystemWatchers: {_watchers.Count}");
             builder.AppendLine($"Watcher folders detected: {discovered.Length}/{folders.Length}");
             foreach (var folder in folders)
                 builder.AppendLine($"- {(Directory.Exists(folder) ? "available" : "missing")}: {folder}");
@@ -172,7 +200,7 @@ namespace RedfurSync
 
         /// <summary>Number of live <see cref="FileSystemWatcher"/> instances. Lets tests assert
         /// a single watcher set survives repeated StartAsync calls.</summary>
-        internal int ActiveWatcherCount => _watchers.Count;
+        public int ActiveWatcherCount => _watchers.Count;
 
         // Guarded by _startLock so only the first StartAsync arms the update machinery.
         private bool _updateCheckScheduled;
@@ -324,26 +352,13 @@ namespace RedfurSync
                     }
                 }
 
+                SetupWatchers();
+
                 if (!_config.IsConfigured())
                 {
                     _onStatus("Fissal requires calibration!");
                     return;
                 }
-
-                _onStatus("Establishing connection...");
-                var (paired, pairingMessage) = await _uploader.PairAsync().ConfigureAwait(false);
-                if (!paired)
-                {
-                    _onStatus(pairingMessage);
-                    ConnectionChecked?.Invoke(false, pairingMessage);
-                    return;
-                }
-                var (ok, msg) = await _uploader.PingAsync().ConfigureAwait(false);
-
-                _onStatus(ok ? "Connection established!" : $"Signal lost: {msg}");
-                ConnectionChecked?.Invoke(ok, msg);
-                SetupWatchers();
-                if (ok) _ = ReconcileExistingFilesAsync();
 
                 if (!_updateCheckScheduled)
                 {
@@ -357,6 +372,29 @@ namespace RedfurSync
                         await CheckForUpdatesAsync().ConfigureAwait(false);
                     });
                 }
+
+                _onStatus("Establishing connection...");
+                var (paired, pairingMessage) = await _uploader.PairAsync().ConfigureAwait(false);
+                if (!paired && string.IsNullOrWhiteSpace(_config.DeviceToken) && string.IsNullOrWhiteSpace(_config.ApiKey))
+                {
+                    var (anonOk, anonMsg) = await _uploader.EnrollAnonymousAsync().ConfigureAwait(false);
+                    if (anonOk)
+                    {
+                        paired = true;
+                        pairingMessage = anonMsg;
+                    }
+                }
+                if (!paired)
+                {
+                    _onStatus(pairingMessage);
+                    ConnectionChecked?.Invoke(false, pairingMessage);
+                    return;
+                }
+                var (ok, msg) = await _uploader.PingAsync().ConfigureAwait(false);
+
+                _onStatus(ok ? (_config.IsAnonymousToken ? "Anonymous sync active (guild bank only)" : "Connection established!") : $"Signal lost: {msg}");
+                ConnectionChecked?.Invoke(ok, msg);
+                if (ok) _ = ReconcileExistingFilesAsync();
 
                 if (!_raffleSyncScheduled)
                 {
@@ -388,7 +426,6 @@ namespace RedfurSync
             void TryWatch(string p) { if (Directory.Exists(p)) { AddWatcher(p); count++; } }
 
             TryWatch(Path.Combine(esoBase, "SavedVariables"));
-            TryWatch(Path.Combine(esoBase, "AddOns", "TamrielTradeCentre"));
 
             _onStatus(count == 0 ? "Cannot find target directories!" : $"Monitoring {count} folder(s)");
         }
@@ -399,7 +436,6 @@ namespace RedfurSync
             var folders = new[]
             {
                 Path.Combine(esoBase, "SavedVariables"),
-                Path.Combine(esoBase, "AddOns", "TamrielTradeCentre"),
             };
 
             foreach (var folder in folders.Where(Directory.Exists))
@@ -407,6 +443,8 @@ namespace RedfurSync
                 bool hasFissalRelay = File.Exists(Path.Combine(folder, "FissalRelay.lua"));
                 foreach (var fileName in WatchedFiles)
                 {
+                    if (_config.IsAnonymousToken && !FissalRelayScanner.IsFissalRelayFile(fileName))
+                        continue;
                     if (hasFissalRelay && !_config.SyncMasterMerchantFiles && IsGsFile(fileName))
                         continue;
 
@@ -440,6 +478,7 @@ namespace RedfurSync
         {
             var fileName = Path.GetFileName(e.FullPath);
             if (!WatchedFiles.Contains(fileName)) return;
+            if (_config.IsAnonymousToken && !FissalRelayScanner.IsFissalRelayFile(fileName)) return;
 
             var dir = Path.GetDirectoryName(e.FullPath);
             if (IsGsFile(fileName) && !_config.SyncMasterMerchantFiles &&
@@ -715,7 +754,7 @@ namespace RedfurSync
                     Console.WriteLine($"[RedfurSync] Sale comparison skipped for {job.FileName}: {ex.Message}");
                 }
             }
-            else if (isFissal)
+            else if (isFissal && !_config.IsAnonymousToken)
             {
                 try
                 {

@@ -338,11 +338,22 @@ namespace RedfurSync
             _saveBtn   = MakeBtn("Transmit", CGreen, new Point(_pad, curY));
             _saveBtn.Size = new Size(actionBtnW, actionBtnH);
 
-            _cancelBtn = MakeBtn("Not now", Color.FromArgb(90, 72, 44), new Point(Width - _pad - actionBtnW, curY));
+            _cancelBtn = MakeBtn("Sync Anonymously", Color.FromArgb(90, 72, 44), new Point(Width - _pad - actionBtnW, curY));
             _cancelBtn.Size = new Size(actionBtnW, actionBtnH);
 
             _saveBtn.Click   += (_, _) => TrySave();
-            _cancelBtn.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
+            _cancelBtn.Click += async (_, _) =>
+            {
+                _cancelBtn.Enabled = false;
+                try
+                {
+                    using var svc = new UploadService(AppConfig.Instance);
+                    await svc.EnrollAnonymousAsync();
+                }
+                catch { }
+                DialogResult = DialogResult.OK;
+                Close();
+            };
 
             curY += actionBtnH + _pad;
             Height = curY;
@@ -523,6 +534,15 @@ namespace RedfurSync
                         FissalBox.Show($"Pairing encountered an error:\n\n{ex.Message}", "Pairing Error");
                         return;
                     }
+                }
+                if (string.IsNullOrWhiteSpace(code) && string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken) && string.IsNullOrWhiteSpace(AppConfig.Instance.ApiKey))
+                {
+                    try
+                    {
+                        using var svc = new UploadService(AppConfig.Instance);
+                        await svc.EnrollAnonymousAsync();
+                    }
+                    catch { }
                 }
                 AppConfig.Instance.Save();
 

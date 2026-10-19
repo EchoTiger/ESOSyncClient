@@ -1269,13 +1269,24 @@ namespace RedfurSync
             };
             topBar.Controls.Add(_syncSummaryLabel, 1, 0);
 
-            _btnRefreshJobs = MakeStyledButton("Refresh", CGreen);
+            _btnRefreshJobs = MakeStyledButton("Sync Now", CGreen);
             _btnRefreshJobs.Height = (int)(28 * _scale);
             _btnRefreshJobs.Margin = new Padding((int)(4 * _scale), 0, (int)(4 * _scale), 0);
-            _btnRefreshJobs.Click += (_, _) =>
+            _btnRefreshJobs.Click += async (_, _) =>
             {
-                RefreshSyncView();
-                LogTelemetry("REFRESH", $"Audited {_watcher.GetJobsSnapshot().Length} live transmission cassettes.", CGoldBrt);
+                _btnRefreshJobs.Enabled = false;
+                _btnRefreshJobs.Text = "Syncing...";
+                try
+                {
+                    await _watcher.ForceSyncNowAsync();
+                }
+                finally
+                {
+                    _btnRefreshJobs.Enabled = true;
+                    _btnRefreshJobs.Text = "Sync Now";
+                    RefreshSyncView();
+                    LogTelemetry("SYNC NOW", $"Scanned SavedVariables & audited {_watcher.GetJobsSnapshot().Length} transmission cassette(s).", CGoldBrt);
+                }
             };
             topBar.Controls.Add(_btnRefreshJobs, 2, 0);
 
@@ -3994,12 +4005,18 @@ namespace RedfurSync
             if (!_txtServerUrl.Focused) _txtServerUrl.Text = cfg.ServerUrl;
 
             bool hasToken = !string.IsNullOrWhiteSpace(cfg.DeviceToken);
+            bool isAnon = cfg.IsAnonymousToken;
             bool hasKey = !string.IsNullOrWhiteSpace(cfg.ApiKey);
 
-            if (hasToken)
+            if (hasToken && !isAnon)
             {
-                _lblPairingStatus.Text = "✔ PAIRED WITH LATTICE (Device Token Active)";
+                _lblPairingStatus.Text = "✔ PAIRED WITH LATTICE (Verified Device Token Active)";
                 _lblPairingStatus.ForeColor = CGreen;
+            }
+            else if (isAnon)
+            {
+                _lblPairingStatus.Text = "● ANONYMOUS SYNC MODE (Bank-Only / Quarantine Flagged — Enter 6-Digit Code for Full Recognition)";
+                _lblPairingStatus.ForeColor = CGoldBrt;
             }
             else if (hasKey)
             {
@@ -4495,6 +4512,11 @@ namespace RedfurSync
                 _watcherStatusLabel.Text = "⚠ Inactive (ESO Directory inaccessible)";
                 _watcherStatusLabel.ForeColor = CWarn;
             }
+            else if (_watcher.ActiveWatcherCount == 0)
+            {
+                _watcherStatusLabel.Text = "⚠ Watcher Inactive (Click Restart File Watcher)";
+                _watcherStatusLabel.ForeColor = CWarn;
+            }
             else if (_watcher.GetJobsSnapshot().Any(j => j.Status == UploadStatus.Uploading))
             {
                 _watcherStatusLabel.Text = "● Transmitting File Data...";
@@ -4502,7 +4524,7 @@ namespace RedfurSync
             }
             else
             {
-                _watcherStatusLabel.Text = "● Actively Monitoring (Standing by for live game events)";
+                _watcherStatusLabel.Text = $"● Actively Monitoring ({_watcher.ActiveWatcherCount} SavedVariables watcher)";
                 _watcherStatusLabel.ForeColor = CGreen;
             }
 
