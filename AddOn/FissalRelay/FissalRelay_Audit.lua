@@ -106,10 +106,20 @@ end
 FR.depositCache = {}
 
 function FR:InvalidateDepositCache(guildId)
-    if guildId then
-        self.depositCache[guildId] = nil
-    else
-        self.depositCache = {}
+    self._raffleMetricsCache = {}
+    if self.depositByGuild then
+        if guildId then
+            self.depositByGuild[guildId] = nil
+        else
+            self.depositByGuild = {}
+        end
+    end
+    if self.depositCache then
+        if guildId then
+            self.depositCache[guildId] = nil
+        else
+            self.depositCache = {}
+        end
     end
 end
 

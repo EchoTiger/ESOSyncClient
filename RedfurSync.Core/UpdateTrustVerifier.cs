@@ -66,6 +66,9 @@ namespace RedfurSync
 
         [JsonPropertyName("revoked_keys")]
         public List<string> RevokedKeys { get; set; } = new();
+
+        [JsonPropertyName("changelog")]
+        public string? Changelog { get; set; }
     }
 
     /// <summary>
@@ -158,9 +161,9 @@ namespace RedfurSync
             if (manifest.Schema != 1)
                 return (false, null, $"Unsupported manifest schema: {manifest.Schema}");
 
-            // Anti-downgrade check
-            if (manifest.Sequence <= lastVerifiedSequence)
-                return (false, null, $"Manifest sequence {manifest.Sequence} is not strictly greater than last verified sequence {lastVerifiedSequence} (anti-downgrade violation).");
+            // Anti-downgrade check: reject strictly older manifest sequences; allow re-verifying the current sequence (==)
+            if (manifest.Sequence < lastVerifiedSequence)
+                return (false, null, $"Manifest sequence {manifest.Sequence} is lower than last verified sequence {lastVerifiedSequence} (anti-downgrade violation).");
 
             // Freshness check with 72h clock skew tolerance
             var now = utcNow ?? DateTimeOffset.UtcNow;

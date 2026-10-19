@@ -663,7 +663,8 @@ namespace RedfurSync
                 var ttcDir = Path.Combine(esoLiveDir, "AddOns", "TamrielTradeCentre");
                 Directory.CreateDirectory(ttcDir);
 
-                var client = httpClient ?? new HttpClient();
+                using var ownedClient = httpClient == null ? new HttpClient() : null;
+                var client = httpClient ?? ownedClient!;
                 using var request = new HttpRequestMessage(HttpMethod.Get, TtcPriceTableUrl);
                 request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) FissalRelay/1.0");
 
@@ -717,7 +718,8 @@ namespace RedfurSync
                 Directory.CreateDirectory(targetDir);
                 string canonicalTargetRoot = Path.GetFullPath(targetDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
 
-                var client = httpClient ?? new HttpClient();
+                using var ownedClient = httpClient == null ? new HttpClient() : null;
+                var client = httpClient ?? ownedClient!;
                 using var request = new HttpRequestMessage(HttpMethod.Get, downloadUrl);
                 request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) FissalRelay/1.9.0");
 
@@ -831,11 +833,11 @@ namespace RedfurSync
             }
         }
 
-        private const string AddonManifestTemplate = @"## Title: |cFF9900Fissal's|r Cogwork Relay
+        private const string AddonManifestTemplate = @"## Title: |cFF9900Fissal's|r Cogwork Relay |c888888v1.9.0|r
 ## Author: Echo & Fissal
 ## Version: 1.9.0
 ## AddOnVersion: 10900
-## APIVersion: 101048 101049
+## APIVersion: 101048 101049 101050
 ## SavedVariables: FissalRelay_SavedVariables
 ## DependsOn: LibHistoire>=1062 LibAddonMenu-2.0>=41
 ## OptionalDependsOn: LibCustomMenu TamrielTradeCentre

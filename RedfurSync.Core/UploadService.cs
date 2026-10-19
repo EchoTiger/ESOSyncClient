@@ -84,7 +84,7 @@ namespace RedfurSync
                                 DownloadUrl = primaryArtifact.Url,
                                 SizeBytes = primaryArtifact.Size,
                                 Sha256 = primaryArtifact.Sha256,
-                                Changelog = $"Fissal Relay v{manifest.Version} (Sequence {manifest.Sequence})"
+                                Changelog = !string.IsNullOrWhiteSpace(manifest.Changelog) ? manifest.Changelog : $"Fissal Relay v{manifest.Version} (Sequence {manifest.Sequence})"
                             };
                             if (IsValidUpdatePayload(payload))
                                 return payload;

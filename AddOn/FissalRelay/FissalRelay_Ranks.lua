@@ -1429,7 +1429,7 @@ function FR:BuildRankConfigDrawer(parent)
         self:RefreshRankConfigDrawer()
         self:EvaluateAutoRanks(gId)
         self:UpdateAutoRanksUI()
-        self.PrintChat("Rank ladder reset to Redfur default presets for " .. GetGuildName(gId))
+        self.PrintChat("Rank ladder reset to Redfur default presets for " .. (GetGuildName(gId) or "Guild"))
     end)
 
     local saveBtn = wm:CreateControl("$(parent)_SaveBtn", drawer, CT_BUTTON)
@@ -1997,7 +1997,7 @@ function FR:UpdateAutoWelcomeButtonBadge()
     if not self.autoRanksWelcomeBtn then return end
     local gIdx = self.selectedGuildIndex or 1
     local guildId = self:ResolveGuildId(gIdx)
-    local count = self:GetAutoWelcomePendingCount(guildId)
+    local count = self:CanAutoWelcomeInGuild(guildId) and self:GetAutoWelcomePendingCount(guildId) or 0
     if count > 0 then
         self.autoRanksWelcomeBtn:SetText(string.format("✉ Welcome (%d)", count))
         self:UpdateTactileTheme(self.autoRanksWelcomeBtn, {
@@ -2387,7 +2387,7 @@ function FR:BuildAutoWelcomeDrawer(parent)
             aw.guildSettings[gId] = aw.guildSettings[gId] or {}
             aw.guildSettings[gId].subject = subjBox:GetText() or ""
             aw.guildSettings[gId].message = bodyBox:GetText() or ""
-            self.PrintChat("|c59E08AAutoWelcome:|r Saved welcome letter template for " .. GetGuildName(gId))
+            self.PrintChat("|c59E08AAutoWelcome:|r Saved welcome letter template for " .. (GetGuildName(gId) or "Guild"))
         end
     end)
     self.autoWelcomeSaveBtn = saveBtn
@@ -2424,7 +2424,7 @@ end
 function FR:RefreshAutoWelcomeDrawer()
     if not self.autoWelcomeDrawer then return end
     local gId = self:ResolveGuildId(self.selectedGuildIndex or 1)
-    local gName = GetGuildName(gId)
+    local gName = GetGuildName(gId) or "Guild"
     local aw = self.savedVars and self.savedVars.autoWelcome
 
     if self.autoWelcomeEditorHdr then
@@ -2493,6 +2493,7 @@ function FR:RefreshAutoWelcomeDrawer()
 end
 
 function FR:DispatchWelcomeMails(guildId)
+    if self._welcomeDispatchInFlight then return end
     if not self.savedVars or not self.savedVars.autoWelcome then return end
     local aw = self.savedVars.autoWelcome
     local pending = aw.pending and aw.pending[guildId]
@@ -2512,6 +2513,8 @@ function FR:DispatchWelcomeMails(guildId)
 
     if #queue == 0 then return end
 
+    self._welcomeDispatchInFlight = true
+
     if not SCENE_MANAGER:IsShowing("mailSend") then
         SCENE_MANAGER:Show("mailSend")
     end
@@ -2524,6 +2527,7 @@ function FR:DispatchWelcomeMails(guildId)
 
     local function SendNext(idx)
         if idx > total then
+            self._welcomeDispatchInFlight = false
             self.PrintChat(string.format("✓ |c59E08AAutoWelcome Complete:|r Dispatched %d welcome letter(s).", sentCount))
             if self.autoWelcomeStatusLbl then
                 self.autoWelcomeStatusLbl:SetText(string.format("Dispatched %d / %d", sentCount, total))
@@ -2534,6 +2538,7 @@ function FR:DispatchWelcomeMails(guildId)
         end
 
         if not SCENE_MANAGER or not SCENE_MANAGER:IsShowing("mailSend") then
+            self._welcomeDispatchInFlight = false
             self.PrintChat("|cFFCC00AutoWelcome:|r Mail window closed; paused dispatch so remaining recruits stay queued.")
             if self.autoWelcomeStatusLbl then
                 self.autoWelcomeStatusLbl:SetText(string.format("Paused (%d / %d sent)", sentCount, total))
@@ -2593,7 +2598,7 @@ function FR:MarkAllCurrentWelcomed(guildId)
         end
     end
 
-    self.PrintChat(string.format("|c59E08AAutoWelcome:|r Marked all %d active and pending members of %s as welcomed.", numM, GetGuildName(guildId)))
+    self.PrintChat(string.format("|c59E08AAutoWelcome:|r Marked all %d active and pending members of %s as welcomed.", numM, GetGuildName(guildId) or "Guild"))
     self:RefreshAutoWelcomeDrawer()
     self:UpdateAutoWelcomeButtonBadge()
 end
@@ -2615,18 +2620,21 @@ function FR:ScanRosterForNewRecruits()
         aw.pending[guildId] = aw.pending[guildId] or {}
         aw.firstSeen[guildId] = aw.firstSeen[guildId] or {}
 
-        if self:CanAutoWelcomeInGuild(guildId) then
-            local numM = GetNumGuildMembers(guildId)
-            for m = 1, numM do
-                local displayName = select(1, GetGuildMemberInfo(guildId, m))
-                if displayName then
-                    local lower = string.lower(displayName)
-                    local rawLower = string.gsub(lower, "^@", "")
-                    if not aw.welcomed[guildId][lower] and not aw.pending[guildId][lower] then
+        local canWelcome = self:CanAutoWelcomeInGuild(guildId)
+        local numM = GetNumGuildMembers(guildId)
+        for m = 1, numM do
+            local displayName = select(1, GetGuildMemberInfo(guildId, m))
+            if displayName then
+                local lower = string.lower(displayName)
+                local rawLower = string.gsub(lower, "^@", "")
+                if not aw.welcomed[guildId][lower] and not aw.pending[guildId][lower] then
+                    aw.firstSeen[guildId][lower] = aw.firstSeen[guildId][lower] or nowTs
+                    aw.firstSeen[guildId][rawLower] = aw.firstSeen[guildId][rawLower] or nowTs
+                    if canWelcome then
                         aw.pending[guildId][lower] = displayName
-                        aw.firstSeen[guildId][lower] = aw.firstSeen[guildId][lower] or nowTs
-                        aw.firstSeen[guildId][rawLower] = aw.firstSeen[guildId][rawLower] or nowTs
                         table.insert(found, { guildId = guildId, displayName = displayName })
+                    else
+                        aw.welcomed[guildId][lower] = true
                     end
                 end
             end
@@ -2681,7 +2689,7 @@ function FR:OnGuildMemberAdded(guildId, displayName)
 
     if not aw.welcomed[guildId][lower] then
         aw.pending[guildId][lower] = displayName
-        self.PrintChat(string.format("✉ |c00FFCCAutoWelcome:|r New recruit queued for %s: %s", GetGuildName(guildId), displayName))
+        self.PrintChat(string.format("✉ |c00FFCCAutoWelcome:|r New recruit queued for %s: %s", GetGuildName(guildId) or "Guild", displayName))
         self:UpdateAutoWelcomeButtonBadge()
         if self.autoWelcomeDrawer and not self.autoWelcomeDrawer:IsHidden() then
             self:RefreshAutoWelcomeDrawer()
@@ -2707,7 +2715,7 @@ end)
 
 if SCENE_MANAGER and SCENE_MANAGER:GetScene("mailSend") then
     SCENE_MANAGER:GetScene("mailSend"):RegisterCallback("StateChange", function(oldState, newState)
-        if (newState == SCENE_SHOWING or newState == SCENE_SHOWN) and FR.savedVars and FR.savedVars.autoWelcome and FR.savedVars.autoWelcome.autoSendWhenMailOpen then
+        if newState == SCENE_SHOWN and FR.savedVars and FR.savedVars.autoWelcome and FR.savedVars.autoWelcome.autoSendWhenMailOpen then
             local gIdx = FR.selectedGuildIndex or 1
             local gId = FR:ResolveGuildId(gIdx)
             if FR:CanAutoWelcomeInGuild(gId) then

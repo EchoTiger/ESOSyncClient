@@ -48,7 +48,7 @@ local DEFAULT_SAVED_VARS = {
         categorySync = {},
     },
     raffle = {
-        allowedOfficers = { all = {}, post = {}, dealers = {} },
+        allowedOfficers = { all = {}, post = {}, dealers = {}, caravan = {} },
         voided = { users = {}, entries = {} },
     },
     rafflePayouts = {},
@@ -691,7 +691,8 @@ function FR:TakeRosterSnapshot(targetGuildId)
             local members = {}
 
             for m = 1, memberCount do
-                local name, note, rankIndex, isOnline, secsSinceLogoff = GetGuildMemberInfo(guildId, m)
+                local name, note, rankIndex, playerStatus, secsSinceLogoff = GetGuildMemberInfo(guildId, m)
+                local isOnline = (playerStatus ~= PLAYER_STATUS_OFFLINE)
                 local rankName = GetGuildRankCustomName(guildId, rankIndex)
                 if not rankName or rankName == "" then
                     rankName = GetDefaultGuildRankName(guildId, rankIndex)
@@ -701,7 +702,7 @@ function FR:TakeRosterSnapshot(targetGuildId)
                     rank = rankName,
                     rankIndex = rankIndex,
                     note = (note or ""):gsub("[{}]", ""):sub(1, 250),
-                    secsSinceLogoff = secsSinceLogoff,
+                    secsSinceLogoff = isOnline and 0 or (secsSinceLogoff or 0),
                     isOnline = isOnline,
                 }
             end
@@ -744,15 +745,16 @@ function FR:AuditInactives(guildIndex, minDays)
     end
 
     local guildId = GetGuildId(guildIndex)
-    local guildName = GetGuildName(guildId)
+    local guildName = GetGuildName(guildId) or "Guild"
     local memberCount = GetNumGuildMembers(guildId)
     local cutoffSecs = minDays * 86400
     local inactives = {}
 
     for m = 1, memberCount do
-        local name, note, rankIndex, isOnline, secsSinceLogoff = GetGuildMemberInfo(guildId, m)
-        if not isOnline and secsSinceLogoff >= cutoffSecs then
-            local days = math.floor(secsSinceLogoff / 86400)
+        local name, note, rankIndex, playerStatus, secsSinceLogoff = GetGuildMemberInfo(guildId, m)
+        local isOnline = (playerStatus ~= PLAYER_STATUS_OFFLINE)
+        if not isOnline and (secsSinceLogoff or 0) >= cutoffSecs then
+            local days = math.floor((secsSinceLogoff or 0) / 86400)
             local rankName = GetGuildRankCustomName(guildId, rankIndex)
             table.insert(inactives, { name = name, days = days, rank = rankName, note = note })
         end
@@ -763,6 +765,7 @@ function FR:AuditInactives(guildIndex, minDays)
     -- Key by guildId (stable) rather than guildName (can change).
     self.savedVars.staff.inactivityAudits[tostring(guildId)] = {
         guildId = guildId,
+        guildName = guildName,
         minDays = minDays,
         auditedAt = GetTimeStamp(),
         totalMembers = memberCount,
@@ -2187,8 +2190,8 @@ function FR:ResolveGuildId(guildIndexOrId)
     local str = tostring(guildIndexOrId):lower()
     for i = 1, numGuilds do
         local gId = GetGuildId(i)
-        local gName = GetGuildName(gId):lower()
-        if gName:find(str, 1, true) or (str:find("post", 1, true) and gName:find("post", 1, true)) or (str:find("dealer", 1, true) and gName:find("dealer", 1, true)) then
+        local gName = (GetGuildName(gId) or ""):lower()
+        if gName ~= "" and (gName:find(str, 1, true) or (str:find("post", 1, true) and gName:find("post", 1, true)) or (str:find("dealer", 1, true) and gName:find("dealer", 1, true)) or (str:find("caravan", 1, true) and gName:find("caravan", 1, true))) then
             return gId
         end
     end
@@ -2249,6 +2252,13 @@ function FR:InvalidateDepositCache(guildId)
             self.depositByGuild[guildId] = nil
         else
             self.depositByGuild = {}
+        end
+    end
+    if self.depositCache then
+        if guildId then
+            self.depositCache[guildId] = nil
+        else
+            self.depositCache = {}
         end
     end
 end
@@ -2327,8 +2337,8 @@ function FR:CalculateRaffleMetrics(guildId, lookbackDays, ticketPrice)
         cutoffTs = self:GetCurrentRaffleWeekStart(nowTs)
     end
 
-    local gName = GetGuildName(guildId):lower()
-    local gKey = gName:find("post", 1, true) and "post" or (gName:find("dealer", 1, true) and "dealers" or "all")
+    local gName = (GetGuildName(guildId) or ""):lower()
+    local gKey = gName:find("post", 1, true) and "post" or (gName:find("dealer", 1, true) and "dealers" or (gName:find("caravan", 1, true) and "caravan" or "all"))
 
     local totalGold = 0
     local entrantsMap = {}
@@ -2789,7 +2799,7 @@ function FR:HandleSlashCommand(arg)
             else
                 local clean = tag:gsub("^@", ""):lower()
                 if not self.savedVars.raffle then self.savedVars.raffle = {} end
-                if not self.savedVars.raffle.allowedOfficers then self.savedVars.raffle.allowedOfficers = { all = {}, post = {}, dealers = {} } end
+                if not self.savedVars.raffle.allowedOfficers then self.savedVars.raffle.allowedOfficers = { all = {}, post = {}, dealers = {}, caravan = {} } end
                 if not self.savedVars.raffle.allowedOfficers[guild] then self.savedVars.raffle.allowedOfficers[guild] = {} end
                 self.savedVars.raffle.allowedOfficers[guild][clean] = true
                 self._raffleMetricsCache = {}
@@ -3004,7 +3014,8 @@ local function OnAddOnLoaded(eventCode, addOnName)
     if not FR.savedVars.staff.categorySync then FR.savedVars.staff.categorySync = {} end
     if not FR.savedVars.nextSeq then FR.savedVars.nextSeq = 0 end
     if not FR.savedVars.raffle then FR.savedVars.raffle = {} end
-    if not FR.savedVars.raffle.allowedOfficers then FR.savedVars.raffle.allowedOfficers = { all = {}, post = {}, dealers = {} } end
+    if not FR.savedVars.raffle.allowedOfficers then FR.savedVars.raffle.allowedOfficers = { all = {}, post = {}, dealers = {}, caravan = {} } end
+    if not FR.savedVars.raffle.allowedOfficers.caravan then FR.savedVars.raffle.allowedOfficers.caravan = {} end
     if not FR.savedVars.raffle.voided then FR.savedVars.raffle.voided = { users = {}, entries = {} } end
     if not FR.savedVars.settings then FR.savedVars.settings = {} end
     if FR.savedVars.settings.bumperAutoReload == nil then FR.savedVars.settings.bumperAutoReload = false end

@@ -236,8 +236,6 @@ namespace RedfurSync
 
                 if (payload == null)
                 {
-                    if (!string.IsNullOrWhiteSpace(_uploader.LastError))
-                        _onStatus(_uploader.LastError);
                     return;
                 }
 

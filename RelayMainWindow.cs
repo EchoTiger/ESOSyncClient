@@ -1408,15 +1408,6 @@ namespace RedfurSync
             dualMonitorStrip.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));                  // Ticker
             dualMonitorStrip.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-            // D8: label the oscilloscope so users know what it shows
-            var oscLabel = new Label
-            {
-                Text = "UPLOAD ACTIVITY",
-                ForeColor = Color.FromArgb(120, CGoldBrt),
-                Font = Mono(7f, _scale, FontStyle.Bold),
-                AutoSize = true,
-                Margin = new Padding(0, (int)(4 * _scale), 0, 0),
-            };
             _oscilloscopePanel = new DoubleBufferedPanel
             {
                 Dock = DockStyle.Fill,
@@ -2293,6 +2284,7 @@ namespace RedfurSync
             if (hasRetryBtn != needsRetryBtn)
             {
                 controls.ActionFlow.SuspendLayout();
+                foreach (Control oldCtrl in controls.ActionFlow.Controls) oldCtrl.Dispose();
                 controls.ActionFlow.Controls.Clear();
                 if (needsRetryBtn)
                 {
@@ -2578,6 +2570,7 @@ namespace RedfurSync
             {
                 controls.ActionFlow.Tag = neededAction;
                 controls.ActionFlow.SuspendLayout();
+                foreach (Control oldCtrl in controls.ActionFlow.Controls) oldCtrl.Dispose();
                 controls.ActionFlow.Controls.Clear();
                 if (neededAction == "retry")
                 {
@@ -2811,6 +2804,7 @@ namespace RedfurSync
             {
                 controls.ActionFlow.Tag = neededJobAction;
                 controls.ActionFlow.SuspendLayout();
+                foreach (Control oldCtrl in controls.ActionFlow.Controls) oldCtrl.Dispose();
                 controls.ActionFlow.Controls.Clear();
                 if (neededJobAction == "upgrade")
                 {

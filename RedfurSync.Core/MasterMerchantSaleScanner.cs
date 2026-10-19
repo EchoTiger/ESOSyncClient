@@ -52,7 +52,7 @@ namespace RedfurSync
                 || !fileName.EndsWith("Data.lua", StringComparison.OrdinalIgnoreCase)
                 || fileName.Length != 12)
                 return false;
-            return int.TryParse(fileName.AsSpan(2, 2), out var index) && index >= 0 && index <= 15;
+            return int.TryParse(fileName.AsSpan(2, 2), out var index) && index >= 0 && index <= 17;
         }
     }
 }

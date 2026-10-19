@@ -853,7 +853,7 @@ function FR:BuildTTCBumperTab(parent)
 
     local bumpNotice = wm:CreateControl("$(parent)_Notice", card, CT_LABEL)
     bumpNotice:SetAnchor(TOPLEFT, bumpStatus, BOTTOMLEFT, 0, 8)
-    bumpNotice:SetAnchor(TOPRIGHT, card, TOPRIGHT, -14, 258)
+    bumpNotice:SetWidth(356)
     bumpNotice:SetFont("ZoFontGameSmall")
     bumpNotice:SetWrapMode(TEXT_WRAP_MODE_TRUNCATE)
     if not TamrielTradeCentre then

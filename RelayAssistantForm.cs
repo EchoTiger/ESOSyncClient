@@ -42,7 +42,7 @@ namespace RedfurSync
             _ask = ask;
             _getHarnessContext = getHarnessContext;
             _harnessService = new FissalHarnessService(AppConfig.Instance);
-            AutoScaleMode = AutoScaleMode.Dpi;
+            AutoScaleMode = AutoScaleMode.None;
             FormBorderStyle = FormBorderStyle.None;
             MinimumSize = new Size(680, 560);
             Size = new Size(880, 720);

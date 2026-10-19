@@ -132,9 +132,9 @@ public sealed class UpdateTrustAndHandshakeTests
     }
 
     [Fact]
-    public void SequenceEqualOrLowerThanLastVerified_IsRejectedAsAntiDowngradeViolation()
+    public void SequenceLowerThanLastVerified_IsRejectedAsAntiDowngradeViolation()
     {
-        var json = CreateValidManifestJson(sequence: 40);
+        var json = CreateValidManifestJson(sequence: 39);
         var bytes = Encoding.UTF8.GetBytes(json);
         var sig = SignWithPrimary(bytes);
 
@@ -144,6 +144,21 @@ public sealed class UpdateTrustAndHandshakeTests
         Assert.False(ok);
         Assert.Null(manifest);
         Assert.Contains("anti-downgrade violation", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SequenceEqualToLastVerified_IsAcceptedForIdempotentPolling()
+    {
+        var json = CreateValidManifestJson(sequence: 40);
+        var bytes = Encoding.UTF8.GetBytes(json);
+        var sig = SignWithPrimary(bytes);
+
+        var (ok, manifest, error) = UpdateTrustVerifier.VerifyAndParse(
+            bytes, sig, lastVerifiedSequence: 40);
+
+        Assert.True(ok);
+        Assert.NotNull(manifest);
+        Assert.Equal(string.Empty, error);
     }
 
     [Fact]

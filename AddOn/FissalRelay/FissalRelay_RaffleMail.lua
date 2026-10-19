@@ -54,8 +54,26 @@ local DEFAULT_RAFFLE_CACHE = {
             { place = 2, name = "@isthisappropriate", ticket = 397, prize = 285750, entries = 1, tickets = 500, gold = 500000 },
             { place = 3, name = "@mightyjoemoon", ticket = 1518, prize = 190500, entries = 1, tickets = 30, gold = 30000 },
         }
+    },
+    caravan = {
+        guildKey = "caravan",
+        guildLabel = "Redfur Trading Caravan",
+        weekLabel = "Oct 11 - Oct 18",
+        weekStart = 1791759600,
+        pot = 615000,
+        tickets = 615,
+        entrantCount = 11,
+        entrants = {},
+        prizes = { first = 184500, second = 123000, third = 61500, guild = 246000 },
+        winners = {}
     }
 }
+
+local function ResolveGuildLabel(guildKey)
+    if guildKey == "post" then return "Redfur Trading Post" end
+    if guildKey == "caravan" then return "Redfur Trading Caravan" end
+    return "Redfur Dealers"
+end
 
 --[[ =========================================================================
      DATA PROVIDER & PAYOUT STATE
@@ -67,12 +85,16 @@ function FR:EnsureRaffleState()
         self.savedVars.rafflePayouts = {
             post = {},
             dealers = {},
+            caravan = {},
         }
+    end
+    if not self.savedVars.rafflePayouts.caravan then
+        self.savedVars.rafflePayouts.caravan = {}
     end
     -- Migrate stale raffle data if older than official verified ledger
     local officialStart = (FR.OfficialRaffleLedger and FR.OfficialRaffleLedger.weekStart) or 1789945200
     if not self.savedVars.raffleData or (self.savedVars.raffleData.post and (self.savedVars.raffleData.post.weekStart or 0) < officialStart) then
-        if FR.OfficialRaffleLedger and (FR.OfficialRaffleLedger.post or FR.OfficialRaffleLedger.dealers) then
+        if FR.OfficialRaffleLedger and (FR.OfficialRaffleLedger.post or FR.OfficialRaffleLedger.dealers or FR.OfficialRaffleLedger.caravan) then
             self.savedVars.raffleData = {
                 post = FR.OfficialRaffleLedger.post,
                 dealers = FR.OfficialRaffleLedger.dealers,
@@ -121,9 +143,10 @@ function FR:GetRaffleWeeks(guildKey)
         local off = FR.OfficialRaffleLedger[guildKey]
         local offKey = tostring(off.weekStart or off.weekLabel or "official")
         if not seenKeys[offKey] then
+            local entCnt = ResolveEntrantCount(off)
             table.insert(weeks, {
                 guildKey = guildKey,
-                guildLabel = off.guildLabel or (guildKey == "post" and "Redfur Trading Post" or "Redfur Dealers"),
+                guildLabel = off.guildLabel or ResolveGuildLabel(guildKey),
                 weekLabel = off.weekLabel or "Official Draw",
                 weekKey = offKey,
                 weekStart = off.weekStart,
@@ -132,8 +155,8 @@ function FR:GetRaffleWeeks(guildKey)
                 syncTooltip = "Sealed and verified with #raffle-announcements on Discord.",
                 pot = off.pot or 0,
                 tickets = off.tickets or 0,
-                entrants = type(off.entrants) == "table" and NonContiguousCount(off.entrants) or (tonumber(off.entrantCount or off.entrants) or 0),
-                entrantCount = ResolveEntrantCount(off),
+                entrants = entCnt,
+                entrantCount = entCnt,
                 entrantsMap = type(off.entrants) == "table" and off.entrants or nil,
                 announceMessageId = off.announceMessageId,
                 prizes = off.prizes or {},
@@ -154,7 +177,7 @@ function FR:GetRaffleWeeks(guildKey)
         local liveEntrants = liveMetrics and liveMetrics.entrants or 0
         table.insert(weeks, {
             guildKey = guildKey,
-            guildLabel = (guildKey == "post" and "Redfur Trading Post" or "Redfur Dealers"),
+            guildLabel = ResolveGuildLabel(guildKey),
             weekLabel = curLabel .. " (Live)",
             weekKey = "live_" .. curLabel,
             weekStart = "live",
@@ -183,9 +206,10 @@ function FR:GetRaffleWeeks(guildKey)
         local rgGuild = RaffleGold.db.guild or ""
         local isPost = string.find(rgGuild, "Post") ~= nil
         local isDealers = string.find(rgGuild, "Dealer") ~= nil
-        local targetMatches = (guildKey == "post" and isPost) or (guildKey == "dealers" and isDealers)
+        local isCaravan = string.find(rgGuild, "Caravan") ~= nil
+        local targetMatches = (guildKey == "post" and isPost) or (guildKey == "dealers" and isDealers) or (guildKey == "caravan" and isCaravan)
         if targetMatches and p.amtFrt and p.amtFrt > 0 and p.nameFrt then
-            local label = isPost and "Redfur Trading Post (Local Roll)" or "Redfur Dealers (Local Roll)"
+            local label = ResolveGuildLabel(guildKey) .. " (Local Roll)"
             local weekLbl = RaffleGold.db.dateStart and string.format("%s - %s", RaffleGold.db.dateStart, RaffleGold.db.dateEnd or "") or "Local Roll"
             local localEntry = {
                 guildKey = guildKey,
@@ -228,7 +252,7 @@ function FR:GetRaffleWeeks(guildKey)
         if not seenKeys[svKey] then
             table.insert(weeks, {
                 guildKey = guildKey,
-                guildLabel = sv.guildLabel or (guildKey == "post" and "Redfur Trading Post" or "Redfur Dealers"),
+                guildLabel = sv.guildLabel or ResolveGuildLabel(guildKey),
                 weekLabel = sv.weekLabel or "Saved Draw",
                 weekKey = svKey,
                 weekStart = sv.weekStart,
@@ -255,7 +279,7 @@ function FR:GetRaffleWeeks(guildKey)
             if hKey ~= "" and not seenKeys[hKey] then
                 table.insert(weeks, {
                     guildKey = guildKey,
-                    guildLabel = hist.guildLabel or (guildKey == "post" and "Redfur Trading Post" or "Redfur Dealers"),
+                    guildLabel = hist.guildLabel or ResolveGuildLabel(guildKey),
                     weekLabel = hist.weekLabel or "Archived Draw",
                     weekKey = hKey,
                     weekStart = hist.weekStart,
@@ -282,7 +306,7 @@ function FR:GetRaffleWeeks(guildKey)
         if not seenKeys[defKey] then
             table.insert(weeks, {
                 guildKey = guildKey,
-                guildLabel = def.guildLabel or (guildKey == "post" and "Redfur Trading Post" or "Redfur Dealers"),
+                guildLabel = def.guildLabel or ResolveGuildLabel(guildKey),
                 weekLabel = def.weekLabel or "Archive Draw",
                 weekKey = defKey,
                 weekStart = def.weekStart,
@@ -448,7 +472,7 @@ end
 -- Check if there are any winners across all guilds that have not yet been marked paid
 function FR:HasPendingRafflePayouts()
     self:EnsureRaffleState()
-    for _, gKey in ipairs({ "post", "dealers" }) do
+    for _, gKey in ipairs({ "post", "dealers", "caravan" }) do
         local data = self:GetRaffleData(gKey)
         if data and data.winners and #data.winners > 0 then
             local weekKey = data.weekStart or data.weekLabel or "latest"
@@ -898,10 +922,10 @@ function FR:CreateRaffleMailUI()
     divider:SetHeight(1)
     divider:SetColor(0.8, 0.5, 0.1, 0.4)
 
-    -- 7. Guild Selector Tabs (Post vs Dealers)
+    -- 7. Guild Selector Tabs (Post vs Dealers vs Caravan)
     local tabPost = wm:CreateControl("$(parent)_TabPost", win, CT_BUTTON)
     tabPost:SetAnchor(TOPLEFT, win, TOPLEFT, 12, 44)
-    tabPost:SetDimensions(242, 26)
+    tabPost:SetDimensions(158, 26)
     tabPost:SetFont("ZoFontGameBold")
     tabPost:SetText("Trading Post")
 
@@ -912,8 +936,8 @@ function FR:CreateRaffleMailUI()
     tabPostBg:SetEdgeTexture("", 1, 1, 0)
 
     local tabDealers = wm:CreateControl("$(parent)_TabDealers", win, CT_BUTTON)
-    tabDealers:SetAnchor(TOPRIGHT, win, TOPRIGHT, -12, 44)
-    tabDealers:SetDimensions(242, 26)
+    tabDealers:SetAnchor(LEFT, tabPost, RIGHT, 11, 0)
+    tabDealers:SetDimensions(158, 26)
     tabDealers:SetFont("ZoFontGameBold")
     tabDealers:SetText("Dealers")
 
@@ -923,23 +947,43 @@ function FR:CreateRaffleMailUI()
     tabDealersBg:SetEdgeColor(0.25, 0.25, 0.25, 0.50)
     tabDealersBg:SetEdgeTexture("", 1, 1, 0)
 
+    local tabCaravan = wm:CreateControl("$(parent)_TabCaravan", win, CT_BUTTON)
+    tabCaravan:SetAnchor(TOPRIGHT, win, TOPRIGHT, -12, 44)
+    tabCaravan:SetDimensions(158, 26)
+    tabCaravan:SetFont("ZoFontGameBold")
+    tabCaravan:SetText("Caravan")
+
+    local tabCaravanBg = wm:CreateControl("$(parent)_Bg", tabCaravan, CT_BACKDROP)
+    tabCaravanBg:SetAnchorFill()
+    tabCaravanBg:SetCenterColor(0.04, 0.04, 0.06, 0.60)
+    tabCaravanBg:SetEdgeColor(0.25, 0.25, 0.25, 0.50)
+    tabCaravanBg:SetEdgeTexture("", 1, 1, 0)
+
     local function UpdateTabs()
+        tabPostBg:SetCenterColor(0.04, 0.04, 0.06, 0.60)
+        tabPostBg:SetEdgeColor(0.25, 0.25, 0.25, 0.50)
+        tabPost:SetNormalFontColor(0.5, 0.5, 0.5, 1)
+
+        tabDealersBg:SetCenterColor(0.04, 0.04, 0.06, 0.60)
+        tabDealersBg:SetEdgeColor(0.25, 0.25, 0.25, 0.50)
+        tabDealers:SetNormalFontColor(0.5, 0.5, 0.5, 1)
+
+        tabCaravanBg:SetCenterColor(0.04, 0.04, 0.06, 0.60)
+        tabCaravanBg:SetEdgeColor(0.25, 0.25, 0.25, 0.50)
+        tabCaravan:SetNormalFontColor(0.5, 0.5, 0.5, 1)
+
         if self.currentRaffleGuild == "post" then
             tabPostBg:SetCenterColor(0.20, 0.12, 0.04, 0.90)
             tabPostBg:SetEdgeColor(0.90, 0.60, 0.10, 1.0)
             tabPost:SetNormalFontColor(1, 0.8, 0.2, 1)
-
-            tabDealersBg:SetCenterColor(0.04, 0.04, 0.06, 0.60)
-            tabDealersBg:SetEdgeColor(0.25, 0.25, 0.25, 0.50)
-            tabDealers:SetNormalFontColor(0.5, 0.5, 0.5, 1)
+        elseif self.currentRaffleGuild == "caravan" then
+            tabCaravanBg:SetCenterColor(0.14, 0.06, 0.18, 0.90)
+            tabCaravanBg:SetEdgeColor(0.80, 0.45, 1.0, 1.0)
+            tabCaravan:SetNormalFontColor(0.85, 0.6, 1.0, 1)
         else
             tabDealersBg:SetCenterColor(0.02, 0.16, 0.14, 0.90)
             tabDealersBg:SetEdgeColor(0, 0.90, 0.80, 1.0)
             tabDealers:SetNormalFontColor(0, 1, 0.8, 1)
-
-            tabPostBg:SetCenterColor(0.04, 0.04, 0.06, 0.60)
-            tabPostBg:SetEdgeColor(0.25, 0.25, 0.25, 0.50)
-            tabPost:SetNormalFontColor(0.5, 0.5, 0.5, 1)
         end
     end
 
@@ -952,6 +996,13 @@ function FR:CreateRaffleMailUI()
 
     tabDealers:SetHandler("OnClicked", function()
         self.currentRaffleGuild = "dealers"
+        self.currentRaffleWeekIdx = nil
+        UpdateTabs()
+        self:RefreshRaffleMailUI()
+    end)
+
+    tabCaravan:SetHandler("OnClicked", function()
+        self.currentRaffleGuild = "caravan"
         self.currentRaffleWeekIdx = nil
         UpdateTabs()
         self:RefreshRaffleMailUI()
@@ -1334,7 +1385,8 @@ function FR:RefreshRaffleMailUI()
 
     if self.raffleMailTicketsLbl then
         local tixStr = ZO_CommaDelimitNumber(data.tickets or 0)
-        self.raffleMailTicketsLbl:SetText(string.format("Tickets: |c58E08A%s|r", tixStr))
+        local entCount = tonumber(data.entrantCount) or (type(data.entrants) == "number" and data.entrants) or (type(data.entrants) == "table" and NonContiguousCount(data.entrants)) or 0
+        self.raffleMailTicketsLbl:SetText(string.format("Tickets: |c58E08A%s|r  •  Entrants: |c00FFCC%d|r", tixStr, entCount))
     end
 
     local rankTitles = {
