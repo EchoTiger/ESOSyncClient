@@ -10,7 +10,7 @@ FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
 FR.name = "FissalRelay"
-FR.version = "1.9.0"
+FR.version = "1.9.1"
 FR.author = "Echo & Fissal"
 
 -- Defaults for SavedVariables
@@ -1523,6 +1523,9 @@ function FR:UpdateCategorySyncTelemetry()
 end
 
 function FR:PumpLibHistoire(isManual)
+    if not isManual and (self.autoRankBatchActive or self.isAuditBatchRunning) then
+        return 0
+    end
     if not LibHistoire or not LibHistoire.internal or not LibHistoire.internal.historyCache then
         if isManual then self.PrintChat("LibHistoire cache not ready.") end
         return 0
@@ -3135,6 +3138,7 @@ local function OnAddOnLoaded(eventCode, addOnName)
         if FR.isReady then FR:SetupProcessors() end
     end)
     EVENT_MANAGER:RegisterForEvent(FR.name .. "_MemberRank", EVENT_GUILD_MEMBER_RANK_CHANGED, function(_, guildId)
+        if FR.autoRankBatchActive or FR.isAuditBatchRunning then return end
         if FR.isReady then FR:SetupProcessors() end
         FR:ScheduleRosterSnapshot(2500, guildId)
     end)

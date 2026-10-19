@@ -123,4 +123,35 @@ public sealed class PairingAndAssistantTests
         standalone.Save();
         Assert.NotEqual("isolated-key", AppConfig.Instance.ApiKey);
     }
+
+    [Fact]
+    public async Task PairAsync_WhenAlreadyPairedButNewPairingCodeEntered_RePairsWithServer()
+    {
+        var config = new AppConfig
+        {
+            ServerUrl = "http://redfur.ech-o.net/upload",
+            DeviceToken = "rfr_old_stale_token",
+            PairingCode = " 884-219 ",
+            DisplayName = "Discord @Chu",
+        };
+
+        var handler = new FakeHttpMessageHandler((req, _) =>
+        {
+            Assert.Equal(HttpMethod.Post, req.Method);
+            Assert.Equal("https://redfur.ech-o.net/api/relay/v1/pair", req.RequestUri?.ToString());
+            var json = JsonSerializer.Serialize(new { token = "rfr_new_chu_token" });
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Created)
+            {
+                Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json")
+            });
+        });
+
+        using var uploader = new UploadService(config, handler, FakeHttpMessageHandler.Returning(HttpStatusCode.OK));
+        var (ok, message) = await uploader.PairAsync();
+
+        Assert.True(ok);
+        Assert.Equal("rfr_new_chu_token", config.DeviceToken);
+        Assert.Empty(config.PairingCode);
+        Assert.Single(handler.Requests);
+    }
 }

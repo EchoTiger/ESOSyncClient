@@ -519,11 +519,13 @@ function FR:EvaluateAutoRanks(guildId)
 end
 
 --[[ =========================================================================
-     ACK-GATED BATCH EXECUTION ENGINE
+     ACK-GATED BATCH EXECUTION ENGINE (POLITE SERVER PACING)
 ========================================================================= ]]--
 
-local MIN_SPACING_MS = 400
-local ACK_TIMEOUT_MS = 4000
+local MIN_SPACING_MS = 1850
+local BREATHER_EVERY_N = 8
+local BREATHER_DURATION_MS = 4200
+local ACK_TIMEOUT_MS = 4500
 
 function FR:CleanupAutoRankBatch()
     EVENT_MANAGER:UnregisterForUpdate("FissalRelay_AutoRankBatch")
@@ -531,10 +533,55 @@ function FR:CleanupAutoRankBatch()
     EVENT_MANAGER:UnregisterForEvent("FissalRelay_AutoRankSchemaDrift1", EVENT_GUILD_RANKS_CHANGED)
     EVENT_MANAGER:UnregisterForEvent("FissalRelay_AutoRankSchemaDrift2", EVENT_GUILD_RANK_CHANGED)
     self.autoRankBatchRunning = false
+    self.autoRankBatchActive = false
     self.autoRankPending = nil
 
     if self.autoRanksApplyBtn then self.autoRanksApplyBtn:SetHidden(false) end
     if self.autoRanksAbortBtn then self.autoRanksAbortBtn:SetHidden(true) end
+end
+
+function FR:PromptAndStartAutoRankBatch(guildId)
+    if self.autoRankBatchRunning then
+        self.PrintChat("|cFF5555[Fissal Ranks]|r Batch is already running!")
+        return
+    end
+    guildId = self:ResolveGuildId(guildId or self.selectedGuildIndex or 1)
+    local guildName = GetGuildName(guildId) or "Guild"
+
+    local pCount, dCount = 0, 0
+    for _, item in ipairs(self.autoRankResults or {}) do
+        if item.selected and item.action ~= "KEEP" and item.targetRankIndex ~= item.currentRankIndex then
+            if item.action == "PROMOTE" then pCount = pCount + 1
+            elseif item.action == "DEMOTE" then dCount = dCount + 1 end
+        end
+    end
+    local total = pCount + dCount
+    if total == 0 then
+        self.PrintChat("|cFF9900[Fissal Ranks]|r No rank changes selected to apply.")
+        return
+    end
+
+    local estSec = math.ceil(total * (MIN_SPACING_MS / 1000) + math.floor(total / BREATHER_EVERY_N) * (BREATHER_DURATION_MS / 1000))
+    if self.ShowConfirmModal then
+        self:ShowConfirmModal({
+            title = "CONFIRM AUTO-RANK BATCH",
+            titleColor = "00FFCC",
+            body = string.format(
+                "|cE6C387Guild:|r |cFFFFFF%s|r\n" ..
+                "|cE6C387Selected Changes:|r |c59E08A%d Promote(s)|r  •  |cFF6666%d Demote(s)|r  (|c00FFCC%d total|r)\n" ..
+                "|cE6C387Server Pacing:|r Polite |cFFD7001.85s|r per rank step + |cFFD7004.2s|r breather every 8 steps (~%ds)\n\n" ..
+                "|cAAAAAAAll rank packets are ACK-gated and rate-guarded to prevent ESO server disconnects.|r",
+                guildName, pCount, dCount, total, estSec
+            ),
+            confirmText = string.format("Start Batch (%d)", total),
+            cancelText = "Cancel",
+            onConfirm = function()
+                self:StartAutoRankBatch(guildId)
+            end,
+        })
+    else
+        self:StartAutoRankBatch(guildId)
+    end
 end
 
 function FR:StartAutoRankBatch(guildId)
@@ -565,6 +612,7 @@ function FR:StartAutoRankBatch(guildId)
     for _, item in ipairs(self.autoRankResults or {}) do
         if item.selected and item.action ~= "KEEP" and item.targetRankIndex ~= item.currentRankIndex then
             item._stepsSent = 0
+            item._lastRankBeforeStep = nil
             table.insert(tasks, item)
         end
     end
@@ -576,11 +624,13 @@ function FR:StartAutoRankBatch(guildId)
 
     self.autoRankTasks = tasks
     self.autoRankBatchRunning = true
+    self.autoRankBatchActive = true
     self.autoRankTotalTasks = #tasks
     self.autoRankProcessedCount = 0
     self.autoRankSucceeded = 0
     self.autoRankTimedOut = 0
     self.autoRankSkipped = 0
+    self.autoRankPacketsSent = 0
     self.autoRankPending = nil
     self.autoRankSentAt = 0
     self.autoRankNextAllowedAt = 0
@@ -588,9 +638,17 @@ function FR:StartAutoRankBatch(guildId)
     if self.autoRanksApplyBtn then self.autoRanksApplyBtn:SetHidden(true) end
     if self.autoRanksAbortBtn then self.autoRanksAbortBtn:SetHidden(false) end
 
-    self.PrintChat(string.format("⚡ |c00FFCC[Fissal Ranks]|r Starting paced batch for %s (%d changes)...", guildName, #tasks))
+    self.PrintChat(string.format("⚡ |c00FFCC[Fissal Ranks]|r Starting polite paced batch for %s (%d changes @ 1.85s spacing)...", guildName, #tasks))
 
     local taskIdx = 1
+
+    local function ComputeNextAllowedTime(nowMs)
+        local sent = FR.autoRankPacketsSent or 0
+        if sent > 0 and (sent % BREATHER_EVERY_N == 0) then
+            return nowMs + BREATHER_DURATION_MS
+        end
+        return nowMs + MIN_SPACING_MS
+    end
 
     local function OnSchemaDrift(_, driftGuildId)
         if not FR.autoRankBatchRunning or driftGuildId ~= guildId then return end
@@ -606,22 +664,36 @@ function FR:StartAutoRankBatch(guildId)
     end
 
     -- Register Server Ack Listener (supports multi-step GuildPromote / GuildDemote ladders)
-    EVENT_MANAGER:RegisterForEvent("FissalRelay_AutoRankAck", EVENT_GUILD_MEMBER_RANK_CHANGED, function(_, eventGuildId, displayName, newRankIndex)
-        if not FR.autoRankBatchRunning or eventGuildId ~= guildId then return end
-        if FR.autoRankPending and FR.autoRankPending.displayName == displayName then
+    EVENT_MANAGER:RegisterForEvent("FissalRelay_AutoRankAck", EVENT_GUILD_MEMBER_RANK_CHANGED, function(_, eventGuildId, displayNameOrIdx, newRankIndex)
+        if not FR.autoRankBatchRunning or eventGuildId ~= guildId or not FR.autoRankPending then return end
+
+        local evName = displayNameOrIdx
+        if type(displayNameOrIdx) == "number" and GetGuildMemberInfo then
+            local infoName, _, infoRank = GetGuildMemberInfo(eventGuildId, displayNameOrIdx)
+            evName = infoName
+            if not newRankIndex then newRankIndex = infoRank end
+        end
+
+        if type(evName) == "string" and string.lower(evName) == string.lower(FR.autoRankPending.displayName or "") then
             local pendingItem = FR.autoRankPending
             FR.autoRankPending = nil
-            FR.autoRankNextAllowedAt = GetGameTimeMilliseconds() + MIN_SPACING_MS
+            local nowMs = GetGameTimeMilliseconds()
+            FR.autoRankNextAllowedAt = ComputeNextAllowedTime(nowMs)
 
             if newRankIndex == pendingItem.targetRankIndex then
                 FR.autoRankSucceeded = (FR.autoRankSucceeded or 0) + 1
                 FR.autoRankProcessedCount = (FR.autoRankProcessedCount or 0) + 1
                 taskIdx = taskIdx + 1
                 if FR.autoRanksProgressLbl then
-                    FR.autoRanksProgressLbl:SetText(string.format("Applying: %d / %d", FR.autoRankProcessedCount, FR.autoRankTotalTasks))
+                    FR.autoRanksProgressLbl:SetText(string.format("Applied: %d / %d", FR.autoRankProcessedCount, FR.autoRankTotalTasks))
                 end
+            elseif pendingItem._lastRankBeforeStep and newRankIndex == pendingItem._lastRankBeforeStep then
+                -- Rank did not move (permission boundary reached); do not loop!
+                FR.autoRankSkipped = (FR.autoRankSkipped or 0) + 1
+                FR.autoRankProcessedCount = (FR.autoRankProcessedCount or 0) + 1
+                taskIdx = taskIdx + 1
             else
-                -- Still stepping toward targetRankIndex; keep taskIdx on current item so next tick sends the next step
+                -- Stepped closer to targetRankIndex; next tick after spacing will send the next step
                 if FR.autoRanksProgressLbl then
                     FR.autoRanksProgressLbl:SetText(string.format("Stepping: %d / %d", FR.autoRankProcessedCount, FR.autoRankTotalTasks))
                 end
@@ -629,7 +701,7 @@ function FR:StartAutoRankBatch(guildId)
         end
     end)
 
-    EVENT_MANAGER:RegisterForUpdate("FissalRelay_AutoRankBatch", 50, function()
+    EVENT_MANAGER:RegisterForUpdate("FissalRelay_AutoRankBatch", 100, function()
         if not FR.autoRankBatchRunning then return end
         local now = GetGameTimeMilliseconds()
 
@@ -646,7 +718,7 @@ function FR:StartAutoRankBatch(guildId)
                 FR.autoRankPending = nil
                 FR.autoRankProcessedCount = (FR.autoRankProcessedCount or 0) + 1
                 taskIdx = taskIdx + 1
-                FR.autoRankNextAllowedAt = now + MIN_SPACING_MS
+                FR.autoRankNextAllowedAt = ComputeNextAllowedTime(now)
 
                 if FR.autoRanksProgressLbl then
                     FR.autoRanksProgressLbl:SetText(string.format("Applying: %d / %d", FR.autoRankProcessedCount, FR.autoRankTotalTasks))
@@ -665,6 +737,9 @@ function FR:StartAutoRankBatch(guildId)
             PlaySound(SOUNDS.LEVEL_UP or SOUNDS.GUILD_ROSTER_ADDED)
             FR:EvaluateAutoRanks(guildId)
             FR:UpdateAutoRanksUI()
+            if FR.ScheduleRosterSnapshot then
+                FR:ScheduleRosterSnapshot(3000, guildId)
+            end
             return
         end
 
@@ -676,7 +751,7 @@ function FR:StartAutoRankBatch(guildId)
                 FR.autoRankSkipped = (FR.autoRankSkipped or 0) + 1
                 FR.autoRankProcessedCount = (FR.autoRankProcessedCount or 0) + 1
                 taskIdx = taskIdx + 1
-                FR.autoRankNextAllowedAt = now + 100
+                FR.autoRankNextAllowedAt = now + 150
                 return
             end
 
@@ -689,21 +764,34 @@ function FR:StartAutoRankBatch(guildId)
                 end
                 FR.autoRankProcessedCount = (FR.autoRankProcessedCount or 0) + 1
                 taskIdx = taskIdx + 1
-                FR.autoRankNextAllowedAt = now + 100
+                FR.autoRankNextAllowedAt = now + 150
                 return
             end
 
-            item._stepsSent = (item._stepsSent or 0) + 1
-            if item._stepsSent > 12 then
+            if item._lastRankBeforeStep and currentRank == item._lastRankBeforeStep then
+                -- Previous step did not change the member's rank; abort further steps on this member to prevent spam
                 FR.autoRankTimedOut = (FR.autoRankTimedOut or 0) + 1
                 FR.autoRankProcessedCount = (FR.autoRankProcessedCount or 0) + 1
                 taskIdx = taskIdx + 1
-                FR.autoRankNextAllowedAt = now + MIN_SPACING_MS
+                FR.autoRankNextAllowedAt = ComputeNextAllowedTime(now)
                 return
             end
 
+            local maxNeededSteps = math.abs((currentRank or 1) - (item.targetRankIndex or 1)) + 1
+            item._stepsSent = (item._stepsSent or 0) + 1
+            if item._stepsSent > math.min(maxNeededSteps + 1, 8) then
+                FR.autoRankTimedOut = (FR.autoRankTimedOut or 0) + 1
+                FR.autoRankProcessedCount = (FR.autoRankProcessedCount or 0) + 1
+                taskIdx = taskIdx + 1
+                FR.autoRankNextAllowedAt = ComputeNextAllowedTime(now)
+                return
+            end
+
+            item._lastRankBeforeStep = currentRank
             FR.autoRankPending = item
             FR.autoRankSentAt = now
+            FR.autoRankPacketsSent = (FR.autoRankPacketsSent or 0) + 1
+
             -- In ESO: Lower rankIndex = Higher rank authority
             if currentRank > item.targetRankIndex then
                 GuildPromote(guildId, item.displayName)
@@ -779,13 +867,13 @@ function FR:BuildAutoRanksUI(parent)
     controlRow:SetHeight(28)
     self.autoRanksControlRow = controlRow
 
-    -- Filter Buttons: All (36), Changes (52), Promote (64), Demote (64), Exempt (54)
+    -- Filter Buttons: All (42), Changes (62), Promote (78), Demote (74), Exempt (74) with 6px spacing
     local filters = {
-        { id = "all", label = "All", width = 36 },
-        { id = "changes", label = "Changes", width = 52 },
-        { id = "promote", label = "|t14:14:EsoUI/Art/Buttons/pointsplus_up.dds|t Promote", width = 64 },
-        { id = "demote", label = "|t14:14:EsoUI/Art/Buttons/pointsplus_down.dds|t Demote", width = 64 },
-        { id = "exempt", label = "|t14:14:EsoUI/Art/Campaign/overview_guildOwner_icon.dds|t Exempt", width = 54 },
+        { id = "all", label = "All", width = 42 },
+        { id = "changes", label = "Changes", width = 62 },
+        { id = "promote", label = "|t14:14:EsoUI/Art/Buttons/pointsplus_up.dds|t Promote", width = 78 },
+        { id = "demote", label = "|t14:14:EsoUI/Art/Buttons/pointsplus_down.dds|t Demote", width = 74 },
+        { id = "exempt", label = "|t14:14:EsoUI/Art/Campaign/overview_guildOwner_icon.dds|t Exempt", width = 74 },
     }
     self.autoRankFilterBtns = {}
 
@@ -809,13 +897,13 @@ function FR:BuildAutoRanksUI(parent)
             self:RefreshAutoRanksGrid()
         end)
         self.autoRankFilterBtns[f.id] = btn
-        curX = curX + f.width + 3
+        curX = curX + f.width + 6
     end
 
-    -- Lookback Window cycle button (width 52)
+    -- Lookback Window cycle button (width 64, 6px gap)
     local windowBtn = wm:CreateControl("$(parent)_WindowBtn", controlRow, CT_BUTTON)
-    windowBtn:SetAnchor(TOPLEFT, controlRow, TOPLEFT, curX + 3, 2)
-    windowBtn:SetDimensions(52, 24)
+    windowBtn:SetAnchor(TOPLEFT, controlRow, TOPLEFT, curX, 2)
+    windowBtn:SetDimensions(64, 24)
     windowBtn:SetFont("ZoFontGameSmall")
     windowBtn:SetText("10 Days")
     self:StyleTactileButton(windowBtn, {
@@ -847,10 +935,10 @@ function FR:BuildAutoRanksUI(parent)
     end)
     self.autoRanksWindowBtn = windowBtn
 
-    -- Right Action Buttons: Explicit non-colliding coordinates from TOPRIGHT
+    -- Right Action Buttons: Explicit non-colliding coordinates from TOPRIGHT with 6px spacing
     local applyBtn = wm:CreateControl("$(parent)_ApplyBtn", controlRow, CT_BUTTON)
     applyBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, 0, 2)
-    applyBtn:SetDimensions(116, 24)
+    applyBtn:SetDimensions(134, 24)
     applyBtn:SetFont("ZoFontGameBold")
     applyBtn:SetText("Apply Changes")
     self:StyleTactileButton(applyBtn, {
@@ -862,13 +950,13 @@ function FR:BuildAutoRanksUI(parent)
     })
     applyBtn:SetHandler("OnClicked", function()
         local gId = self:ResolveGuildId(self.selectedGuildIndex or 1)
-        self:StartAutoRankBatch(gId)
+        self:PromptAndStartAutoRankBatch(gId)
     end)
     self.autoRanksApplyBtn = applyBtn
 
     local abortBtn = wm:CreateControl("$(parent)_AbortBtn", controlRow, CT_BUTTON)
     abortBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, 0, 2)
-    abortBtn:SetDimensions(116, 24)
+    abortBtn:SetDimensions(134, 24)
     abortBtn:SetFont("ZoFontGameBold")
     abortBtn:SetText("|cFF5555[STOP / ABORT]|r")
     abortBtn:SetHidden(true)
@@ -885,8 +973,8 @@ function FR:BuildAutoRanksUI(parent)
     self.autoRanksAbortBtn = abortBtn
 
     local evalBtn = wm:CreateControl("$(parent)_EvalBtn", controlRow, CT_BUTTON)
-    evalBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, -120, 2)
-    evalBtn:SetDimensions(68, 24)
+    evalBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, -140, 2)
+    evalBtn:SetDimensions(74, 24)
     evalBtn:SetFont("ZoFontGameBold")
     evalBtn:SetText("Evaluate")
     self:StyleTactileButton(evalBtn, {
@@ -902,10 +990,10 @@ function FR:BuildAutoRanksUI(parent)
         self:UpdateAutoRanksUI()
     end)
 
-    -- [✉ Auto-Welcome] Button (width 106, anchored at -192)
+    -- [✉ Auto-Welcome] Button (width 118, anchored at -220, 6px gap)
     local welcomeBtn = wm:CreateControl("$(parent)_WelcomeBtn", controlRow, CT_BUTTON)
-    welcomeBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, -192, 2)
-    welcomeBtn:SetDimensions(106, 24)
+    welcomeBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, -220, 2)
+    welcomeBtn:SetDimensions(118, 24)
     welcomeBtn:SetFont("ZoFontGameBold")
     welcomeBtn:SetText("✉ Auto-Welcome")
     self:StyleTactileButton(welcomeBtn, {
@@ -922,10 +1010,10 @@ function FR:BuildAutoRanksUI(parent)
     end)
     self.autoRanksWelcomeBtn = welcomeBtn
 
-    -- [⚙ Rank Dues] Button (width 92, anchored at -302)
+    -- [⚙ Rank Dues] Button (width 98, anchored at -344, 6px gap)
     local configBtn = wm:CreateControl("$(parent)_ConfigBtn", controlRow, CT_BUTTON)
-    configBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, -302, 2)
-    configBtn:SetDimensions(92, 24)
+    configBtn:SetAnchor(TOPRIGHT, controlRow, TOPRIGHT, -344, 2)
+    configBtn:SetDimensions(98, 24)
     configBtn:SetFont("ZoFontGameBold")
     configBtn:SetText("⚙ Rank Dues")
     self:StyleTactileButton(configBtn, {
@@ -944,8 +1032,8 @@ function FR:BuildAutoRanksUI(parent)
     self.autoRanksConfigBtn = configBtn
 
     local progLbl = wm:CreateControl("$(parent)_ProgLbl", controlRow, CT_LABEL)
-    progLbl:SetAnchor(LEFT, windowBtn, RIGHT, 6, 0)
-    progLbl:SetAnchor(RIGHT, configBtn, LEFT, -6, 0)
+    progLbl:SetAnchor(LEFT, windowBtn, RIGHT, 4, 0)
+    progLbl:SetAnchor(RIGHT, configBtn, LEFT, -4, 0)
     progLbl:SetHorizontalAlignment(TEXT_ALIGN_CENTER)
     progLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
     progLbl:SetFont("ZoFontGameSmall")
@@ -994,12 +1082,12 @@ function FR:BuildAutoRanksUI(parent)
     end
 
     local hMember = MakeHdrLbl("HMember", masterCheck, LEFT, RIGHT, 8, 175, "MEMBER (@NAME)")
-    local hCurRank = MakeHdrLbl("HCurRank", hMember, LEFT, RIGHT, 6, 115, "CURRENT RANK")
-    local hTgtRank = MakeHdrLbl("HTgtRank", hCurRank, LEFT, RIGHT, 6, 125, "TARGET RANK")
+    local hCurRank = MakeHdrLbl("HCurRank", hMember, LEFT, RIGHT, 6, 120, "CURRENT RANK")
+    local hTgtRank = MakeHdrLbl("HTgtRank", hCurRank, LEFT, RIGHT, 6, 130, "TARGET RANK")
     local hAction = MakeHdrLbl("HAction", hTgtRank, LEFT, RIGHT, 6, 95, "ACTION")
-    local hSales = MakeHdrLbl("HSales", hAction, LEFT, RIGHT, 6, 90, "SALES GOLD")
-    local hDep = MakeHdrLbl("HDep", hSales, LEFT, RIGHT, 6, 85, "BANK DUES")
-    local hNote = MakeHdrLbl("HNote", hDep, LEFT, RIGHT, 6, 130, "ASSESSMENT & NOTES")
+    local hSales = MakeHdrLbl("HSales", hAction, LEFT, RIGHT, 6, 95, "SALES GOLD")
+    local hDep = MakeHdrLbl("HDep", hSales, LEFT, RIGHT, 6, 90, "BANK DUES")
+    local hNote = MakeHdrLbl("HNote", hDep, LEFT, RIGHT, 6, 135, "ASSESSMENT & NOTES")
 
     -- 5. Data Rows (12 Spacious Rows with Mouse Wheel Navigation)
     self.autoRanksGridRows = {}
@@ -1031,14 +1119,14 @@ function FR:BuildAutoRanksUI(parent)
 
         local curRankLbl = wm:CreateControl("$(parent)_CurRank", row, CT_LABEL)
         curRankLbl:SetAnchor(LEFT, memberLbl, RIGHT, 6, 0)
-        curRankLbl:SetDimensions(115, 20)
+        curRankLbl:SetDimensions(120, 20)
         curRankLbl:SetFont("ZoFontGameSmall")
         curRankLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
         curRankLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
 
         local tgtRankLbl = wm:CreateControl("$(parent)_TgtRank", row, CT_LABEL)
         tgtRankLbl:SetAnchor(LEFT, curRankLbl, RIGHT, 6, 0)
-        tgtRankLbl:SetDimensions(125, 20)
+        tgtRankLbl:SetDimensions(130, 20)
         tgtRankLbl:SetFont("ZoFontGameSmall")
         tgtRankLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
         tgtRankLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
@@ -1048,18 +1136,21 @@ function FR:BuildAutoRanksUI(parent)
         actLbl:SetDimensions(95, 20)
         actLbl:SetFont("ZoFontGameSmall")
         actLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+        actLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
 
         local salesLbl = wm:CreateControl("$(parent)_Sales", row, CT_LABEL)
         salesLbl:SetAnchor(LEFT, actLbl, RIGHT, 6, 0)
-        salesLbl:SetDimensions(90, 20)
+        salesLbl:SetDimensions(95, 20)
         salesLbl:SetFont("ZoFontGameSmall")
         salesLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+        salesLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
 
         local depLbl = wm:CreateControl("$(parent)_Dep", row, CT_LABEL)
         depLbl:SetAnchor(LEFT, salesLbl, RIGHT, 6, 0)
-        depLbl:SetDimensions(85, 20)
+        depLbl:SetDimensions(90, 20)
         depLbl:SetFont("ZoFontGameSmall")
         depLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+        depLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
 
         local noteLbl = wm:CreateControl("$(parent)_Note", row, CT_LABEL)
         noteLbl:SetAnchor(LEFT, depLbl, RIGHT, 6, 0)
@@ -1450,6 +1541,10 @@ function FR:BuildRankConfigDrawer(parent)
         self:UpdateAutoRanksUI()
         self.PrintChat("Rank ladder thresholds saved! Roster re-evaluated.")
     end)
+
+    if self.ApplyPopupDrawOrder then
+        self:ApplyPopupDrawOrder(drawer, DT_HIGH)
+    end
 end
 
 function FR:SetAutoRanksTableHidden(hidden)
@@ -1476,6 +1571,9 @@ function FR:OpenRankConfigDrawer()
     self:SetAutoRanksTableHidden(true)
     self:RefreshRankConfigDrawer()
     self.rankConfigDrawer:SetHidden(false)
+    if self.ApplyPopupDrawOrder then
+        self:ApplyPopupDrawOrder(self.rankConfigDrawer, DT_HIGH)
+    end
 end
 
 function FR:CloseRankConfigDrawer()
@@ -2347,7 +2445,7 @@ function FR:BuildAutoWelcomeDrawer(parent)
     for _, t in ipairs(tokens) do
         local tBtn = wm:CreateControl("$(parent)_T_" .. t.label, rightCol, CT_BUTTON)
         tBtn:SetAnchor(TOPLEFT, tokenLbl, BOTTOMLEFT, tX, 4)
-        tBtn:SetDimensions(82, 20)
+        tBtn:SetDimensions(86, 20)
         tBtn:SetFont("ZoFontGameSmall")
         tBtn:SetText(t.label)
         self:StyleTactileButton(tBtn, {
@@ -2364,7 +2462,7 @@ function FR:BuildAutoWelcomeDrawer(parent)
             bodyBox:SetText(cur .. " " .. t.id)
             bodyBox:TakeFocus()
         end)
-        tX = tX + 86
+        tX = tX + 94
     end
 
     -- Save Letter Button
@@ -2391,6 +2489,10 @@ function FR:BuildAutoWelcomeDrawer(parent)
         end
     end)
     self.autoWelcomeSaveBtn = saveBtn
+
+    if self.ApplyPopupDrawOrder then
+        self:ApplyPopupDrawOrder(drawer, DT_HIGH)
+    end
 end
 
 function FR:OpenAutoWelcomeDrawer()
@@ -2401,6 +2503,9 @@ function FR:OpenAutoWelcomeDrawer()
     self:SetAutoRanksTableHidden(true)
     self:RefreshAutoWelcomeDrawer()
     self.autoWelcomeDrawer:SetHidden(false)
+    if self.ApplyPopupDrawOrder then
+        self:ApplyPopupDrawOrder(self.autoWelcomeDrawer, DT_HIGH)
+    end
 end
 
 function FR:CloseAutoWelcomeDrawer()

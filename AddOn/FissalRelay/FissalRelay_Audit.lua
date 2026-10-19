@@ -387,8 +387,8 @@ function FR:BuildAuditorUI(parent)
     for idx, opt in ipairs(dayOptions) do
         local d = opt.days
         local btn = wm:CreateControl("$(parent)_DayBtn_" .. d, card, CT_BUTTON)
-        btn:SetAnchor(TOPLEFT, card, TOPLEFT, 74 + (idx - 1) * 36, 7)
-        btn:SetDimensions(32, 22)
+        btn:SetAnchor(TOPLEFT, card, TOPLEFT, 86 + (idx - 1) * 40, 7)
+        btn:SetDimensions(34, 22)
         btn:SetFont("ZoFontGameSmall")
         btn:SetText(string.format("%dd", d))
         self:StyleTactileButton(btn, {
@@ -409,10 +409,10 @@ function FR:BuildAuditorUI(parent)
         self.auditDayBtns[d] = btn
     end
 
-    -- Toggle: Exclude Officers (anchored cleanly after 30d button at X=222)
+    -- Toggle: Exclude Officers (anchored cleanly after 30d button at X=248, 8px gap)
     local offToggle = wm:CreateControl("$(parent)_OffToggle", card, CT_BUTTON)
-    offToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 222, 7)
-    offToggle:SetDimensions(74, 22)
+    offToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 248, 7)
+    offToggle:SetDimensions(82, 22)
     offToggle:SetFont("ZoFontGameSmall")
     offToggle:SetText("No Officers")
     self:StyleTactileButton(offToggle, {
@@ -432,10 +432,10 @@ function FR:BuildAuditorUI(parent)
     end)
     self.auditOffToggle = offToggle
 
-    -- Toggle: Exclude LOA (anchored cleanly after No Officers at X=300)
+    -- Toggle: Exclude LOA (anchored cleanly after No Officers at X=336, 6px gap)
     local loaToggle = wm:CreateControl("$(parent)_LoaToggle", card, CT_BUTTON)
-    loaToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 300, 7)
-    loaToggle:SetDimensions(68, 22)
+    loaToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 336, 7)
+    loaToggle:SetDimensions(74, 22)
     loaToggle:SetFont("ZoFontGameSmall")
     loaToggle:SetText("No [LOA]")
     self:StyleTactileButton(loaToggle, {
@@ -455,10 +455,10 @@ function FR:BuildAuditorUI(parent)
     end)
     self.auditLoaToggle = loaToggle
 
-    -- Toggle: Shield Active Sellers (Invisible Players) (anchored cleanly at X=372)
+    -- Toggle: Shield Active Sellers (Invisible Players) (anchored cleanly at X=416, 6px gap, width 96)
     local shieldToggle = wm:CreateControl("$(parent)_ShieldToggle", card, CT_BUTTON)
-    shieldToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 372, 7)
-    shieldToggle:SetDimensions(84, 22)
+    shieldToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 416, 7)
+    shieldToggle:SetDimensions(96, 22)
     shieldToggle:SetFont("ZoFontGameSmall")
     shieldToggle:SetText("Shield Sellers")
     self:StyleTactileButton(shieldToggle, {
@@ -478,11 +478,10 @@ function FR:BuildAuditorUI(parent)
     end)
     self.auditShieldToggle = shieldToggle
 
-    -- Rank Filter Cycle Button
     -- Search Box Container (anchored top right)
     local searchBg = wm:CreateControlFromVirtual("$(parent)_SearchBg", card, "ZO_EditBackdrop")
     searchBg:SetAnchor(TOPRIGHT, card, TOPRIGHT, -12, 6)
-    searchBg:SetDimensions(115, 24)
+    searchBg:SetDimensions(120, 24)
 
     local searchBox = wm:CreateControlFromVirtual("$(parent)_Search", searchBg, "ZO_DefaultEditForBackdrop")
     searchBox:SetAnchorFill()
@@ -500,10 +499,10 @@ function FR:BuildAuditorUI(parent)
     end)
     self.auditSearchBox = searchBox
 
-    -- Batch Auto-Processor Button (anchored left of search box)
+    -- Batch Auto-Processor Button (anchored left of search box, 6px gap)
     local batchBtn = wm:CreateControl("$(parent)_BatchBtn", card, CT_BUTTON)
     batchBtn:SetAnchor(RIGHT, searchBg, LEFT, -6, 0)
-    batchBtn:SetDimensions(80, 22)
+    batchBtn:SetDimensions(86, 22)
     batchBtn:SetFont("ZoFontGameBold")
     batchBtn:SetText("Batch Run")
     self:StyleTactileButton(batchBtn, {
@@ -514,17 +513,17 @@ function FR:BuildAuditorUI(parent)
         normalTextColor = { 1, 0.85, 0.20, 1 },
         hoverTextColor = { 1, 0.95, 0.50, 1 },
         tooltipTitle = "Batch Auto-Process",
-        tooltipText = "Sequentially execute all selected/staged actions with safe 1.5s pacing and live progress.",
+        tooltipText = "Sequentially execute all selected/staged actions with safe 1.85s pacing and live progress.",
     })
     batchBtn:SetHandler("OnClicked", function()
         self:StartAuditBatch()
     end)
     self.auditBatchBtn = batchBtn
 
-    -- Permanent Void / Exclusions Manager Button (anchored left of batch button)
+    -- Permanent Void / Exclusions Manager Button (anchored left of batch button, 6px gap)
     local exclusionsBtn = wm:CreateControl("$(parent)_ExclusionsBtn", card, CT_BUTTON)
     exclusionsBtn:SetAnchor(RIGHT, batchBtn, LEFT, -6, 0)
-    exclusionsBtn:SetDimensions(75, 22)
+    exclusionsBtn:SetDimensions(82, 22)
     exclusionsBtn:SetFont("ZoFontGameSmall")
     exclusionsBtn:SetText("Void (0)")
     self:StyleTactileButton(exclusionsBtn, {
@@ -542,10 +541,10 @@ function FR:BuildAuditorUI(parent)
     end)
     self.auditExclusionsBtn = exclusionsBtn
 
-    -- Rank Filter Cycle Button (anchored left of void button)
+    -- Rank Filter Cycle Button (anchored left of void button, 6px gap)
     local rankBtn = wm:CreateControl("$(parent)_RankFilterBtn", card, CT_BUTTON)
     rankBtn:SetAnchor(RIGHT, exclusionsBtn, LEFT, -6, 0)
-    rankBtn:SetDimensions(86, 22)
+    rankBtn:SetDimensions(96, 22)
     rankBtn:SetFont("ZoFontGameSmall")
     rankBtn:SetText("Rank: All")
     self:StyleTactileButton(rankBtn, {
@@ -586,7 +585,7 @@ function FR:BuildAuditorUI(parent)
     self.auditHdrMember = h1
 
     local h2 = wm:CreateControl("$(parent)_H2", colHeader, CT_LABEL)
-    h2:SetAnchor(LEFT, colHeader, LEFT, 190, 0)
+    h2:SetAnchor(LEFT, colHeader, LEFT, 202, 0)
     h2:SetFont("ZoFontGameBold")
     h2:SetText(ColorText("RANK", "00FFCC"))
     h2:SetMouseEnabled(true)
@@ -597,7 +596,7 @@ function FR:BuildAuditorUI(parent)
     self.auditHdrRank = h2
 
     local h3 = wm:CreateControl("$(parent)_H3", colHeader, CT_LABEL)
-    h3:SetAnchor(LEFT, colHeader, LEFT, 300, 0)
+    h3:SetAnchor(LEFT, colHeader, LEFT, 324, 0)
     h3:SetFont("ZoFontGameBold")
     h3:SetText(ColorText("OFFLINE", "FFD700"))
     h3:SetMouseEnabled(true)
@@ -608,7 +607,7 @@ function FR:BuildAuditorUI(parent)
     self.auditHdrOffline = h3
 
     local h4 = wm:CreateControl("$(parent)_H4", colHeader, CT_LABEL)
-    h4:SetAnchor(LEFT, colHeader, LEFT, 370, 0)
+    h4:SetAnchor(LEFT, colHeader, LEFT, 400, 0)
     h4:SetFont("ZoFontGameBold")
     h4:SetText(ColorText("SALES", "59E08A"))
     h4:SetMouseEnabled(true)
@@ -619,7 +618,7 @@ function FR:BuildAuditorUI(parent)
     self.auditHdrSales = h4
 
     local h5 = wm:CreateControl("$(parent)_H5", colHeader, CT_LABEL)
-    h5:SetAnchor(LEFT, colHeader, LEFT, 450, 0)
+    h5:SetAnchor(LEFT, colHeader, LEFT, 492, 0)
     h5:SetFont("ZoFontGameBold")
     h5:SetText(ColorText("DUES", "59E08A"))
     h5:SetMouseEnabled(true)
@@ -630,12 +629,12 @@ function FR:BuildAuditorUI(parent)
     self.auditHdrDues = h5
 
     local h6 = wm:CreateControl("$(parent)_H6", colHeader, CT_LABEL)
-    h6:SetAnchor(LEFT, colHeader, LEFT, 525, 0)
+    h6:SetAnchor(LEFT, colHeader, LEFT, 578, 0)
     h6:SetFont("ZoFontGameBold")
     h6:SetText(ColorText("NOTE / MAIL", "00FFCC"))
 
     local h8 = wm:CreateControl("$(parent)_H8", colHeader, CT_LABEL)
-    h8:SetAnchor(LEFT, colHeader, LEFT, 632, 0)
+    h8:SetAnchor(LEFT, colHeader, LEFT, 704, 0)
     h8:SetFont("ZoFontGameBold")
     h8:SetText(ColorText("ACTION / DISPATCH", "FF9900"))
 
@@ -654,7 +653,7 @@ function FR:BuildAuditorUI(parent)
 
         local nameLbl = wm:CreateControl("$(parent)_Name", row, CT_LABEL)
         nameLbl:SetAnchor(LEFT, row, LEFT, 10, 0)
-        nameLbl:SetDimensions(175, 22)
+        nameLbl:SetDimensions(185, 22)
         nameLbl:SetFont("ZoFontGameMedium")
         nameLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
         nameLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
@@ -662,8 +661,8 @@ function FR:BuildAuditorUI(parent)
         row.nameLbl = nameLbl
 
         local rankLbl = wm:CreateControl("$(parent)_Rank", row, CT_LABEL)
-        rankLbl:SetAnchor(LEFT, row, LEFT, 190, 0)
-        rankLbl:SetDimensions(105, 22)
+        rankLbl:SetAnchor(LEFT, row, LEFT, 202, 0)
+        rankLbl:SetDimensions(115, 22)
         rankLbl:SetFont("ZoFontGameSmall")
         rankLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
         rankLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
@@ -671,32 +670,35 @@ function FR:BuildAuditorUI(parent)
         row.rankLbl = rankLbl
 
         local daysLbl = wm:CreateControl("$(parent)_Days", row, CT_LABEL)
-        daysLbl:SetAnchor(LEFT, row, LEFT, 300, 0)
-        daysLbl:SetDimensions(65, 22)
+        daysLbl:SetAnchor(LEFT, row, LEFT, 324, 0)
+        daysLbl:SetDimensions(70, 22)
         daysLbl:SetFont("ZoFontGameBold")
         daysLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+        daysLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
         daysLbl:SetText("14d")
         row.daysLbl = daysLbl
 
         local salesLbl = wm:CreateControl("$(parent)_Sales", row, CT_LABEL)
-        salesLbl:SetAnchor(LEFT, row, LEFT, 370, 0)
-        salesLbl:SetDimensions(75, 22)
+        salesLbl:SetAnchor(LEFT, row, LEFT, 400, 0)
+        salesLbl:SetDimensions(85, 22)
         salesLbl:SetFont("ZoFontGameSmall")
         salesLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+        salesLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
         salesLbl:SetText("0g")
         row.salesLbl = salesLbl
 
         local duesLbl = wm:CreateControl("$(parent)_Dues", row, CT_LABEL)
-        duesLbl:SetAnchor(LEFT, row, LEFT, 450, 0)
-        duesLbl:SetDimensions(70, 22)
+        duesLbl:SetAnchor(LEFT, row, LEFT, 492, 0)
+        duesLbl:SetDimensions(80, 22)
         duesLbl:SetFont("ZoFontGameSmall")
         duesLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+        duesLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
         duesLbl:SetText("0g")
         row.duesLbl = duesLbl
 
         local noteLbl = wm:CreateControl("$(parent)_Note", row, CT_LABEL)
-        noteLbl:SetAnchor(LEFT, row, LEFT, 525, 0)
-        noteLbl:SetDimensions(102, 22)
+        noteLbl:SetAnchor(LEFT, row, LEFT, 578, 0)
+        noteLbl:SetDimensions(118, 22)
         noteLbl:SetFont("ZoFontGameSmall")
         noteLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
         noteLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
@@ -705,8 +707,8 @@ function FR:BuildAuditorUI(parent)
 
         -- Action Selector Button (Cycles actions across 5 color themes)
         local actionBtn = wm:CreateControl("$(parent)_ActionBtn", row, CT_BUTTON)
-        actionBtn:SetAnchor(LEFT, row, LEFT, 632, 0)
-        actionBtn:SetDimensions(125, 22)
+        actionBtn:SetAnchor(LEFT, row, LEFT, 704, 0)
+        actionBtn:SetDimensions(132, 22)
         actionBtn:SetFont("ZoFontGameSmall")
         row.actionIndex = 1
         row.selectedAction = "Warn Mail"
@@ -726,7 +728,7 @@ function FR:BuildAuditorUI(parent)
 
         local applyBtn = wm:CreateControl("$(parent)_ApplyBtn", row, CT_BUTTON)
         applyBtn:SetAnchor(LEFT, actionBtn, RIGHT, 6, 0)
-        applyBtn:SetDimensions(65, 22)
+        applyBtn:SetDimensions(66, 22)
         applyBtn:SetFont("ZoFontGameBold")
         applyBtn:SetText("Apply")
         self:StyleTactileButton(applyBtn, {
@@ -1154,6 +1156,22 @@ function FR:ApplyAuditAction(m, action, isBatch)
 
         if isBatch then
             DoKickAndMail()
+        elseif self.ShowConfirmModal then
+            self:ShowConfirmModal({
+                title = "CONFIRM KICK & COURTESY MAIL",
+                titleColor = "FF6666",
+                danger = true,
+                body = string.format(
+                    "|cE6C387Member:|r |c00FFCC%s|r\n" ..
+                    "|cE6C387Guild:|r |cFFFFFF%s|r\n" ..
+                    "|cE6C387Offline:|r |cFFD700%d days|r\n\n" ..
+                    "|cCCCCCCRemoves this member from the guild roster and opens the ESO Mail tab pre-filled with a polite courtesy re-invite note.|r",
+                    m.name, guildName, m.days or 0
+                ),
+                confirmText = "Kick & Stage Mail",
+                cancelText = "Cancel",
+                onConfirm = DoKickAndMail,
+            })
         else
             RegisterAuditorCustomDialogs()
             ZO_Dialogs_ShowDialog("FISSAL_CONFIRM_KICK_AND_MAIL", {
@@ -1178,6 +1196,22 @@ function FR:ApplyAuditAction(m, action, isBatch)
 
         if isBatch then
             DoKickOnly()
+        elseif self.ShowConfirmModal then
+            self:ShowConfirmModal({
+                title = "CONFIRM MEMBER REMOVAL",
+                titleColor = "FF5555",
+                danger = true,
+                body = string.format(
+                    "|cE6C387Member:|r |c00FFCC%s|r\n" ..
+                    "|cE6C387Guild:|r |cFFFFFF%s|r\n" ..
+                    "|cE6C387Offline:|r |cFFD700%d days|r\n\n" ..
+                    "|cFF6666Are you sure you want to remove %s from %s?|r",
+                    m.name, guildName, m.days or 0, m.name, guildName
+                ),
+                confirmText = "Remove Member",
+                cancelText = "Cancel",
+                onConfirm = DoKickOnly,
+            })
         else
             RegisterAuditorCustomDialogs()
             ZO_Dialogs_ShowDialog("FISSAL_CONFIRM_KICK_MEMBER", {
@@ -1427,6 +1461,10 @@ function FR:BuildAuditExclusionsDrawer(card)
         end
     end)
     self.auditExclPrevBtn = prevBtn
+
+    if self.ApplyPopupDrawOrder then
+        self:ApplyPopupDrawOrder(drawer, DT_HIGH)
+    end
 end
 
 function FR:SetAuditTableHidden(hidden)
@@ -1464,6 +1502,9 @@ function FR:OpenAuditExclusionsDrawer()
     self:SetAuditTableHidden(true)
     self:RefreshAuditExclusionsDrawer()
     self.auditExclusionsDrawer:SetHidden(false)
+    if self.ApplyPopupDrawOrder then
+        self:ApplyPopupDrawOrder(self.auditExclusionsDrawer, DT_HIGH)
+    end
 end
 
 function FR:CloseAuditExclusionsDrawer()
@@ -1593,6 +1634,10 @@ function FR:BuildAuditBatchProgressPanel(card)
         self:AbortAuditBatch()
     end)
     self.auditBatchAbortBtn = abortBtn
+
+    if self.ApplyPopupDrawOrder then
+        self:ApplyPopupDrawOrder(batchPanel, DT_HIGH)
+    end
 end
 
 function FR:StartAuditBatch()
@@ -1650,19 +1695,37 @@ function FR:StartAuditBatch()
     local skippedMailCount = warnCount + kickMailCount
     local mailNotice = ""
     if skippedMailCount > 0 then
-        mailNotice = string.format("\n\n|cFFCC00Note: %d mail action(s) (Warn Mail / Kick & Mail) require manual ESO mail sending and are excluded from automated batching (first mail will be staged upon completion).|r", skippedMailCount)
+        mailNotice = string.format("\n|cFFCC00Note: %d mail action(s) require manual ESO mail sending (first mail will stage upon completion).|r", skippedMailCount)
     end
-    local summaryStr = string.format("Batch process |c00FFCC%d|r non-mail member action(s) for |cFF9900%s|r?\n\n|cCCCCCCPlanned Batch Actions:|r\n• Kick Only: |cFF4444%d|r\n• Exempt [LOA]: |c59E08A%d|r\n• Void / Hide: |cAA66FF%d|r%s\n\n|cFF9900Actions execute sequentially with 1.5s safe pacing to prevent server throttling.|r",
-        total, guildName, kickCount, loaCount, voidCount, mailNotice)
+    local summaryStr = string.format(
+        "|cE6C387Guild:|r |cFFFFFF%s|r  •  |cE6C387Queued Actions:|r |c00FFCC%d|r\n" ..
+        "• Kick Only: |cFF4444%d|r   • Exempt [LOA]: |c59E08A%d|r   • Void / Hide: |cAA66FF%d|r%s\n\n" ..
+        "|cAAAAAAPolite 1.85s server pacing per action to prevent ESO rate-limiting.|r",
+        guildName, total, kickCount, loaCount, voidCount, mailNotice
+    )
 
-    RegisterAuditorCustomDialogs()
-    ZO_Dialogs_ShowDialog("FISSAL_CONFIRM_AUDIT_BATCH", {
-        onConfirm = function()
-            FR:ExecuteAuditBatchQueue(guildId, queue, firstMailItem)
-        end,
-    }, {
-        mainTextParams = { summaryStr }
-    })
+    if self.ShowConfirmModal then
+        self:ShowConfirmModal({
+            title = "CONFIRM AUDITOR BATCH RUN",
+            titleColor = "FFCC00",
+            danger = (kickCount > 0),
+            body = summaryStr,
+            confirmText = string.format("Run Batch (%d)", total),
+            cancelText = "Cancel",
+            onConfirm = function()
+                FR:ExecuteAuditBatchQueue(guildId, queue, firstMailItem)
+            end,
+        })
+    else
+        RegisterAuditorCustomDialogs()
+        ZO_Dialogs_ShowDialog("FISSAL_CONFIRM_AUDIT_BATCH", {
+            onConfirm = function()
+                FR:ExecuteAuditBatchQueue(guildId, queue, firstMailItem)
+            end,
+        }, {
+            mainTextParams = { summaryStr }
+        })
+    end
 end
 
 function FR:AbortAuditBatch()
@@ -1686,6 +1749,9 @@ function FR:ExecuteAuditBatchQueue(guildId, queue, firstMailItem)
 
     if self.auditBatchProgressPanel then
         self.auditBatchProgressPanel:SetHidden(false)
+        if self.ApplyPopupDrawOrder then
+            self:ApplyPopupDrawOrder(self.auditBatchProgressPanel, DT_HIGH)
+        end
     end
 
     local function ProcessNext()
@@ -1719,7 +1785,7 @@ function FR:ExecuteAuditBatchQueue(guildId, queue, firstMailItem)
 
     ProcessNext()
     EVENT_MANAGER:UnregisterForUpdate("FissalRelay_AuditBatchPacer")
-    EVENT_MANAGER:RegisterForUpdate("FissalRelay_AuditBatchPacer", 1500, ProcessNext)
+    EVENT_MANAGER:RegisterForUpdate("FissalRelay_AuditBatchPacer", 1850, ProcessNext)
 end
 
 function FR:RenderAuditorRows()

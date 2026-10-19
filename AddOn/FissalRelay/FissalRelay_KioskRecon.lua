@@ -1615,6 +1615,13 @@ function FR:ExecuteNextGuildFinderPass()
         return
     end
 
+    if self.autoRankBatchActive or self.isAuditBatchRunning then
+        zo_callLater(function()
+            self:ExecuteNextGuildFinderPass()
+        end, 5000)
+        return
+    end
+
     if st.isSilent and IsGuildBrowserShowing() then
         zo_callLater(function()
             self:ExecuteNextGuildFinderPass()
@@ -1822,6 +1829,13 @@ function FR:ExecuteNextGuildProbe()
         zo_callLater(function()
             self:ExecuteNextGuildProbe()
         end, 4000)
+        return
+    end
+
+    if self.autoRankBatchActive or self.isAuditBatchRunning then
+        zo_callLater(function()
+            self:ExecuteNextGuildProbe()
+        end, 5000)
         return
     end
 

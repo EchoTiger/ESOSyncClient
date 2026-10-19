@@ -3924,7 +3924,7 @@ namespace RedfurSync
 
         private async Task RunDevicePairingAsync()
         {
-            string code = _txtPairingCode.Text.Trim();
+            string code = _txtPairingCode.Text.Replace(" ", "").Replace("-", "").Trim();
             var cfg = AppConfig.Instance;
             if (string.IsNullOrWhiteSpace(code))
             {
@@ -3946,13 +3946,26 @@ namespace RedfurSync
             {
                 cfg.PairingCode = code;
                 cfg.DisplayName = _txtDisplayName.Text.Trim();
+                if (!string.IsNullOrWhiteSpace(_txtServerUrl.Text))
+                    cfg.ServerUrl = _txtServerUrl.Text.Trim();
                 cfg.Save();
 
                 var (paired, message) = await _watcher.PairDeviceAsync();
 
                 if (paired)
                 {
+                    _txtPairingCode.Text = string.Empty;
                     RefreshSetupView();
+                    try
+                    {
+                        if (!string.IsNullOrWhiteSpace(cfg.DisplayName))
+                        {
+                            using var svc = new UploadService(cfg);
+                            var labelTask = svc.UpdateDeviceLabelAsync(cfg.DisplayName);
+                            await System.Threading.Tasks.Task.WhenAny(labelTask, System.Threading.Tasks.Task.Delay(3000));
+                        }
+                    }
+                    catch { }
                     FissalBox.Show(message, "Pairing Complete");
                     _ = _watcher.StartAsync();
                 }

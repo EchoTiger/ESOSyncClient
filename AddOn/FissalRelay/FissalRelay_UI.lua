@@ -726,6 +726,9 @@ function FR:CreateBumperUI()
     bumper:SetClampedToScreen(true)
     bumper:SetMouseEnabled(true)
     bumper:SetMovable(true)
+    bumper:SetDrawLayer(DL_OVERLAY)
+    bumper:SetDrawTier(DT_HIGH)
+    bumper:SetDrawLevel(75)
 
     -- Initially hidden so it doesn't pop up on login/world entry
     bumper:SetHidden(true)
@@ -751,8 +754,8 @@ function FR:CreateBumperUI()
     -- 2. Dark Tinted Backdrop
     local backdrop = wm:CreateControl("$(parent)_Backdrop", bumper, CT_BACKDROP)
     backdrop:SetAnchorFill()
-    backdrop:SetCenterColor(0.04, 0.04, 0.06, 0.88)
-    backdrop:SetEdgeColor(0.20, 0.17, 0.12, 0.92)
+    backdrop:SetCenterColor(0.04, 0.04, 0.06, 0.94)
+    backdrop:SetEdgeColor(0.75, 0.50, 0.10, 0.92)
     backdrop:SetEdgeTexture("", 8, 1, 0)
 
     -- 3. Munge Bezel Texture
@@ -817,16 +820,18 @@ function FR:CreateBumperUI()
         checkBtn:SetFont("ZoFontGameBold")
         checkBtn:SetText("[ ]")
 
-        local nameLbl = wm:CreateControl("$(parent)_Name", row, CT_LABEL)
-        nameLbl:SetAnchor(LEFT, checkBtn, RIGHT, 6, 0)
-        nameLbl:SetFont("ZoFontGame")
-        nameLbl:SetText("--")
-
         local kioskBadge = wm:CreateControl("$(parent)_Kiosk", row, CT_LABEL)
         kioskBadge:SetAnchor(RIGHT, row, RIGHT, -4, 0)
         kioskBadge:SetFont("ZoFontGameSmall")
         kioskBadge:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
         kioskBadge:SetText("")
+
+        local nameLbl = wm:CreateControl("$(parent)_Name", row, CT_LABEL)
+        nameLbl:SetAnchor(LEFT, checkBtn, RIGHT, 6, 0)
+        nameLbl:SetAnchor(RIGHT, kioskBadge, LEFT, -6, 0)
+        nameLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+        nameLbl:SetFont("ZoFontGame")
+        nameLbl:SetText("--")
 
         self.bumperGuildRows[i] = {
             control = row,
@@ -955,6 +960,16 @@ function FR:CreateBumperUI()
     bumpBtn:SetNormalFontColor(0, 1, 0.8, 1)
     bumpBtn:SetMouseOverFontColor(1, 0.9, 0.4, 1)
     bumpBtn:SetText("Bump Selected")
+    if self.StyleTactileButton then
+        self:StyleTactileButton(bumpBtn, {
+            normalBg = { 0.04, 0.14, 0.14, 0.90 },
+            hoverBg = { 0.06, 0.22, 0.22, 0.98 },
+            normalEdge = { 0, 0.75, 0.65, 0.85 },
+            hoverEdge = { 0, 1.00, 0.90, 1.00 },
+            normalTextColor = { 0, 1, 0.8, 1 },
+            hoverTextColor = { 0.5, 1, 0.9, 1 },
+        })
+    end
     bumpBtn:SetHandler("OnClicked", function()
         if self.isBumping then
             self:CancelBump()
@@ -989,6 +1004,9 @@ function FR:CreateBumperUI()
     self.bumperReloadBtn = nil  -- no longer a standalone button (H7)
 
     -- 18. Guild Store Scene Integration (Only visible when store opens, or toggled)
+    if self.ApplyPopupDrawOrder then
+        self:ApplyPopupDrawOrder(bumper, DT_HIGH, 75)
+    end
     self.bumperWindow = bumper
 
     if TRADING_HOUSE_SCENE then
@@ -1001,6 +1019,12 @@ function FR:CreateBumperUI()
                         self.bumperWindow:SetAnchor(TOPRIGHT, ZO_TradingHouse, TOPLEFT, -15, 60)
                     end
                     self.bumperWindow:SetHidden(false)
+                    if self.ApplyPopupDrawOrder then
+                        self:ApplyPopupDrawOrder(self.bumperWindow, DT_HIGH, 75)
+                    end
+                    if self.bumperWindow.BringWindowToTop then
+                        self.bumperWindow:BringWindowToTop()
+                    end
                     self:UpdateBumperUI()
                 end
             elseif newState == SCENE_HIDING or newState == SCENE_HIDDEN then
@@ -1145,6 +1169,12 @@ function FR:ToggleBumperUI(show)
     if self.bumperWindow then
         self.bumperWindow:SetHidden(not show)
         if show then
+            if self.ApplyPopupDrawOrder then
+                self:ApplyPopupDrawOrder(self.bumperWindow, DT_HIGH, 75)
+            end
+            if self.bumperWindow.BringWindowToTop then
+                self.bumperWindow:BringWindowToTop()
+            end
             self:UpdateBumperUI()
         end
     end

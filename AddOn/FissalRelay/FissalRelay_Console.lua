@@ -20,12 +20,13 @@
 FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
-local CONSOLE_WIDTH = 880
-local CONSOLE_HEIGHT = 620
+local CONSOLE_WIDTH = 960
+local CONSOLE_HEIGHT = 650
 
 FR.selectedGuildIndex = 1
 FR.activeConsoleTab = 1
 FR.consoleTabs = {}
+FR._nextPopupDrawLevel = 200
 
 --[[ =========================================================================
      UTILITY & COLOR HELPERS
@@ -47,6 +48,206 @@ local function FormatGold(amount)
         if k == 0 then break end
     end
     return formatted
+end
+
+--[[ =========================================================================
+     POPUP Z-ORDER & CLOCKWORK MODAL ENGINE
+========================================================================= ]]--
+
+function FR:ApplyPopupDrawOrder(rootCtrl, tier, baseLevel)
+    if not rootCtrl then return end
+    tier = tier or DT_HIGH
+    if not baseLevel then
+        self._nextPopupDrawLevel = (self._nextPopupDrawLevel or 200) + 30
+        baseLevel = self._nextPopupDrawLevel
+    end
+
+    local function ApplyRecursive(ctrl, depth)
+        if not ctrl then return end
+        local cType = ctrl.GetType and ctrl:GetType() or nil
+        if ctrl.SetDrawTier then ctrl:SetDrawTier(tier) end
+
+        if depth == 0 and cType == CT_TOPLEVELCONTROL then
+            if ctrl.SetDrawLayer then ctrl:SetDrawLayer(DL_OVERLAY) end
+            if ctrl.SetDrawLevel then ctrl:SetDrawLevel(baseLevel) end
+        elseif depth == 0 or cType == CT_BACKDROP or cType == CT_TEXTURE then
+            if ctrl.SetDrawLayer then ctrl:SetDrawLayer(DL_BACKGROUND) end
+            if ctrl.SetDrawLevel then ctrl:SetDrawLevel(baseLevel + depth * 2) end
+        else
+            if ctrl.SetDrawLayer then ctrl:SetDrawLayer(DL_CONTROLS) end
+            if ctrl.SetDrawLevel then ctrl:SetDrawLevel(baseLevel + depth * 2 + 1) end
+        end
+
+        if ctrl.GetNumChildren and ctrl.GetChild then
+            local numCh = ctrl:GetNumChildren() or 0
+            for i = 1, numCh do
+                local ch = ctrl:GetChild(i)
+                if ch then
+                    ApplyRecursive(ch, depth + 1)
+                end
+            end
+        end
+    end
+
+    ApplyRecursive(rootCtrl, 0)
+    if rootCtrl.BringWindowToTop then
+        rootCtrl:BringWindowToTop()
+    end
+end
+
+function FR:ShowConfirmModal(opts)
+    opts = opts or {}
+    local wm = WINDOW_MANAGER
+
+    if not self.confirmModal then
+        local modal = wm:CreateTopLevelWindow("FissalRelay_ConfirmModal")
+        modal:SetDimensions(500, 270)
+        modal:SetAnchor(CENTER, GuiRoot, CENTER, 0, -20)
+        modal:SetMouseEnabled(true)
+        modal:SetMovable(true)
+        modal:SetClampedToScreen(true)
+        modal:SetHidden(true)
+
+        if UISpecialWindows then
+            table.insert(UISpecialWindows, "FissalRelay_ConfirmModal")
+        end
+
+        local bg = wm:CreateControl("$(parent)_Bg", modal, CT_BACKDROP)
+        bg:SetAnchorFill()
+        bg:SetCenterColor(0.03, 0.03, 0.05, 0.98)
+        bg:SetEdgeColor(0.88, 0.62, 0.15, 1.0)
+        bg:SetEdgeTexture("", 8, 2, 0)
+
+        local munge = wm:CreateControl("$(parent)_Munge", modal, CT_TEXTURE)
+        munge:SetAnchorFill()
+        munge:SetTexture("EsoUI/Art/Performance/StatusMeterMunge.dds")
+        munge:SetAlpha(0.55)
+
+        local hdrBar = wm:CreateControl("$(parent)_HeaderBar", modal, CT_BACKDROP)
+        hdrBar:SetAnchor(TOPLEFT, modal, TOPLEFT, 4, 4)
+        hdrBar:SetAnchor(TOPRIGHT, modal, TOPRIGHT, -4, 4)
+        hdrBar:SetHeight(34)
+        hdrBar:SetCenterColor(0.10, 0.08, 0.03, 0.96)
+        hdrBar:SetEdgeColor(0.65, 0.45, 0.12, 0.70)
+        hdrBar:SetEdgeTexture("", 1, 1, 0)
+        modal.hdrBar = hdrBar
+
+        local icon = wm:CreateControl("$(parent)_Icon", hdrBar, CT_TEXTURE)
+        icon:SetAnchor(LEFT, hdrBar, LEFT, 10, 0)
+        icon:SetDimensions(20, 20)
+        icon:SetTexture("EsoUI/Art/Miscellaneous/eso_icon_warning.dds")
+
+        local titleLbl = wm:CreateControl("$(parent)_Title", hdrBar, CT_LABEL)
+        titleLbl:SetAnchor(LEFT, icon, RIGHT, 8, 0)
+        titleLbl:SetAnchor(RIGHT, hdrBar, RIGHT, -36, 0)
+        titleLbl:SetFont("ZoFontGameBold")
+        titleLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+        titleLbl:SetText(ColorText("CONFIRM OPERATION", "FFCC00"))
+        modal.titleLbl = titleLbl
+
+        local closeBtn = wm:CreateControl("$(parent)_Close", hdrBar, CT_BUTTON)
+        closeBtn:SetAnchor(RIGHT, hdrBar, RIGHT, -8, 0)
+        closeBtn:SetDimensions(22, 22)
+        closeBtn:SetFont("ZoFontGameBold")
+        closeBtn:SetText("X")
+        self:StyleTactileButton(closeBtn, {
+            normalBg = { 0.14, 0.05, 0.05, 0.90 },
+            hoverBg = { 0.28, 0.08, 0.08, 0.98 },
+            normalEdge = { 0.60, 0.20, 0.20, 0.80 },
+            hoverEdge = { 1.0, 0.35, 0.35, 1.0 },
+            normalTextColor = { 0.9, 0.6, 0.6, 1 },
+            hoverTextColor = { 1, 1, 1, 1 },
+        })
+        closeBtn:SetHandler("OnClicked", function()
+            modal:SetHidden(true)
+            if modal.onCancel then modal.onCancel() end
+        end)
+
+        local bodyCard = wm:CreateControl("$(parent)_BodyCard", modal, CT_BACKDROP)
+        bodyCard:SetAnchor(TOPLEFT, modal, TOPLEFT, 14, 48)
+        bodyCard:SetAnchor(BOTTOMRIGHT, modal, BOTTOMRIGHT, -14, -54)
+        bodyCard:SetCenterColor(0.06, 0.06, 0.09, 0.95)
+        bodyCard:SetEdgeColor(0.35, 0.28, 0.16, 0.80)
+        bodyCard:SetEdgeTexture("", 1, 1, 0)
+
+        local bodyLbl = wm:CreateControl("$(parent)_BodyLbl", bodyCard, CT_LABEL)
+        bodyLbl:SetAnchor(TOPLEFT, bodyCard, TOPLEFT, 12, 10)
+        bodyLbl:SetAnchor(BOTTOMRIGHT, bodyCard, BOTTOMRIGHT, -12, -10)
+        bodyLbl:SetFont("ZoFontGame")
+        bodyLbl:SetText("")
+        modal.bodyLbl = bodyLbl
+
+        local cancelBtn = wm:CreateControl("$(parent)_CancelBtn", modal, CT_BUTTON)
+        cancelBtn:SetAnchor(BOTTOMRIGHT, modal, BOTTOMRIGHT, -14, -12)
+        cancelBtn:SetDimensions(120, 30)
+        cancelBtn:SetFont("ZoFontGameBold")
+        cancelBtn:SetText("Cancel")
+        self:StyleTactileButton(cancelBtn, {
+            normalBg = { 0.10, 0.10, 0.14, 0.92 },
+            hoverBg = { 0.18, 0.18, 0.24, 0.98 },
+            normalEdge = { 0.45, 0.45, 0.55, 0.85 },
+            hoverEdge = { 0.80, 0.80, 0.90, 1.0 },
+            normalTextColor = { 0.85, 0.85, 0.85, 1 },
+            hoverTextColor = { 1, 1, 1, 1 },
+        })
+        cancelBtn:SetHandler("OnClicked", function()
+            modal:SetHidden(true)
+            if modal.onCancel then modal.onCancel() end
+        end)
+        modal.cancelBtn = cancelBtn
+
+        local confirmBtn = wm:CreateControl("$(parent)_ConfirmBtn", modal, CT_BUTTON)
+        confirmBtn:SetAnchor(RIGHT, cancelBtn, LEFT, -12, 0)
+        confirmBtn:SetDimensions(164, 30)
+        confirmBtn:SetFont("ZoFontGameBold")
+        confirmBtn:SetText("Confirm")
+        self:StyleTactileButton(confirmBtn, {
+            normalBg = { 0.04, 0.16, 0.12, 0.95 },
+            hoverBg = { 0.06, 0.24, 0.18, 1.0 },
+            normalEdge = { 0, 0.85, 0.65, 0.90 },
+            hoverEdge = { 0.2, 1.0, 0.85, 1.0 },
+            normalTextColor = { 0.35, 0.95, 0.65, 1 },
+            hoverTextColor = { 1, 1, 1, 1 },
+        })
+        confirmBtn:SetHandler("OnClicked", function()
+            modal:SetHidden(true)
+            if modal.onConfirm then modal.onConfirm() end
+        end)
+        modal.confirmBtn = confirmBtn
+
+        self.confirmModal = modal
+    end
+
+    local modal = self.confirmModal
+    modal.titleLbl:SetText(ColorText(opts.title or "CONFIRM OPERATION", opts.titleColor or "FFCC00"))
+    modal.bodyLbl:SetText(opts.body or "")
+    modal.confirmBtn:SetText(opts.confirmText or "Confirm")
+    modal.cancelBtn:SetText(opts.cancelText or "Cancel")
+    modal.onConfirm = opts.onConfirm
+    modal.onCancel = opts.onCancel
+
+    if opts.danger then
+        self:UpdateTactileTheme(modal.confirmBtn, {
+            normalBg = { 0.20, 0.05, 0.05, 0.95 },
+            hoverBg = { 0.32, 0.08, 0.08, 1.0 },
+            normalEdge = { 0.90, 0.25, 0.25, 0.95 },
+            hoverEdge = { 1.0, 0.45, 0.45, 1.0 },
+            normalTextColor = { 1, 0.55, 0.55, 1 },
+            hoverTextColor = { 1, 1, 1, 1 },
+        })
+    else
+        self:UpdateTactileTheme(modal.confirmBtn, {
+            normalBg = { 0.04, 0.16, 0.12, 0.95 },
+            hoverBg = { 0.06, 0.24, 0.18, 1.0 },
+            normalEdge = { 0, 0.85, 0.65, 0.90 },
+            hoverEdge = { 0.2, 1.0, 0.85, 1.0 },
+            normalTextColor = { 0.35, 0.95, 0.65, 1 },
+            hoverTextColor = { 1, 1, 1, 1 },
+        })
+    end
+
+    modal:SetHidden(false)
+    self:ApplyPopupDrawOrder(modal, DT_HIGH)
 end
 
 --[[ =========================================================================
@@ -72,6 +273,9 @@ function FR:StyleTactileButton(btn, opts)
     end
     bg:SetCenterColor(unpack(normalBg))
     bg:SetEdgeColor(unpack(normalEdge))
+    if btn.GetDrawTier and bg.SetDrawTier then
+        bg:SetDrawTier(btn:GetDrawTier() or DT_LOW)
+    end
     btn.bg = bg
 
     btn:SetNormalFontColor(unpack(normalText))
@@ -147,9 +351,12 @@ function FR:CreateConsoleUI()
 
     local wm = WINDOW_MANAGER
 
-    -- 1. Main TopLevelWindow (Draggable, movable, clamped to screen)
+    -- 1. Main TopLevelWindow (Draggable, movable, clamped to screen, DT_MEDIUM so DT_HIGH popups never fall behind)
     local console = wm:CreateTopLevelWindow("FissalRelay_Console")
     console:SetDimensions(CONSOLE_WIDTH, CONSOLE_HEIGHT)
+    console:SetDrawTier(DT_MEDIUM)
+    console:SetDrawLayer(DL_CONTROLS)
+    console:SetDrawLevel(10)
     console:SetClampedToScreen(true)
     console:SetMouseEnabled(true)
     console:SetMovable(true)
@@ -214,7 +421,7 @@ function FR:CreateConsoleUI()
     title:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     title:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
     title:SetFont("ZoFontGameBold")
-    title:SetText(string.format("|cFF9900FISSAL RELAY PRIME|r  |c00FFCCCOMMAND CONSOLE|r  |c888888v%s|r", self.version or "1.9.0"))
+    title:SetText(string.format("|cFF9900FISSAL RELAY PRIME|r  |c00FFCCCOMMAND CONSOLE|r  |c888888v%s|r", self.version or "1.9.1"))
 
     -- 7. Top Divider Line
     local topDiv = wm:CreateControl("$(parent)_DivTop", console, CT_TEXTURE)
@@ -223,15 +430,15 @@ function FR:CreateConsoleUI()
     topDiv:SetHeight(1)
     topDiv:SetColor(0.8, 0.5, 0.1, 0.4)
 
-    -- 8. Guild Switcher Tabs (Row 1 under title)
+    -- 8. Guild Switcher Tabs (Row 1 under title, 8px spacing)
     self.guildButtons = {}
-    local numGuilds = math.min(math.max(GetNumGuilds(), 1), 5)
-    local tabWidth = math.floor((CONSOLE_WIDTH - 24) / numGuilds)
+    local guildGap = 8
+    local defaultSlot = math.floor((CONSOLE_WIDTH - 24 + guildGap) / 5)
 
     for i = 1, 5 do
         local gBtn = wm:CreateControl("$(parent)_GuildTab_" .. i, console, CT_BUTTON)
-        gBtn:SetAnchor(TOPLEFT, console, TOPLEFT, 12 + (i - 1) * tabWidth, 48)
-        gBtn:SetDimensions(tabWidth - 4, 24)
+        gBtn:SetAnchor(TOPLEFT, console, TOPLEFT, 12 + (i - 1) * defaultSlot, 48)
+        gBtn:SetDimensions(defaultSlot - guildGap, 24)
         gBtn:SetFont("ZoFontGameSmall")
         self:StyleTactileButton(gBtn, {
             normalBg = { 0.05, 0.05, 0.07, 0.85 },
@@ -249,7 +456,7 @@ function FR:CreateConsoleUI()
         self.guildButtons[i] = gBtn
     end
 
-    -- 9. Navigation Tab Bar (Row 2: Overview, MotD Studio, Auditor, Kiosk Recon, TTC, Auto-Ranks)
+    -- 9. Navigation Tab Bar (Row 2: Overview, MotD Studio, Auditor, Kiosk Recon, TTC, Auto-Ranks, 8px spacing)
     local navNames = {
         { id = 1, label = "Overview", desc = "Live guild telemetry, roster count, trader kiosk status, and LibHistoire pipeline health." },
         { id = 2, label = "MotD Studio", desc = "Compose, preview, and broadcast Guild Message of the Day with dynamic live tokens." },
@@ -260,12 +467,13 @@ function FR:CreateConsoleUI()
     }
 
     self.navButtons = {}
-    local navWidth = math.floor((CONSOLE_WIDTH - 24) / #navNames)
+    local navGap = 8
+    local navSlot = math.floor((CONSOLE_WIDTH - 24 + navGap) / #navNames)
 
     for idx, nav in ipairs(navNames) do
         local nBtn = wm:CreateControl("$(parent)_NavTab_" .. nav.id, console, CT_BUTTON)
-        nBtn:SetAnchor(TOPLEFT, console, TOPLEFT, 12 + (idx - 1) * navWidth, 78)
-        nBtn:SetDimensions(navWidth - 4, 26)
+        nBtn:SetAnchor(TOPLEFT, console, TOPLEFT, 12 + (idx - 1) * navSlot, 78)
+        nBtn:SetDimensions(navSlot - navGap, 26)
         nBtn:SetFont("ZoFontGameBold")
         nBtn:SetText(nav.label)
         self:StyleTactileButton(nBtn, {
@@ -873,7 +1081,8 @@ function FR:SelectConsoleGuild(guildIndex)
     if guildIndex < 1 or guildIndex > rawGuilds then guildIndex = 1 end
     self.selectedGuildIndex = guildIndex
 
-    local tabWidth = math.floor((CONSOLE_WIDTH - 24) / numGuilds)
+    local guildGap = 8
+    local tabSlot = math.floor((CONSOLE_WIDTH - 24 + guildGap) / numGuilds)
 
     -- Update guild buttons visual state and dynamically distribute horizontally
     for i = 1, 5 do
@@ -883,8 +1092,8 @@ function FR:SelectConsoleGuild(guildIndex)
                 local gId = GetGuildId(i)
                 local name = GetGuildName(gId)
                 btn:ClearAnchors()
-                btn:SetAnchor(TOPLEFT, self.consoleWindow, TOPLEFT, 12 + (i - 1) * tabWidth, 48)
-                btn:SetDimensions(tabWidth - 4, 24)
+                btn:SetAnchor(TOPLEFT, self.consoleWindow, TOPLEFT, 12 + (i - 1) * tabSlot, 48)
+                btn:SetDimensions(tabSlot - guildGap, 24)
                 btn:SetHidden(false)
                 btn:SetText(name ~= "" and name or ("Guild " .. i))
                 if btn.bg then
@@ -901,6 +1110,9 @@ function FR:SelectConsoleGuild(guildIndex)
                     end
                 end
             else
+                btn:ClearAnchors()
+                btn:SetAnchor(TOPLEFT, self.consoleWindow, TOPLEFT, 12, 48)
+                btn:SetDimensions(120, 24)
                 btn:SetHidden(true)
             end
         end

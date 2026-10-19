@@ -498,8 +498,8 @@ function FR:BuildBidsReconUI(parent)
         end
 
         local gBtn = wm:CreateControl("$(parent)_G_" .. gId, filterBar, CT_BUTTON)
-        gBtn:SetAnchor(LEFT, prevCtrl, RIGHT, 5, 0)
-        gBtn:SetDimensions(68, 22)
+        gBtn:SetAnchor(LEFT, prevCtrl, RIGHT, 6, 0)
+        gBtn:SetDimensions(72, 22)
         gBtn:SetFont("ZoFontGameSmall")
         gBtn:SetText(shortName)
         self:StyleTactileButton(gBtn, {
@@ -523,7 +523,7 @@ function FR:BuildBidsReconUI(parent)
     -- Round / Week Filters on the Right: [Active Round] [Prior Round] [All Rounds]
     local allRoundsBtn = wm:CreateControl("$(parent)_R_ALL", filterBar, CT_BUTTON)
     allRoundsBtn:SetAnchor(RIGHT, filterBar, RIGHT, 0, 0)
-    allRoundsBtn:SetDimensions(75, 22)
+    allRoundsBtn:SetDimensions(82, 22)
     allRoundsBtn:SetFont("ZoFontGameSmall")
     allRoundsBtn:SetText("All History")
     self:StyleTactileButton(allRoundsBtn, {
@@ -543,7 +543,7 @@ function FR:BuildBidsReconUI(parent)
 
     local priorRoundBtn = wm:CreateControl("$(parent)_R_PRIOR", filterBar, CT_BUTTON)
     priorRoundBtn:SetAnchor(RIGHT, allRoundsBtn, LEFT, -6, 0)
-    priorRoundBtn:SetDimensions(85, 22)
+    priorRoundBtn:SetDimensions(90, 22)
     priorRoundBtn:SetFont("ZoFontGameSmall")
     priorRoundBtn:SetText("Prior Round")
     self:StyleTactileButton(priorRoundBtn, {
@@ -564,7 +564,7 @@ function FR:BuildBidsReconUI(parent)
 
     local activeRoundBtn = wm:CreateControl("$(parent)_R_CURRENT", filterBar, CT_BUTTON)
     activeRoundBtn:SetAnchor(RIGHT, priorRoundBtn, LEFT, -6, 0)
-    activeRoundBtn:SetDimensions(90, 22)
+    activeRoundBtn:SetDimensions(102, 22)
     activeRoundBtn:SetFont("ZoFontGameBold")
     activeRoundBtn:SetText("Active Round")
     self:StyleTactileButton(activeRoundBtn, {
@@ -642,12 +642,12 @@ function FR:BuildBidsReconUI(parent)
         return btn
     end
 
-    self.bidsH1 = MakeSortHeader("H1", colHeader, LEFT, LEFT, 8, 125, "GUILD ▲", "guild")
-    self.bidsH2 = MakeSortHeader("H2", self.bidsH1, LEFT, RIGHT, 6, 235, "KIOSK TRADER & LOCATION", "kiosk")
-    self.bidsH3 = MakeSortHeader("H3", self.bidsH2, LEFT, RIGHT, 6, 105, "BIDDER", "bidder")
-    self.bidsH4 = MakeSortHeader("H4", self.bidsH3, LEFT, RIGHT, 6, 115, "AMOUNT", "amount")
-    self.bidsH5 = MakeSortHeader("H5", self.bidsH4, LEFT, RIGHT, 6, 135, "STATUS", "status")
-    self.bidsH6 = MakeSortHeader("H6", self.bidsH5, LEFT, RIGHT, 6, 95, "DATE / AGE", "timestamp")
+    self.bidsH1 = MakeSortHeader("H1", colHeader, LEFT, LEFT, 8, 140, "GUILD ▲", "guild")
+    self.bidsH2 = MakeSortHeader("H2", self.bidsH1, LEFT, RIGHT, 8, 240, "KIOSK TRADER & LOCATION", "kiosk")
+    self.bidsH3 = MakeSortHeader("H3", self.bidsH2, LEFT, RIGHT, 8, 120, "BIDDER", "bidder")
+    self.bidsH4 = MakeSortHeader("H4", self.bidsH3, LEFT, RIGHT, 8, 155, "AMOUNT", "amount")
+    self.bidsH5 = MakeSortHeader("H5", self.bidsH4, LEFT, RIGHT, 8, 125, "STATUS", "status")
+    self.bidsH6 = MakeSortHeader("H6", self.bidsH5, LEFT, RIGHT, 8, 88, "DATE / AGE", "timestamp")
 
     -- 6. Table Rows (10 Spacious Rows with Alternating Shading)
     self.bidsRows = {}
@@ -666,47 +666,50 @@ function FR:BuildBidsReconUI(parent)
 
         local col1 = wm:CreateControl("$(parent)_Col1", row, CT_LABEL)
         col1:SetAnchor(LEFT, row, LEFT, 8, 0)
-        col1:SetDimensions(125, 20)
+        col1:SetDimensions(140, 20)
         col1:SetFont("ZoFontGameMedium")
         col1:SetVerticalAlignment(TEXT_ALIGN_CENTER)
         col1:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
         row.col1 = col1
 
         local col2 = wm:CreateControl("$(parent)_Col2", row, CT_LABEL)
-        col2:SetAnchor(LEFT, col1, RIGHT, 6, 0)
-        col2:SetDimensions(235, 20)
+        col2:SetAnchor(LEFT, col1, RIGHT, 8, 0)
+        col2:SetDimensions(240, 20)
         col2:SetFont("ZoFontGameSmall")
         col2:SetVerticalAlignment(TEXT_ALIGN_CENTER)
         col2:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
         row.col2 = col2
 
         local col3 = wm:CreateControl("$(parent)_Col3", row, CT_LABEL)
-        col3:SetAnchor(LEFT, col2, RIGHT, 6, 0)
-        col3:SetDimensions(105, 20)
+        col3:SetAnchor(LEFT, col2, RIGHT, 8, 0)
+        col3:SetDimensions(120, 20)
         col3:SetFont("ZoFontGameSmall")
         col3:SetVerticalAlignment(TEXT_ALIGN_CENTER)
         col3:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
         row.col3 = col3
 
         local col4 = wm:CreateControl("$(parent)_Col4", row, CT_LABEL)
-        col4:SetAnchor(LEFT, col3, RIGHT, 6, 0)
-        col4:SetDimensions(115, 20)
+        col4:SetAnchor(LEFT, col3, RIGHT, 8, 0)
+        col4:SetDimensions(155, 20)
         col4:SetFont("ZoFontGameBold")
         col4:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+        col4:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
         row.col4 = col4
 
         local col5 = wm:CreateControl("$(parent)_Col5", row, CT_LABEL)
-        col5:SetAnchor(LEFT, col4, RIGHT, 6, 0)
-        col5:SetDimensions(135, 20)
+        col5:SetAnchor(LEFT, col4, RIGHT, 8, 0)
+        col5:SetDimensions(125, 20)
         col5:SetFont("ZoFontGameSmall")
         col5:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+        col5:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
         row.col5 = col5
 
         local col6 = wm:CreateControl("$(parent)_Col6", row, CT_LABEL)
-        col6:SetAnchor(LEFT, col5, RIGHT, 6, 0)
+        col6:SetAnchor(LEFT, col5, RIGHT, 8, 0)
         col6:SetAnchor(RIGHT, row, RIGHT, -8, 0)
         col6:SetFont("ZoFontGameSmall")
         col6:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+        col6:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
         row.col6 = col6
 
         row:SetHandler("OnMouseEnter", function(control)

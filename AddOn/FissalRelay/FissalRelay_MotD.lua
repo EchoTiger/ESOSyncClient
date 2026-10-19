@@ -600,7 +600,7 @@ function FR:BuildMotDStudio(parent)
         cBtn:SetHandler("OnClicked", function()
             self:InsertTokenIntoMotDEditBox(c.token)
         end)
-        xOff1 = xOff1 + c.width + 5
+        xOff1 = xOff1 + c.width + 6
     end
 
     -- Row 2: Date Bounds & Guild Operations Tokens
@@ -788,8 +788,8 @@ function FR:BuildMotDStudio(parent)
     self.selectedMotDWeekCycle = "live"
 
     local undoBtn = wm:CreateControl("$(parent)_UndoBtn", card, CT_BUTTON)
-    undoBtn:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -170, 48)
-    undoBtn:SetDimensions(62, 24)
+    undoBtn:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -179, 48)
+    undoBtn:SetDimensions(64, 24)
     undoBtn:SetFont("ZoFontGameSmall")
     undoBtn:SetText("↶ Undo")
     self:StyleTactileButton(undoBtn, {
@@ -807,8 +807,8 @@ function FR:BuildMotDStudio(parent)
     end)
 
     local redoBtn = wm:CreateControl("$(parent)_RedoBtn", card, CT_BUTTON)
-    redoBtn:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -104, 48)
-    redoBtn:SetDimensions(62, 24)
+    redoBtn:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -107, 48)
+    redoBtn:SetDimensions(64, 24)
     redoBtn:SetFont("ZoFontGameSmall")
     redoBtn:SetText("Redo ↷")
     self:StyleTactileButton(redoBtn, {
@@ -1264,8 +1264,8 @@ function FR:OpenMotDPushModal(guildId, guildName, resolved, charCount, byteCount
         warningLbl:SetText("|cAAAAAA⚠ Broadcasts immediately to all guild members.|r")
 
         local cancelBtn = wm:CreateControl("$(parent)_CancelBtn", modal, CT_BUTTON)
-        cancelBtn:SetAnchor(BOTTOMRIGHT, modal, BOTTOMRIGHT, -200, -10)
-        cancelBtn:SetDimensions(90, 28)
+        cancelBtn:SetAnchor(BOTTOMRIGHT, modal, BOTTOMRIGHT, -208, -10)
+        cancelBtn:SetDimensions(94, 28)
         cancelBtn:SetFont("ZoFontGameBold")
         cancelBtn:SetText("Cancel")
         self:StyleTactileButton(cancelBtn, {
@@ -1279,7 +1279,7 @@ function FR:OpenMotDPushModal(guildId, guildName, resolved, charCount, byteCount
 
         local confirmBtn = wm:CreateControl("$(parent)_ConfirmBtn", modal, CT_BUTTON)
         confirmBtn:SetAnchor(BOTTOMRIGHT, modal, BOTTOMRIGHT, -16, -10)
-        confirmBtn:SetDimensions(175, 28)
+        confirmBtn:SetDimensions(182, 28)
         confirmBtn:SetFont("ZoFontGameBold")
         confirmBtn:SetText("✓ Confirm & Push Live")
         self:StyleTactileButton(confirmBtn, {
@@ -1295,6 +1295,9 @@ function FR:OpenMotDPushModal(guildId, guildName, resolved, charCount, byteCount
         modal.charStatLbl = charStatLbl
         modal.previewLbl = previewLbl
         modal.confirmBtn = confirmBtn
+        if self.ApplyPopupDrawOrder then
+            self:ApplyPopupDrawOrder(modal, DT_HIGH)
+        end
         self.motdPushModal = modal
     end
 
@@ -1313,6 +1316,9 @@ function FR:OpenMotDPushModal(guildId, guildName, resolved, charCount, byteCount
     end)
 
     modal:SetHidden(false)
+    if self.ApplyPopupDrawOrder then
+        self:ApplyPopupDrawOrder(modal, DT_HIGH)
+    end
     if modal.BringWindowToTop then
         modal:BringWindowToTop()
     end

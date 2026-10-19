@@ -209,8 +209,13 @@ namespace RedfurSync
                 var config = JsonSerializer.Deserialize<AppConfig>(json, _opts) ?? new AppConfig();
                 if (string.IsNullOrWhiteSpace(config.ServerUrl))
                     config.ServerUrl = "https://redfur.ech-o.net/upload";
+                else if (config.ServerUrl.StartsWith("http://redfur.ech-o.net", StringComparison.OrdinalIgnoreCase))
+                    config.ServerUrl = "https://" + config.ServerUrl.Substring("http://".Length);
+
                 if (string.IsNullOrWhiteSpace(config.UpdateUrl))
                     config.UpdateUrl = "https://redfur.ech-o.net/api/relay/v1/update-manifest";
+                else if (config.UpdateUrl.StartsWith("http://redfur.ech-o.net", StringComparison.OrdinalIgnoreCase))
+                    config.UpdateUrl = "https://" + config.UpdateUrl.Substring("http://".Length);
                 
                 // Immediately re-save so defaults are stamped
                 SaveInternal(config, path);
@@ -265,6 +270,11 @@ namespace RedfurSync
 
         public bool IsConfigured()
         {
+            if (!string.IsNullOrWhiteSpace(ServerUrl) && ServerUrl.StartsWith("http://redfur.ech-o.net", StringComparison.OrdinalIgnoreCase))
+                ServerUrl = "https://" + ServerUrl.Substring("http://".Length);
+            if (!string.IsNullOrWhiteSpace(UpdateUrl) && UpdateUrl.StartsWith("http://redfur.ech-o.net", StringComparison.OrdinalIgnoreCase))
+                UpdateUrl = "https://" + UpdateUrl.Substring("http://".Length);
+
             if (!IsSecureEndpoint(ServerUrl))
                 return false;
 

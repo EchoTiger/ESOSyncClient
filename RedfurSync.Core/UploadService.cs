@@ -231,16 +231,21 @@ namespace RedfurSync
         // Pairing uses Environment.MachineName as initial label; post-pair renames flow via PATCH /api/relay/v1/devices/{id} (UpdateDeviceLabelAsync).
         public async Task<(bool ok, string message)> PairAsync()
         {
-            if (!string.IsNullOrWhiteSpace(_config.DeviceToken)) return (true, "Already paired");
-            if (string.IsNullOrWhiteSpace(_config.PairingCode))
+            var cleanCode = (_config.PairingCode ?? string.Empty).Replace(" ", "").Replace("-", "").Trim();
+            if (string.IsNullOrWhiteSpace(cleanCode))
             {
+                if (!string.IsNullOrWhiteSpace(_config.DeviceToken)) return (true, "Already paired");
                 if (!string.IsNullOrWhiteSpace(_config.ApiKey)) return (true, "API key mode active");
                 return (false, "A pairing code is required.");
             }
 
             try
             {
-                var payload = JsonSerializer.Serialize(new { code = _config.PairingCode.Trim(), deviceName = Environment.MachineName });
+                var initialDeviceName = NormalizeLabel(_config.DisplayName);
+                if (string.IsNullOrWhiteSpace(initialDeviceName) || initialDeviceName.Equals("Redfur Trader", StringComparison.OrdinalIgnoreCase))
+                    initialDeviceName = Environment.MachineName;
+
+                var payload = JsonSerializer.Serialize(new { code = cleanCode, deviceName = initialDeviceName });
                 using var request = new HttpRequestMessage(HttpMethod.Post, BuildRelayUri("/pair"))
                 {
                     Content = new StringContent(payload, System.Text.Encoding.UTF8, "application/json"),
@@ -251,7 +256,18 @@ namespace RedfurSync
                 }
 
                 using var response = await _syncHttp.SendAsync(request);
-                if (!response.IsSuccessStatusCode) return (false, "Pairing code was rejected or expired.");
+                if (!response.IsSuccessStatusCode)
+                {
+                    string errDetail = "Pairing code was rejected or expired.";
+                    try
+                    {
+                        using var errDoc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                        if (errDoc.RootElement.TryGetProperty("error", out var errProp) && !string.IsNullOrWhiteSpace(errProp.GetString()))
+                            errDetail = errProp.GetString()!;
+                    }
+                    catch { }
+                    return (false, errDetail);
+                }
                 using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
                 if (!json.RootElement.TryGetProperty("token", out var token) || string.IsNullOrWhiteSpace(token.GetString()))
                     return (false, "Pairing response did not include a device token.");
@@ -418,7 +434,7 @@ namespace RedfurSync
             if (v.Length > 32) v = v.Substring(0, 32);
             if (string.IsNullOrWhiteSpace(v)) return null;
             foreach (var ch in v)
-                if (!(char.IsLetterOrDigit(ch) || ch == '.' || ch == '-' || ch == '_' || ch == ' '))
+                if (!(char.IsLetterOrDigit(ch) || ch == '.' || ch == '-' || ch == '_' || ch == '@' || ch == ' '))
                     return null;
             return v;
         }
@@ -509,7 +525,14 @@ namespace RedfurSync
         {
             if (!Uri.TryCreate(_config.ServerUrl, UriKind.Absolute, out var endpoint))
                 throw new InvalidOperationException("The configured server URL is invalid.");
-            return new UriBuilder(endpoint.Scheme, endpoint.Host, endpoint.IsDefaultPort ? -1 : endpoint.Port, $"/api/relay/v1{suffix}").Uri;
+            var scheme = endpoint.Scheme;
+            int port = endpoint.IsDefaultPort ? -1 : endpoint.Port;
+            if (scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) && endpoint.Host.EndsWith("ech-o.net", StringComparison.OrdinalIgnoreCase))
+            {
+                scheme = Uri.UriSchemeHttps;
+                if (port == 80) port = -1;
+            }
+            return new UriBuilder(scheme, endpoint.Host, port, $"/api/relay/v1{suffix}").Uri;
         }
 
         private HttpRequestMessage CreateSyncRequest(HttpMethod method, Uri uri, HttpContent? content = null)

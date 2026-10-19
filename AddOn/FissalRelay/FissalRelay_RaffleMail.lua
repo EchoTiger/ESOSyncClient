@@ -431,18 +431,32 @@ function FR:PushRaffleToMotD(guildKey, skipConfirm)
 
     -- Confirmation Guard: Prompt user with preview before applying live change
     if not skipConfirm then
-        RegisterMotDConfirmDialog()
         local previewSnippet = resolved
-        if #previewSnippet > 260 then
-            previewSnippet = string.sub(previewSnippet, 1, 260) .. "..."
+        if #previewSnippet > 220 then
+            previewSnippet = string.sub(previewSnippet, 1, 220) .. "..."
         end
-        ZO_Dialogs_ShowDialog("FISSAL_CONFIRM_UPDATE_MOTD", {
-            onConfirm = function()
-                FR:PushRaffleToMotD(guildKey, true)
-            end,
-        }, {
-            mainTextParams = { guildName, previewSnippet }
-        })
+        if self.ShowConfirmModal then
+            self:ShowConfirmModal({
+                title = "CONFIRM MOTD RAFFLE UPDATE",
+                subtitle = string.format("Update Message of the Day for |c00FFCC%s|r with active raffle data?", guildName),
+                body = string.format("|c888888Existing text and links are preserved.|r\n\n|cE6C387Preview:|r\n|cFFFFFF%s|r", previewSnippet),
+                warning = "Updates live Guild Message of the Day immediately.",
+                confirmText = "Update MotD",
+                cancelText = "Cancel",
+                onConfirm = function()
+                    FR:PushRaffleToMotD(guildKey, true)
+                end,
+            })
+        else
+            RegisterMotDConfirmDialog()
+            ZO_Dialogs_ShowDialog("FISSAL_CONFIRM_UPDATE_MOTD", {
+                onConfirm = function()
+                    FR:PushRaffleToMotD(guildKey, true)
+                end,
+            }, {
+                mainTextParams = { guildName, previewSnippet }
+            })
+        end
         return true
     end
 
@@ -790,6 +804,12 @@ function FR:StageInactivityWarning(memberName, guildName, daysOffline)
 
         if self.raffleMailWindow then
             self.raffleMailWindow:SetHidden(false)
+            if self.ApplyPopupDrawOrder then
+                self:ApplyPopupDrawOrder(self.raffleMailWindow, DT_HIGH, 80)
+            end
+            if self.raffleMailWindow.BringWindowToTop then
+                self.raffleMailWindow:BringWindowToTop()
+            end
         end
         if self.raffleMailStatusLabel then
             self.raffleMailStatusLabel:SetText(string.format("|c59E08AStaged warning mail for %s (%d days offline)|r", memberName, daysOffline))
@@ -833,6 +853,12 @@ function FR:StageWelcomeLetter(memberName, guildName)
 
         if self.raffleMailWindow then
             self.raffleMailWindow:SetHidden(false)
+            if self.ApplyPopupDrawOrder then
+                self:ApplyPopupDrawOrder(self.raffleMailWindow, DT_HIGH, 80)
+            end
+            if self.raffleMailWindow.BringWindowToTop then
+                self.raffleMailWindow:BringWindowToTop()
+            end
         end
         if self.raffleMailStatusLabel then
             self.raffleMailStatusLabel:SetText(string.format("|c59E08AStaged welcome mail for %s|r", memberName))
@@ -857,6 +883,9 @@ function FR:CreateRaffleMailUI()
     win:SetClampedToScreen(true)
     win:SetMouseEnabled(true)
     win:SetMovable(true)
+    win:SetDrawLayer(DL_OVERLAY)
+    win:SetDrawTier(DT_HIGH)
+    win:SetDrawLevel(80)
     win:SetHidden(true)
 
     -- Anchor restoration or default docking next to ZO_MailSend
@@ -1120,12 +1149,14 @@ function FR:CreateRaffleMailUI()
     -- Row 2: Pot, Tickets, and 1-Click Update MotD Button
     local sumPotLbl = wm:CreateControl("$(parent)_Pot", summaryBanner, CT_LABEL)
     sumPotLbl:SetAnchor(TOPLEFT, summaryBanner, TOPLEFT, 8, 38)
+    sumPotLbl:SetWidth(190)
+    sumPotLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
     sumPotLbl:SetFont("ZoFontGameSmall")
     sumPotLbl:SetText("Pot: --")
 
     local updateMotdBtn = wm:CreateControl("$(parent)_UpdateMotdBtn", summaryBanner, CT_BUTTON)
     updateMotdBtn:SetAnchor(TOPRIGHT, summaryBanner, TOPRIGHT, -8, 36)
-    updateMotdBtn:SetDimensions(95, 22)
+    updateMotdBtn:SetDimensions(98, 22)
     updateMotdBtn:SetFont("ZoFontGameSmall")
     updateMotdBtn:SetText("|cFFD700Update MotD|r")
 
@@ -1151,7 +1182,10 @@ function FR:CreateRaffleMailUI()
     end)
 
     local sumTicketsLbl = wm:CreateControl("$(parent)_Tickets", summaryBanner, CT_LABEL)
-    sumTicketsLbl:SetAnchor(RIGHT, updateMotdBtn, LEFT, -14, 0)
+    sumTicketsLbl:SetAnchor(RIGHT, updateMotdBtn, LEFT, -10, 0)
+    sumTicketsLbl:SetWidth(172)
+    sumTicketsLbl:SetHorizontalAlignment(TEXT_ALIGN_RIGHT)
+    sumTicketsLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
     sumTicketsLbl:SetFont("ZoFontGameSmall")
     sumTicketsLbl:SetText("Tickets: --")
 
@@ -1295,6 +1329,9 @@ function FR:CreateRaffleMailUI()
         statusLbl:SetText("|c59E08A● Ready|r |c888888• Mail form reset|r")
     end)
 
+    if self.ApplyPopupDrawOrder then
+        self:ApplyPopupDrawOrder(win, DT_HIGH, 80)
+    end
     self.raffleMailWindow = win
     UpdateTabs()
 
@@ -1320,6 +1357,12 @@ function FR:CreateRaffleMailUI()
                 end
                 if shouldShow then
                     win:SetHidden(false)
+                    if self.ApplyPopupDrawOrder then
+                        self:ApplyPopupDrawOrder(win, DT_HIGH, 80)
+                    end
+                    if win.BringWindowToTop then
+                        win:BringWindowToTop()
+                    end
                     self:RefreshRaffleMailUI()
                 else
                     win:SetHidden(true)
@@ -1496,6 +1539,12 @@ function FR:ToggleRaffleMailUI(show)
         self.raffleMailWindow:SetHidden(not show)
     end
     if not self.raffleMailWindow:IsHidden() then
+        if self.ApplyPopupDrawOrder then
+            self:ApplyPopupDrawOrder(self.raffleMailWindow, DT_HIGH, 80)
+        end
+        if self.raffleMailWindow.BringWindowToTop then
+            self.raffleMailWindow:BringWindowToTop()
+        end
         self:RefreshRaffleMailUI()
     end
 end

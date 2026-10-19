@@ -242,7 +242,7 @@ namespace RedfurSync
                 BorderStyle     = BorderStyle.None,
                 AutoSize        = false,
                 Font            = Title(13f, _scale, FontStyle.Bold),
-                MaxLength       = 6,
+                MaxLength       = 12,
                 Location        = new Point(S(6), S(5)),
                 Width           = codeHousing.Width - S(12),
                 Height          = S(22),
@@ -263,6 +263,13 @@ namespace RedfurSync
 
             _codeInput.TextChanged += (_, _) =>
             {
+                var digitsOnly = new string(System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Take(System.Linq.Enumerable.Where(_codeInput.Text, char.IsDigit), 6)));
+                if (_codeInput.Text != digitsOnly)
+                {
+                    int sel = Math.Min(_codeInput.SelectionStart, digitsOnly.Length);
+                    _codeInput.Text = digitsOnly;
+                    _codeInput.SelectionStart = sel;
+                }
                 if (_checkBtn.Text == "Linked ✔" && _codeInput.Text.Trim().Length > 0)
                 {
                     _checkBtn.Text = "Pair Code";
@@ -294,6 +301,9 @@ namespace RedfurSync
 
                 if (ok)
                 {
+                    isAlreadyPaired = true;
+                    _codeInput.Text = string.Empty;
+                    _codeInput.PlaceholderText = "Paired (Token)";
                     _checkBtn.Text = "Synced!";
                     _checkBtn.ForeColor = CGreen;
                     _checkBtn.FlatAppearance.BorderColor = CGreen;
@@ -481,13 +491,13 @@ namespace RedfurSync
             try
             {
                 AppConfig.Instance.DisplayName = name;
-                var code = _codeInput.Text.Trim();
+                var code = new string(System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Where(_codeInput.Text, char.IsDigit)));
                 if (!string.IsNullOrWhiteSpace(code))
                 {
                     if (code.Length != 6)
                     {
                         AddConsoleLine("# [FIS-DBG] Pairing code must be exactly 6 digits.", Color.IndianRed);
-                        FissalBox.Show("Your pairing code must be a 6-digit number from /relay pair in Discord.", "Pairing Code Required");
+                        FissalBox.Show("Your pairing code must be a 6-digit number from the Redfur web dashboard.", "Pairing Code Required");
                         return;
                     }
 

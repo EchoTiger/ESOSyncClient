@@ -40,8 +40,8 @@ namespace RedfurSync
         public const string AddonDirectoryName = "FissalRelay";
         public const string ClientDirectoryName = "Client";
         public const string TargetExeName = "RedfurSync.exe";
-        public const string LatestAddonVersion = "1.9.0";
-        public const int LatestAddonVersionCode = 10900;
+        public const string LatestAddonVersion = "1.9.1";
+        public const int LatestAddonVersionCode = 10901;
         public static readonly string[] AddonFiles = new[]
         {
             "FissalRelay.txt",
@@ -721,7 +721,7 @@ namespace RedfurSync
                 using var ownedClient = httpClient == null ? new HttpClient() : null;
                 var client = httpClient ?? ownedClient!;
                 using var request = new HttpRequestMessage(HttpMethod.Get, downloadUrl);
-                request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) FissalRelay/1.9.0");
+                request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) FissalRelay/1.9.1");
 
                 using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 if (!response.IsSuccessStatusCode) return false;
@@ -833,10 +833,10 @@ namespace RedfurSync
             }
         }
 
-        private const string AddonManifestTemplate = @"## Title: |cFF9900Fissal's|r Cogwork Relay |c888888v1.9.0|r
+        private const string AddonManifestTemplate = @"## Title: |cFF9900Fissal's|r Cogwork Relay |c888888v1.9.1|r
 ## Author: Echo & Fissal
-## Version: 1.9.0
-## AddOnVersion: 10900
+## Version: 1.9.1
+## AddOnVersion: 10901
 ## APIVersion: 101048 101049 101050
 ## SavedVariables: FissalRelay_SavedVariables
 ## DependsOn: LibHistoire>=1062 LibAddonMenu-2.0>=41

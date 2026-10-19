@@ -24,8 +24,8 @@ var manifestObj = new
     schema = 1,
     product = "fissal-relay",
     channel = "stable",
-    sequence = 68,
-    version = "1.9.0",
+    sequence = 69,
+    version = "1.9.1",
     issued_at = DateTimeOffset.UtcNow.ToString("O"),
     expires_at = DateTimeOffset.UtcNow.AddYears(1).ToString("O"),
     min_updater_version = "1.4.0",
@@ -42,7 +42,7 @@ var manifestObj = new
     downloadUrl = "https://redfur.ech-o.net/api/relay/v1/update-download",
     sizeBytes = exeSize,
     sha256 = exeHash,
-    changelog = "- feat(relay): Fissal Relay Prime v1.9.0 full production overhaul\n- perf(client): eliminate 10Hz WS_EX_COMPOSITED idle repaints, 5Hz polling, and GDI+ mesh/handle leaks\n- perf(addon): O(1) rank lookups, cached bump/raffle telemetry, and zero-keystroke-lag MotD Studio\n- fix(addon): step-based GuildPromote/GuildDemote Auto-Ranks, probation logic fix, and Bumper drag/close fix\n- security(gateway): strict witness consensus, bounds validation, multi-account Lua parsing, and SyncPoints attribution"
+    changelog = "- fix(pairing): auto-upgrade legacy http://redfur.ech-o.net endpoints to HTTPS, allow re-pairing over stale tokens, and sanitize pasted 6-digit codes\n- fix(addon): anti-kick rate-limit pacing (1.85s + 4.2s breather every 8 steps) & background LibHistoire/KioskSweep pause during Auto-Ranks & Roster Audit\n- feat(ui): widened 960x650 Command Console with zero text overflow, >=6px tactile button spacing, and ellipsis column bounds\n- fix(ui): recursive DT_HIGH popup/drawer z-order engine preventing popups from falling behind Console after closing once\n- feat(ui): Clockwork Obsidian & Burnished Brass confirmation modal (FissalRelay_ConfirmModal) replacing raw text dialogs"
 };
 
 var jsonOpts = new JsonSerializerOptions { WriteIndented = true };
@@ -54,7 +54,7 @@ var alg = SignatureAlgorithm.Ed25519;
 using var key = Key.Import(alg, privateKeyBytes, KeyBlobFormat.RawPrivateKey);
 var signature = alg.Sign(key, manifestBytes);
 
-var (ok, parsed, err) = UpdateTrustVerifier.VerifyAndParse(manifestBytes, signature, lastVerifiedSequence: 67);
+var (ok, parsed, err) = UpdateTrustVerifier.VerifyAndParse(manifestBytes, signature, lastVerifiedSequence: 68);
 if (!ok || parsed == null)
 {
     Console.Error.WriteLine($"Verification failed: {err}");
