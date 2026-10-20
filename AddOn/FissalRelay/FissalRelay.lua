@@ -10,7 +10,7 @@ FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
 FR.name = "FissalRelay"
-FR.version = "1.9.1"
+FR.version = "1.9.2"
 FR.author = "Echo & Fissal"
 
 -- Defaults for SavedVariables
@@ -1225,15 +1225,67 @@ end
      TRADE WEEK & BUMP TELEMETRY ENGINES
 ========================================================================= ]]--
 
--- Canonical Tuesday 20:00 UTC (3:00 PM EDT) Kiosk Trade Week Boundary
-local TUESDAY_RESET_EPOCH_OFFSET = 504000 -- Jan 6, 1970 20:00 UTC
+-- Canonical Tuesday 3:00 PM ET (19:00 UTC in EDT / 20:00 UTC in EST) Kiosk Trade Week Boundary
 local SECONDS_IN_WEEK = 604800
+local DAYS_IN_MONTH_UTC = { 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 }
+
+local function IsUsEasternDstAtAfternoonUtc(utcMidnightTs)
+    local totalDays = math.floor((tonumber(utcMidnightTs) or 0) / 86400)
+    local wday = (totalDays + 4) % 7 -- 0=Sun, 1=Mon, ..., 6=Sat
+    local remDays = totalDays
+    local y = 1970
+    while true do
+        local leap = (y % 4 == 0 and (y % 100 ~= 0 or y % 400 == 0))
+        local diy = leap and 366 or 365
+        if remDays < diy then break end
+        remDays = remDays - diy
+        y = y + 1
+    end
+    local leap = (y % 4 == 0 and (y % 100 ~= 0 or y % 400 == 0))
+    local m = 1
+    while m <= 12 do
+        local dim = DAYS_IN_MONTH_UTC[m]
+        if m == 2 and leap then dim = 29 end
+        if remDays < dim then break end
+        remDays = remDays - dim
+        m = m + 1
+    end
+    local d = remDays + 1
+
+    if m > 3 and m < 11 then return true end
+    if m < 3 or m > 11 then return false end
+
+    local firstDayWday = (wday - (d - 1)) % 7
+    local firstSunday = 1 + ((7 - firstDayWday) % 7)
+    if m == 3 then
+        local secondSunday = firstSunday + 7
+        return d >= secondSunday
+    else
+        return d < firstSunday
+    end
+end
+
+local function GetTuesdayResetForMidnightUtc(tuesdayMidnightUtc)
+    local resetHourUtc = IsUsEasternDstAtAfternoonUtc(tuesdayMidnightUtc) and 19 or 20
+    return tuesdayMidnightUtc + (resetHourUtc * 3600)
+end
 
 function FR:GetTuesdayTradeWeek(ts)
     ts = tonumber(ts) or GetTimeStamp()
-    local elapsed = (ts - TUESDAY_RESET_EPOCH_OFFSET) % SECONDS_IN_WEEK
-    local weekStart = ts - elapsed
-    local weekEnd = weekStart + SECONDS_IN_WEEK
+    local dayIndex = math.floor(ts / 86400)
+    local utcDay = (dayIndex + 4) % 7 -- 0=Sun, 1=Mon, 2=Tue, ..., 6=Sat
+    local daysSinceTuesday = (utcDay + 5) % 7
+    local lastTuesdayMidnight = (dayIndex - daysSinceTuesday) * 86400
+    local lastTuesdayReset = GetTuesdayResetForMidnightUtc(lastTuesdayMidnight)
+    local weekStart, startTuesdayMidnight
+    if ts >= lastTuesdayReset then
+        weekStart = lastTuesdayReset
+        startTuesdayMidnight = lastTuesdayMidnight
+    else
+        startTuesdayMidnight = lastTuesdayMidnight - SECONDS_IN_WEEK
+        weekStart = GetTuesdayResetForMidnightUtc(startTuesdayMidnight)
+    end
+    local weekEnd = GetTuesdayResetForMidnightUtc(startTuesdayMidnight + SECONDS_IN_WEEK)
     return weekStart, weekEnd
 end
 
@@ -2310,14 +2362,18 @@ function FR:IsVoided(guildKey, depositorName, entryId)
     return false
 end
 
--- Canonical Sunday 7:00 PM ET (19:00 ET) raffle cutoff boundary
--- Anchor: Sunday Sep 20, 2026 19:00:00 EDT = 1789945200 UTC
+-- Canonical Sunday 7:00 PM ET (23:00 UTC in EDT / 24:00 UTC in EST) raffle cutoff boundary
 function FR:GetCurrentRaffleWeekStart(nowTs)
-    nowTs = nowTs or GetTimeStamp()
-    local anchor = 1789945200
-    local elapsed = nowTs - anchor
-    local weeks = math.floor(elapsed / 604800)
-    return anchor + (weeks * 604800)
+    nowTs = tonumber(nowTs) or GetTimeStamp()
+    local dayIndex = math.floor(nowTs / 86400)
+    local utcDay = (dayIndex + 4) % 7 -- 0=Sun, 1=Mon, ..., 6=Sat
+    local lastSundayMidnight = (dayIndex - utcDay) * 86400
+    local lastSundayCutoff = lastSundayMidnight + ((IsUsEasternDstAtAfternoonUtc(lastSundayMidnight) and 23 or 24) * 3600)
+    if nowTs >= lastSundayCutoff then
+        return lastSundayCutoff
+    end
+    local prevSundayMidnight = lastSundayMidnight - SECONDS_IN_WEEK
+    return prevSundayMidnight + ((IsUsEasternDstAtAfternoonUtc(prevSundayMidnight) and 23 or 24) * 3600)
 end
 
 function FR:CalculateRaffleMetrics(guildId, lookbackDays, ticketPrice)

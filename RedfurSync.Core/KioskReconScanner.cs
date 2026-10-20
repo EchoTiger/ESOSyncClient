@@ -17,6 +17,7 @@ public sealed record KioskObservation
     public string Y { get; init; } = "0";
     public long Timestamp { get; init; }
     public string ObservedBy { get; init; } = "";
+    public string Source { get; init; } = "";
 }
 
 public sealed record InactiveMember
@@ -61,6 +62,11 @@ public static class KioskReconScanner
     public static List<KioskObservation> ReadKiosks(string filePath)
     {
         return LuaStreamingReader.ReadKioskObservations(filePath);
+    }
+
+    public static Dictionary<int, string> ReadKnownTradingGuilds(string filePath)
+    {
+        return LuaStreamingReader.ReadKnownTradingGuilds(filePath);
     }
 
     public static string ExportInactivesCsv(InactivityAudit audit)

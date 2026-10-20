@@ -34,6 +34,7 @@ namespace RedfurSync
             using var reader = new StreamReader(stream);
 
             bool inSales = false;
+            bool awaitingSalesBrace = false;
             int depth = 0;
             string? line;
 
@@ -44,16 +45,45 @@ namespace RedfurSync
 
                 if (!inSales)
                 {
-                    if (span.Contains("[\"sales\"]", StringComparison.OrdinalIgnoreCase) && span.Contains("{", StringComparison.Ordinal))
+                    if (awaitingSalesBrace)
                     {
                         int openIdx = span.IndexOf('{');
-                        inSales = true;
-                        depth = 0;
-                        CountBraces(span.Slice(openIdx), ref depth);
-                        if (depth <= 0)
+                        if (openIdx >= 0)
                         {
-                            inSales = false;
+                            awaitingSalesBrace = false;
+                            inSales = true;
                             depth = 0;
+                            CountBraces(span.Slice(openIdx), ref depth);
+                            if (depth <= 0)
+                            {
+                                inSales = false;
+                                depth = 0;
+                            }
+                        }
+                        else if (!span.StartsWith("--"))
+                        {
+                            awaitingSalesBrace = false;
+                        }
+                        continue;
+                    }
+
+                    if (span.Contains("[\"sales\"]", StringComparison.OrdinalIgnoreCase))
+                    {
+                        int openIdx = span.IndexOf('{');
+                        if (openIdx >= 0)
+                        {
+                            inSales = true;
+                            depth = 0;
+                            CountBraces(span.Slice(openIdx), ref depth);
+                            if (depth <= 0)
+                            {
+                                inSales = false;
+                                depth = 0;
+                            }
+                        }
+                        else
+                        {
+                            awaitingSalesBrace = true;
                         }
                     }
                     continue;
@@ -73,7 +103,7 @@ namespace RedfurSync
                         }
                     }
                 }
-                else if (depth == 1 && span.StartsWith("[\"") && span.EndsWith("{"))
+                else if (depth == 1 && span.StartsWith("[\""))
                 {
                     int endQuote = span.Slice(2).IndexOf('"');
                     if (endQuote != -1)
@@ -82,7 +112,15 @@ namespace RedfurSync
                         var idPart = span.Slice(2, endQuote - 2);
                         if (idPart.Length > 0 && char.IsDigit(idPart[0]))
                         {
-                            saleIds.Add(idPart.ToString());
+                            bool allDigits = true;
+                            for (int d = 0; d < idPart.Length; d++)
+                            {
+                                if (!char.IsAsciiDigit(idPart[d])) { allDigits = false; break; }
+                            }
+                            if (allDigits)
+                            {
+                                saleIds.Add(idPart.ToString());
+                            }
                         }
                     }
                 }

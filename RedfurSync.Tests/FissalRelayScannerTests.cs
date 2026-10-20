@@ -44,6 +44,39 @@ FissalRelay_SavedVariables = {
     }
 
     [Fact]
+    public void ReadSaleIds_ParsesEsoAllmanMultilineSavedVariables()
+    {
+        using var tempDir = new TemporaryDirectory();
+        var sampleLua = @"
+FissalRelay_SavedVariables =
+{
+    [""sales""] = 
+    {
+        [""4739095250142756864""] = 
+        {
+            [""guildId""] = 759181,
+            [""price""] = 20000,
+            [""id""] = ""4739095250142756864"",
+        },
+    },
+    [""categorySync""] = 
+    {
+        [""sales""] = 
+        {
+            [""valid""] = true,
+            [""generation""] = 255,
+        },
+    },
+}
+";
+        var filePath = tempDir.WriteFile("FissalRelay.lua", sampleLua);
+        var saleIds = FissalRelayScanner.ReadSaleIds(filePath);
+
+        Assert.Single(saleIds);
+        Assert.Contains("4739095250142756864", saleIds);
+    }
+
+    [Fact]
     public void ReadSaleIds_IgnoresDepositsBidsAndAuditsOutsideSalesBlock()
     {
         using var tempDir = new TemporaryDirectory();

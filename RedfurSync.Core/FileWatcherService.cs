@@ -760,9 +760,11 @@ namespace RedfurSync
                 {
                     await _diskScanThrottle.WaitAsync(job.Cts.Token).ConfigureAwait(false);
                     IReadOnlyList<KioskObservation> kiosks;
+                    IReadOnlyDictionary<int, string> knownGuilds;
                     try
                     {
                         kiosks = KioskReconScanner.ReadKiosks(job.FilePath);
+                        knownGuilds = KioskReconScanner.ReadKnownTradingGuilds(job.FilePath);
                     }
                     finally
                     {
@@ -772,7 +774,7 @@ namespace RedfurSync
                     if (kiosks.Count > 0)
                     {
                         _onStatus($"Syncing {kiosks.Count} ground recon kiosk(s)...");
-                        await _uploader.UploadKioskObservationsAsync(kiosks, job.Cts.Token).ConfigureAwait(false);
+                        await _uploader.UploadKioskObservationsAsync(kiosks, job.Cts.Token, knownGuilds).ConfigureAwait(false);
                     }
                 }
                 catch (Exception ex)

@@ -557,12 +557,14 @@ namespace RedfurSync
             }
         }
 
-        public async Task<bool> UploadKioskObservationsAsync(IReadOnlyList<KioskObservation> kiosks, CancellationToken cancellationToken)
+        public async Task<bool> UploadKioskObservationsAsync(IReadOnlyList<KioskObservation> kiosks, CancellationToken cancellationToken, IReadOnlyDictionary<int, string>? knownTradingGuilds = null)
         {
             if ((string.IsNullOrWhiteSpace(_config.DeviceToken) && string.IsNullOrWhiteSpace(_config.ApiKey)) || kiosks == null || kiosks.Count == 0) return false;
             try
             {
-                var payload = JsonSerializer.Serialize(new { kiosks });
+                var payload = knownTradingGuilds is { Count: > 0 }
+                    ? JsonSerializer.Serialize(new { kiosks, knownTradingGuilds })
+                    : JsonSerializer.Serialize(new { kiosks });
                 using var request = CreateSyncRequest(HttpMethod.Post, BuildRelayUri("/kiosks/ingest"),
                     new StringContent(payload, System.Text.Encoding.UTF8, "application/json"));
                 using var response = await _syncHttp.SendAsync(request, cancellationToken);

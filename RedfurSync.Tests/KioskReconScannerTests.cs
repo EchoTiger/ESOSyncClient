@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.IO;
 using RedfurSync;
 using Xunit;
@@ -22,7 +23,8 @@ FissalRelay_SavedVariables = {
             [""x""] = ""0.4567"",
             [""y""] = ""0.8912"",
             [""timestamp""] = 1725330000,
-            [""observedBy""] = ""@EchoTiger""
+            [""observedBy""] = ""@EchoTiger"",
+            [""source""] = ""Guild Finder Sweep""
         },
         [""Gals North-Wind""] = {
             [""trader""] = ""Gals North-Wind"",
@@ -46,11 +48,85 @@ FissalRelay_SavedVariables = {
         Assert.Equal("Redfur Trading Post", k1.GuildName);
         Assert.Equal("Rawl'kha", k1.City);
         Assert.Equal("@EchoTiger", k1.ObservedBy);
+        Assert.Equal("Guild Finder Sweep", k1.Source);
 
         var k2 = kiosks.Find(k => k.Trader == "Gals North-Wind");
         Assert.NotNull(k2);
         Assert.Equal("Rawl'kha Traders", k2.GuildName);
         Assert.Equal("Mournhold", k2.City);
+    }
+
+    [Fact]
+    public void ReadKiosks_ParsesEsoAllmanMultilineSavedVariablesAndKnownGuilds()
+    {
+        using var tempDir = new TemporaryDirectory();
+        var sampleLua = @"
+FissalRelay_SavedVariables =
+{
+    [""Default""] =
+    {
+        [""@EchoTiger""] =
+        {
+            [""$AccountWide""] =
+            {
+                [""kiosks""] = 
+                {
+                    [""Shakh""] = 
+                    {
+                        [""observedBy""] = ""@EchoTiger"",
+                        [""guildId""] = 818373,
+                        [""city""] = ""Shornhelm"",
+                        [""zone""] = ""RIVENSPIRE"",
+                        [""guildName""] = ""TeaMugs and Axes"",
+                        [""x""] = ""0.0000"",
+                        [""timestamp""] = 1792010338,
+                        [""trader""] = ""Shakh"",
+                        [""y""] = ""0.0000"",
+                        [""source""] = ""Guild Finder Sweep"",
+                    },
+                    [""Lhotahir""] = 
+                    {
+                        [""observedBy""] = ""@EchoTiger"",
+                        [""guildId""] = 723087,
+                        [""city""] = ""Rimmen"",
+                        [""zone""] = ""NORTHERN ELSWEYR"",
+                        [""guildName""] = ""Redfur Caravan"",
+                        [""timestamp""] = 1792010345,
+                        [""trader""] = ""Lhotahir"",
+                        [""source""] = ""Owned Guild Stall"",
+                    },
+                },
+                [""knownTradingGuilds""] = 
+                {
+                    [21505] = ""Skooma Dealers"",
+                    [732163] = ""Fort Knocks Trading"",
+                },
+            },
+        },
+    },
+}
+";
+        var filePath = tempDir.WriteFile("FissalRelay.lua", sampleLua);
+        var kiosks = KioskReconScanner.ReadKiosks(filePath);
+        var knownGuilds = KioskReconScanner.ReadKnownTradingGuilds(filePath);
+
+        Assert.Equal(2, kiosks.Count);
+        var k1 = kiosks.Find(k => k.Trader == "Shakh");
+        Assert.NotNull(k1);
+        Assert.Equal(818373, k1.GuildId);
+        Assert.Equal("TeaMugs and Axes", k1.GuildName);
+        Assert.Equal("Shornhelm", k1.City);
+        Assert.Equal("Guild Finder Sweep", k1.Source);
+
+        var k2 = kiosks.Find(k => k.Trader == "Lhotahir");
+        Assert.NotNull(k2);
+        Assert.Equal(723087, k2.GuildId);
+        Assert.Equal("Redfur Caravan", k2.GuildName);
+        Assert.Equal("Owned Guild Stall", k2.Source);
+
+        Assert.Equal(2, knownGuilds.Count);
+        Assert.Equal("Skooma Dealers", knownGuilds[21505]);
+        Assert.Equal("Fort Knocks Trading", knownGuilds[732163]);
     }
 
     [Fact]

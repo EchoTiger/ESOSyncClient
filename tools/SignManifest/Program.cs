@@ -24,7 +24,7 @@ var manifestObj = new
     schema = 1,
     product = "fissal-relay",
     channel = "stable",
-    sequence = 70,
+    sequence = 71,
     version = "1.9.2",
     issued_at = DateTimeOffset.UtcNow.ToString("O"),
     expires_at = DateTimeOffset.UtcNow.AddYears(1).ToString("O"),
@@ -54,7 +54,7 @@ var alg = SignatureAlgorithm.Ed25519;
 using var key = Key.Import(alg, privateKeyBytes, KeyBlobFormat.RawPrivateKey);
 var signature = alg.Sign(key, manifestBytes);
 
-var (ok, parsed, err) = UpdateTrustVerifier.VerifyAndParse(manifestBytes, signature, lastVerifiedSequence: 69);
+var (ok, parsed, err) = UpdateTrustVerifier.VerifyAndParse(manifestBytes, signature, lastVerifiedSequence: 70);
 if (!ok || parsed == null)
 {
     Console.Error.WriteLine($"Verification failed: {err}");
