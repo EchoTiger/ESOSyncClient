@@ -231,12 +231,14 @@ namespace RedfurSync
                 g.DrawLine(ap, codeHousing.Width - 1, codeHousing.Height - 1, codeHousing.Width - 1, codeHousing.Height - 1 - S(4));
             };
 
-            bool isAlreadyPaired = !string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken) || !string.IsNullOrWhiteSpace(AppConfig.Instance.ApiKey);
+            bool isAlreadyPaired = (!string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken) && !AppConfig.Instance.IsAnonymousToken) || !string.IsNullOrWhiteSpace(AppConfig.Instance.ApiKey);
 
             _codeInput = new TextBox
             {
                 Text            = AppConfig.Instance.PairingCode,
-                PlaceholderText = isAlreadyPaired ? (!string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken) ? "Paired (Token)" : "Paired (Master Key)") : "6 digits",
+                PlaceholderText = isAlreadyPaired
+                    ? (!string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken) ? "Paired (Token)" : "Paired (Master Key)")
+                    : (AppConfig.Instance.IsAnonymousToken ? "6 digits (Anon)" : "6 digits"),
                 BackColor       = codeHousing.BackColor,
                 ForeColor       = CGoldBrt,
                 BorderStyle     = BorderStyle.None,

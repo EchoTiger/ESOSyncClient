@@ -24,8 +24,8 @@ var manifestObj = new
     schema = 1,
     product = "fissal-relay",
     channel = "stable",
-    sequence = 71,
-    version = "1.9.2",
+    sequence = 74,
+    version = "1.9.3",
     issued_at = DateTimeOffset.UtcNow.ToString("O"),
     expires_at = DateTimeOffset.UtcNow.AddYears(1).ToString("O"),
     min_updater_version = "1.4.0",
@@ -42,7 +42,7 @@ var manifestObj = new
     downloadUrl = "https://redfur.ech-o.net/api/relay/v1/update-download",
     sizeBytes = exeSize,
     sha256 = exeHash,
-    changelog = "- feat(anonymous): out-of-the-box anonymous sync mode (quarantine-tagged, non-Redfur guild bank only)\n- feat(pairing): 1-2-3 guided pairing checklist & automatic anonymous-to-verified device upgrade\n- fix(sync): remove TamrielTradeCentre folder watching (handled autonomously by server harvester)\n- fix(watcher): guarantee SavedVariables watcher & auto-updater start unconditionally + add Sync Now action"
+    changelog = "- feat(ui): clear Anonymous (Bank-Only) vs Verified Paired badges in nav rail, micro-display, and setup dialog\n- perf(addon): O(1) coalesced SavedVars priority-save debounce, memoized Kiosk Recon & Member Sales caches, and instant Roster Auditor sorting\n- fix(console): Redfur Caravan raffle overview support, dynamic label anchoring, and ESO font-safe rank/medal badges\n- perf(client): GDI+ font handle cache, inline Lua comment brace-lexer hardening, and 166 KB slim addon archive"
 };
 
 var jsonOpts = new JsonSerializerOptions { WriteIndented = true };

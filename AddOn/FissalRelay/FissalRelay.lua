@@ -10,7 +10,7 @@ FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
 FR.name = "FissalRelay"
-FR.version = "1.9.2"
+FR.version = "1.9.3"
 FR.author = "Echo & Fissal"
 
 -- Defaults for SavedVariables
@@ -260,7 +260,8 @@ function FR:AddSale(event, guildId)
     self:OnRecordAppended("sales", saleRecord)
     self.savedVars.totalSalesGold = (self.savedVars.totalSalesGold or 0) + price
 
-    -- Invalidate bump telemetry cache if this sale occurred at or after the last bump
+    -- Invalidate bump telemetry and member sales caches
+    self._memberSalesCache = nil
     local lastBump = self.savedVars.lastBumpTime or self.savedVars.lastBumpTs or 0
     if lastBump > 0 and eventTime >= lastBump then
         self._bumpTelemetryCache = nil
@@ -292,6 +293,10 @@ function FR:AddSale(event, guildId)
         if isNewer then
             self.savedVars.lastSeenEventId[tostring(guildId)] = eventIdStr
         end
+    end
+
+    if self.MarkSavedVarsDirty then
+        self:MarkSavedVarsDirty("sale")
     end
 
     return true
@@ -327,6 +332,7 @@ function FR:AddBankDeposit(event, guildId)
     self:OnRecordAppended("deposits", depRecord)
     self._raffleMetricsCache = {}
     if self.InvalidateDepositCache then self:InvalidateDepositCache(guildId) end
+    if self.MarkSavedVarsDirty then self:MarkSavedVarsDirty("deposit") end
 
     return true
 end
@@ -377,6 +383,7 @@ function FR:AddKioskBid(event, guildId)
         PlayFissalSound()
     end
 
+    if self.MarkSavedVarsDirty then self:MarkSavedVarsDirty("bid") end
     return true
 end
 
@@ -415,6 +422,7 @@ function FR:AddKioskBidRefund(event, guildId)
         end
     end
 
+    if self.MarkSavedVarsDirty then self:MarkSavedVarsDirty("bid_refund") end
     return true
 end
 
@@ -455,6 +463,7 @@ function FR:AddKioskPurchase(event, guildId)
         status = "Direct Purchase (Won)",
     }
 
+    if self.MarkSavedVarsDirty then self:MarkSavedVarsDirty("kiosk_purchase") end
     return true
 end
 
@@ -513,8 +522,12 @@ function FR:PruneExpiredData(isManual)
         if self.InvalidateDepositCache then self:InvalidateDepositCache() end
     end
 
+    if prunedSalesCount > 0 then
+        self._memberSalesCache = nil
+    end
     local totalPruned = prunedSalesCount + prunedStaffCount
     if totalPruned > 0 then
+        if self.MarkSavedVarsDirty then self:MarkSavedVarsDirty("prune") end
         if self.savedVars and self.savedVars.audit and self.savedVars.audit.domains then
             if self.savedVars.audit.domains.sales and prunedSalesCount > 0 then
                 local a = self.savedVars.audit.domains.sales
@@ -624,6 +637,9 @@ function FR:RecordKioskObservation()
             ColorText(guildName, "00FF00")))
         PlayFissalSound()
     end
+    if isNewOrChanged and self.MarkSavedVarsDirty then
+        self:MarkSavedVarsDirty("kiosk_recon")
+    end
     return true
 end
 
@@ -720,6 +736,9 @@ function FR:TakeRosterSnapshot(targetGuildId)
 
     self.savedVars.staff.lastRosterSnapshotTime = GetTimeStamp()
     self:ScanOwnedKiosks()
+    if snapped > 0 and self.MarkSavedVarsDirty then
+        self:MarkSavedVarsDirty("roster")
+    end
     return snapped
 end
 
@@ -844,6 +863,12 @@ end
 function FR:GetMemberSales(guildId, lookbackDays)
     lookbackDays = tonumber(lookbackDays) or 14
     local nowTs = GetTimeStamp()
+    local cacheKey = tostring(guildId) .. ":" .. tostring(lookbackDays)
+    self._memberSalesCache = self._memberSalesCache or {}
+    local cached = self._memberSalesCache[cacheKey]
+    if cached and (nowTs - cached.ts) < 15 then
+        return cached.data
+    end
     local cutoffTs = nowTs - (lookbackDays * 86400)
     local salesByMember = {}
 
@@ -895,6 +920,7 @@ function FR:GetMemberSales(guildId, lookbackDays)
         end
     end
 
+    self._memberSalesCache[cacheKey] = { ts = nowTs, data = salesByMember }
     return salesByMember
 end
 
@@ -3020,6 +3046,72 @@ local function OnTradingHouseResponse(eventCode, responseType, result)
     end
 end
 
+--[[ =========================================================================
+     WAYSHRINE & LOADING-SCREEN MICRO-SYNC (PRIORITY SAVEDVARIABLES FLUSH)
+========================================================================= ]]--
+-- ESO API 101033+ exposes GetAddOnManager():RequestAddOnSavedVariablesPrioritySave(addOnName).
+-- When flagged, ESO writes FissalRelay.lua to SavedVariables/ during wayshrine / zone loading
+-- screens (EVENT_PLAYER_DEACTIVATED) or periodic priority-save checkpoints without needing /reloadui,
+-- which immediately triggers RedfurSync.exe's FileWatcherService micro-sync in the background.
+
+local PRIORITY_SAVE_DEBOUNCE_MS = 30000
+local PRIORITY_SAVE_MIN_INTERVAL_S = 45
+
+function FR:RequestPrioritySave(forceImmediate)
+    if not GetAddOnManager then return false end
+    local mgr = GetAddOnManager()
+    if not mgr or not mgr.RequestAddOnSavedVariablesPrioritySave then return false end
+
+    local now = GetTimeStamp()
+    local evName = self.name .. "_DeferredPrioritySave"
+    if not forceImmediate and self._lastPrioritySaveTs and (now - self._lastPrioritySaveTs) < PRIORITY_SAVE_MIN_INTERVAL_S then
+        if self._svDirty and not self._svDirtyTimerPending then
+            local remainingMs = math.max(5000, (PRIORITY_SAVE_MIN_INTERVAL_S - (now - self._lastPrioritySaveTs)) * 1000)
+            self._svDirtyTimerPending = true
+            EVENT_MANAGER:UnregisterForUpdate(evName)
+            EVENT_MANAGER:RegisterForUpdate(evName, remainingMs, function()
+                EVENT_MANAGER:UnregisterForUpdate(evName)
+                self._svDirtyTimerPending = false
+                if self._svDirty then
+                    self:RequestPrioritySave(false)
+                end
+            end)
+        end
+        return false
+    end
+
+    EVENT_MANAGER:UnregisterForUpdate(evName)
+    self._svDirtyTimerPending = false
+    self._svDirty = false
+    self._lastPrioritySaveTs = now
+    if self.savedVars then
+        self.savedVars.lastPrioritySaveTs = now
+    end
+
+    pcall(function()
+        mgr:RequestAddOnSavedVariablesPrioritySave(self.name)
+    end)
+    return true
+end
+
+function FR:MarkSavedVarsDirty(reason)
+    self._svDirty = true
+    self._lastDirtyReason = reason or "update"
+    if self._svDirtyTimerPending then
+        return
+    end
+    self._svDirtyTimerPending = true
+    local evName = self.name .. "_DeferredPrioritySave"
+    EVENT_MANAGER:UnregisterForUpdate(evName)
+    EVENT_MANAGER:RegisterForUpdate(evName, PRIORITY_SAVE_DEBOUNCE_MS, function()
+        EVENT_MANAGER:UnregisterForUpdate(evName)
+        self._svDirtyTimerPending = false
+        if self._svDirty then
+            self:RequestPrioritySave(false)
+        end
+    end)
+end
+
 local function OnPlayerActivated(eventCode, initial)
     -- Run pruning safely delayed via zo_callLater so login/zoning remains buttery smooth
     zo_callLater(function()
@@ -3042,13 +3134,20 @@ local function OnPlayerActivated(eventCode, initial)
         if FR.UpdateCategorySyncTelemetry then FR:UpdateCategorySyncTelemetry() end
     end, 8000)
 
-    -- Wayshrine / Zone load kiosk reconciliation
+    -- Wayshrine / Zone load kiosk & micro-sync reconciliation
     zo_callLater(function()
-        if FR.CollectReconData then
+        if not initial then
+            if FR.ScanOwnedKiosks then FR:ScanOwnedKiosks() end
+            if FR.SyncFromAwesomeGuildStore then FR:SyncFromAwesomeGuildStore() end
+        end
+        if FR.consoleWindow and not FR.consoleWindow:IsHidden() and FR.activeConsoleTab == 4 and FR.CollectReconData then
             FR:CollectReconData()
             if FR.bidsSubView == "recon" and FR.RenderBidsRows then
                 FR:RenderBidsRows()
             end
+        end
+        if FR._svDirty and FR.RequestPrioritySave then
+            FR:RequestPrioritySave(false)
         end
     end, 2500)
 end
@@ -3173,11 +3272,14 @@ local function OnAddOnLoaded(eventCode, addOnName)
     -- Register automatic pruning on player activation (safe, delayed, combat-guarded)
     EVENT_MANAGER:RegisterForEvent(FR.name .. "_Prune", EVENT_PLAYER_ACTIVATED, OnPlayerActivated)
 
-    -- Flush category sync telemetry on logout / reloadui / zone transition
+    -- Flush category sync telemetry and request priority SavedVariables save on wayshrine / zone loading screen / logout
     if EVENT_PLAYER_DEACTIVATED then
         EVENT_MANAGER:RegisterForEvent(FR.name .. "_Deactivate", EVENT_PLAYER_DEACTIVATED, function()
             if FR.UpdateCategorySyncTelemetry then
                 FR:UpdateCategorySyncTelemetry()
+            end
+            if FR.RequestPrioritySave then
+                FR:RequestPrioritySave(FR._svDirty == true)
             end
         end)
     end

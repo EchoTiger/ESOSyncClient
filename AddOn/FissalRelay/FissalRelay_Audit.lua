@@ -285,34 +285,8 @@ function FR:RunRosterAudit()
         end
     end
 
-    -- Flexible multi-column sorting
-    table.sort(rawInactives, function(a, b)
-        local sortBy = self.auditSortBy or "days"
-        local asc = self.auditSortAsc or false
-
-        if sortBy == "rank" then
-            if a.rankIndex ~= b.rankIndex then
-                return asc and (a.rankIndex < b.rankIndex) or (a.rankIndex > b.rankIndex)
-            end
-            return a.days > b.days
-        elseif sortBy == "sales" then
-            if a.salesCount ~= b.salesCount then
-                return asc and (a.salesCount < b.salesCount) or (a.salesCount > b.salesCount)
-            end
-            return a.salesGold > b.salesGold
-        elseif sortBy == "dues" then
-            if a.duesMet ~= b.duesMet then
-                return asc and (a.duesMet and not b.duesMet) or (not a.duesMet and b.duesMet)
-            end
-            return a.deposits < b.deposits
-        elseif sortBy == "name" then
-            return asc and (a.name < b.name) or (a.name > b.name)
-        else -- "days"
-            return asc and (a.days < b.days) or (a.days > b.days)
-        end
-    end)
-
     self.auditFilteredMembers = rawInactives
+    self:SortAuditorMembers()
     self.auditTotalMembers = memberCount
     self.auditExcusedCount = excusedCount
     self.auditOfficerCount = officerCount
@@ -580,7 +554,7 @@ function FR:BuildAuditorUI(parent)
     h1:SetMouseEnabled(true)
     h1:SetHandler("OnMouseDown", function()
         if self.auditSortBy == "name" then self.auditSortAsc = not self.auditSortAsc else self.auditSortBy = "name"; self.auditSortAsc = true end
-        self:UpdateAuditorUI()
+        self:UpdateAuditorUI(true)
     end)
     self.auditHdrMember = h1
 
@@ -591,7 +565,7 @@ function FR:BuildAuditorUI(parent)
     h2:SetMouseEnabled(true)
     h2:SetHandler("OnMouseDown", function()
         if self.auditSortBy == "rank" then self.auditSortAsc = not self.auditSortAsc else self.auditSortBy = "rank"; self.auditSortAsc = true end
-        self:UpdateAuditorUI()
+        self:UpdateAuditorUI(true)
     end)
     self.auditHdrRank = h2
 
@@ -602,7 +576,7 @@ function FR:BuildAuditorUI(parent)
     h3:SetMouseEnabled(true)
     h3:SetHandler("OnMouseDown", function()
         if self.auditSortBy == "days" then self.auditSortAsc = not self.auditSortAsc else self.auditSortBy = "days"; self.auditSortAsc = false end
-        self:UpdateAuditorUI()
+        self:UpdateAuditorUI(true)
     end)
     self.auditHdrOffline = h3
 
@@ -613,7 +587,7 @@ function FR:BuildAuditorUI(parent)
     h4:SetMouseEnabled(true)
     h4:SetHandler("OnMouseDown", function()
         if self.auditSortBy == "sales" then self.auditSortAsc = not self.auditSortAsc else self.auditSortBy = "sales"; self.auditSortAsc = false end
-        self:UpdateAuditorUI()
+        self:UpdateAuditorUI(true)
     end)
     self.auditHdrSales = h4
 
@@ -624,7 +598,7 @@ function FR:BuildAuditorUI(parent)
     h5:SetMouseEnabled(true)
     h5:SetHandler("OnMouseDown", function()
         if self.auditSortBy == "dues" then self.auditSortAsc = not self.auditSortAsc else self.auditSortBy = "dues"; self.auditSortAsc = false end
-        self:UpdateAuditorUI()
+        self:UpdateAuditorUI(true)
     end)
     self.auditHdrDues = h5
 
@@ -894,12 +868,46 @@ function FR:SanitizeNote(note)
     return s
 end
 
-function FR:UpdateAuditorUI()
+function FR:SortAuditorMembers()
+    local list = self.auditFilteredMembers
+    if not list or #list <= 1 then return end
+    table.sort(list, function(a, b)
+        local sortBy = self.auditSortBy or "days"
+        local asc = self.auditSortAsc or false
+
+        if sortBy == "rank" then
+            if a.rankIndex ~= b.rankIndex then
+                return asc and (a.rankIndex < b.rankIndex) or (a.rankIndex > b.rankIndex)
+            end
+            return a.days > b.days
+        elseif sortBy == "sales" then
+            if a.salesCount ~= b.salesCount then
+                return asc and (a.salesCount < b.salesCount) or (a.salesCount > b.salesCount)
+            end
+            return a.salesGold > b.salesGold
+        elseif sortBy == "dues" then
+            if a.duesMet ~= b.duesMet then
+                return asc and (a.duesMet and not b.duesMet) or (not a.duesMet and b.duesMet)
+            end
+            return a.deposits < b.deposits
+        elseif sortBy == "name" then
+            return asc and (a.name < b.name) or (a.name > b.name)
+        else -- "days"
+            return asc and (a.days < b.days) or (a.days > b.days)
+        end
+    end)
+end
+
+function FR:UpdateAuditorUI(sortOnly)
     if self.auditExclusionsDrawer and not self.auditExclusionsDrawer:IsHidden() then
         return
     end
 
-    self:RunRosterAudit()
+    if sortOnly and self.auditFilteredMembers then
+        self:SortAuditorMembers()
+    else
+        self:RunRosterAudit()
+    end
 
     local gIdx = self.selectedGuildIndex or 1
     local guildId = GetGuildId(gIdx)
@@ -1886,8 +1894,11 @@ function FR:RenderAuditorRows()
 
                 -- Sales
                 if m.salesCount and m.salesCount > 0 then
-                    local goldK = math.floor((m.salesGold or 0) / 1000)
-                    row.salesLbl:SetText(string.format("|c59E08A%d|r |c888888(%dk)|r", m.salesCount, goldK))
+                    local gVal = tonumber(m.salesGold) or 0
+                    local goldStr = gVal >= 1000000 and string.format("%.1fM", gVal / 1000000)
+                        or (gVal >= 1000 and string.format("%dk", math.floor(gVal / 1000))
+                        or string.format("%dg", gVal))
+                    row.salesLbl:SetText(string.format("|c59E08A%d|r |c888888(%s)|r", m.salesCount, goldStr))
                 else
                     row.salesLbl:SetText("|c6666660|r")
                 end
@@ -2126,25 +2137,8 @@ end
 
 function FR:RunShadowReconciliation()
     if not self.savedVars or not self.savedVars.audit or not self.savedVars.audit.domains then return end
-    local audit = self.savedVars.audit
-
-    -- Shadow check sales
-    local liveSales = audit.domains.sales and audit.domains.sales.counter or 0
-    local shadowSales = self:_SlowCount(self.savedVars.sales)
-    if liveSales ~= shadowSales then
-        audit.domains.sales.counter = shadowSales
-        audit.domains.sales.watermark = self.savedVars.nextSeq or 0
-        audit.domains.sales.valid = true
-        audit.driftEvents = (audit.driftEvents or 0) + 1
-    end
-
-    -- Shadow check deposits
-    local liveDeposits = audit.domains.deposits and audit.domains.deposits.counter or 0
-    local shadowDeposits = self:_SlowCount(self.savedVars.staff and self.savedVars.staff.bankDeposits)
-    if liveDeposits ~= shadowDeposits then
-        audit.domains.deposits.counter = shadowDeposits
-        audit.domains.deposits.watermark = self.savedVars.nextSeq or 0
-        audit.domains.deposits.valid = true
-        audit.driftEvents = (audit.driftEvents or 0) + 1
+    if self.BeginRebuild then
+        self:BeginRebuild("sales")
+        self:BeginRebuild("deposits")
     end
 end

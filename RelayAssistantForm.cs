@@ -347,7 +347,12 @@ namespace RedfurSync
             var clear = MakeButton("Clear chat", CTextSub);
             clear.Click += (_, _) =>
             {
-                _transcript.Controls.Clear();
+                while (_transcript.Controls.Count > 0)
+                {
+                    var ctrl = _transcript.Controls[0];
+                    _transcript.Controls.RemoveAt(0);
+                    ctrl.Dispose();
+                }
                 _history.Clear();
                 AddMessage(false, "Fresh page. What should we inspect?");
             };

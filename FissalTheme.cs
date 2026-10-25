@@ -694,16 +694,21 @@ namespace RedfurSync
             return (float)Math.Round(px); 
         }
 
+        private static readonly System.Collections.Concurrent.ConcurrentDictionary<(string Kind, int QuarterPx, FontStyle Style), Font> _fontCache = new();
+
         /// <summary>
         /// Display / Heading font with vintage Dwemer / CRT feel.
         /// </summary>
         public static Font Title(float pt, float scale, FontStyle style = FontStyle.Regular)
         {
             float pxSize = Math.Max(8f, PtToPx(pt, scale));
-            if (_customRetroFont != null)
-                return new Font(_customRetroFont, pxSize, style, GraphicsUnit.Pixel);
-
-            return new Font("Segoe UI", pxSize, style | FontStyle.Bold, GraphicsUnit.Pixel);
+            int qPx = (int)Math.Round(pxSize * 4f);
+            return _fontCache.GetOrAdd(("Title", qPx, style), _ =>
+            {
+                if (_customRetroFont != null)
+                    return new Font(_customRetroFont, pxSize, style, GraphicsUnit.Pixel);
+                return new Font("Segoe UI", pxSize, style | FontStyle.Bold, GraphicsUnit.Pixel);
+            });
         }
 
         /// <summary>
@@ -713,14 +718,18 @@ namespace RedfurSync
         public static Font Body(float pt, float scale, FontStyle style = FontStyle.Regular)
         {
             float pxSize = Math.Max(8f, PtToPx(pt, scale));
-            try
+            int qPx = (int)Math.Round(pxSize * 4f);
+            return _fontCache.GetOrAdd(("Body", qPx, style), _ =>
             {
-                return new Font("Segoe UI", pxSize, style, GraphicsUnit.Pixel);
-            }
-            catch
-            {
-                return new Font(FontFamily.GenericSansSerif, pxSize, style, GraphicsUnit.Pixel);
-            }
+                try
+                {
+                    return new Font("Segoe UI", pxSize, style, GraphicsUnit.Pixel);
+                }
+                catch
+                {
+                    return new Font(FontFamily.GenericSansSerif, pxSize, style, GraphicsUnit.Pixel);
+                }
+            });
         }
 
         /// <summary>
@@ -729,14 +738,18 @@ namespace RedfurSync
         public static Font Mono(float pt, float scale, FontStyle style = FontStyle.Regular)
         {
             float pxSize = Math.Max(8f, PtToPx(pt, scale));
-            try
+            int qPx = (int)Math.Round(pxSize * 4f);
+            return _fontCache.GetOrAdd(("Mono", qPx, style), _ =>
             {
-                return new Font("Consolas", pxSize, style, GraphicsUnit.Pixel);
-            }
-            catch
-            {
-                return new Font(FontFamily.GenericMonospace, pxSize, style, GraphicsUnit.Pixel);
-            }
+                try
+                {
+                    return new Font("Consolas", pxSize, style, GraphicsUnit.Pixel);
+                }
+                catch
+                {
+                    return new Font(FontFamily.GenericMonospace, pxSize, style, GraphicsUnit.Pixel);
+                }
+            });
         }
 
         // ── Decorative helpers ────────────────────────────────────────────────

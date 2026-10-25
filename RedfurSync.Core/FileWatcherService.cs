@@ -432,6 +432,10 @@ namespace RedfurSync
 
         internal async Task ReconcileExistingFilesAsync()
         {
+            if (_config.SyncedFileHashes.Count == 0)
+            {
+                _lastFileHashes.Clear();
+            }
             var esoBase = WatchRootProvider();
             var folders = new[]
             {

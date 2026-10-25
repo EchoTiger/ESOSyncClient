@@ -220,7 +220,14 @@ function FR:ShowConfirmModal(opts)
 
     local modal = self.confirmModal
     modal.titleLbl:SetText(ColorText(opts.title or "CONFIRM OPERATION", opts.titleColor or "FFCC00"))
-    modal.bodyLbl:SetText(opts.body or "")
+    local fullBody = opts.body or ""
+    if opts.subtitle and opts.subtitle ~= "" then
+        fullBody = ColorText(opts.subtitle, "00FFCC") .. "\n\n" .. fullBody
+    end
+    if opts.warning and opts.warning ~= "" then
+        fullBody = fullBody .. "\n\n" .. ColorText(opts.warning, "FFAA00")
+    end
+    modal.bodyLbl:SetText(fullBody)
     modal.confirmBtn:SetText(opts.confirmText or "Confirm")
     modal.cancelBtn:SetText(opts.cancelText or "Cancel")
     modal.onConfirm = opts.onConfirm
@@ -421,7 +428,7 @@ function FR:CreateConsoleUI()
     title:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     title:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
     title:SetFont("ZoFontGameBold")
-    title:SetText(string.format("|cFF9900FISSAL RELAY PRIME|r  |c00FFCCCOMMAND CONSOLE|r  |c888888v%s|r", self.version or "1.9.2"))
+    title:SetText(string.format("|cFF9900FISSAL RELAY PRIME|r  |c00FFCCCOMMAND CONSOLE|r  |c888888v%s|r", self.version or "1.9.3"))
 
     -- 7. Top Divider Line
     local topDiv = wm:CreateControl("$(parent)_DivTop", console, CT_TEXTURE)
@@ -834,25 +841,29 @@ function FR:BuildOverviewTab(parent)
     self.overviewPotLbl = potLbl
 
     local tixLbl = wm:CreateControl("$(parent)_Tickets", card3, CT_LABEL)
-    tixLbl:SetAnchor(TOPLEFT, card3, TOPLEFT, 240, 36)
+    tixLbl:SetAnchor(LEFT, potLbl, RIGHT, 28, 0)
     tixLbl:SetFont("ZoFontGameBold")
     tixLbl:SetText("Tickets: |c00FFCC0|r")
     self.overviewTixLbl = tixLbl
 
     local entLbl = wm:CreateControl("$(parent)_Entrants", card3, CT_LABEL)
-    entLbl:SetAnchor(TOPLEFT, card3, TOPLEFT, 450, 36)
+    entLbl:SetAnchor(LEFT, tixLbl, RIGHT, 28, 0)
     entLbl:SetFont("ZoFontGameBold")
     entLbl:SetText("Entrants: |cFFFFFF0 members|r")
     self.overviewEntLbl = entLbl
 
     local myTicketsLbl = wm:CreateControl("$(parent)_MyTickets", card3, CT_LABEL)
     myTicketsLbl:SetAnchor(TOPLEFT, card3, TOPLEFT, 10, 62)
+    myTicketsLbl:SetDimensions(550, 22)
+    myTicketsLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
     myTicketsLbl:SetFont("ZoFontGameBold")
     myTicketsLbl:SetText("• Your Entry: |c888888Checking personal ticket ledger...|r")
     self.overviewMyTicketsLbl = myTicketsLbl
 
     local prizesLbl = wm:CreateControl("$(parent)_Prizes", card3, CT_LABEL)
     prizesLbl:SetAnchor(TOPLEFT, card3, TOPLEFT, 10, 88)
+    prizesLbl:SetDimensions(550, 22)
+    prizesLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
     prizesLbl:SetFont("ZoFontGame")
     prizesLbl:SetText("Prizes: 1st: -- | 2nd: -- | 3rd: -- | Guild: --")
     self.overviewPrizesLbl = prizesLbl
@@ -1297,7 +1308,8 @@ function FR:UpdateOverviewTab()
     -- Raffle Metrics Card (Prioritizes live bank ledger with sealed fallback)
     local isPost = string.find(guildName, "Post") ~= nil
     local isDealers = string.find(guildName, "Dealer") ~= nil
-    local gKey = isPost and "post" or (isDealers and "dealers" or nil)
+    local isCaravan = string.find(guildName, "Caravan") ~= nil
+    local gKey = isPost and "post" or (isDealers and "dealers" or (isCaravan and "caravan" or nil))
     local raffleData = gKey and self.GetRaffleData and self:GetRaffleData(gKey)
     local liveMetrics = self.CalculateRaffleMetrics and self:CalculateRaffleMetrics(guildId, 7, 1000)
 
@@ -1316,13 +1328,13 @@ function FR:UpdateOverviewTab()
             local pSecond = math.floor(liveMetrics.totalGold * 0.20)
             local pThird = math.floor(liveMetrics.totalGold * 0.10)
             local pGuild = math.floor(liveMetrics.totalGold * 0.40)
-            self.overviewPrizesLbl:SetText(string.format("• Payouts: 🥇 |cFFD700%sg|r (30%%) • 🥈 |cFFAA00%sg|r (20%%) • 🥉 |cFF8800%sg|r (10%%) • Guild: |c00FFCC%sg|r",
+            self.overviewPrizesLbl:SetText(string.format("• Payouts: |cFFD700[1st]|r |cFFD700%sg|r (30%%) • |cE6E6FA[2nd]|r |cFFAA00%sg|r (20%%) • |cCD853F[3rd]|r |cFF8800%sg|r (10%%) • Guild: |c00FFCC%sg|r",
                 ZO_LocalizeDecimalNumber(pFirst), ZO_LocalizeDecimalNumber(pSecond), ZO_LocalizeDecimalNumber(pThird), ZO_LocalizeDecimalNumber(pGuild)))
         end
         if self.overviewWinnersLbl then
             if raffleData and raffleData.winners and #raffleData.winners > 0 then
                 local winLines = { string.format("• |cE6C387Prior Week Winners (%s):|r", raffleData.weekLabel or "Sealed") }
-                local medalIcons = { "🥇", "🥈", "🥉" }
+                local medalIcons = { "|cFFD700[1st]|r", "|cE6E6FA[2nd]|r", "|cCD853F[3rd]|r" }
                 for idx, w in ipairs(raffleData.winners) do
                     local icon = medalIcons[idx] or "✦"
                     table.insert(winLines, string.format("   %s %s: |c00FFCC%s|r — |cFFD700%s gold|r |c888888(Ticket #%d)|r",
@@ -1347,12 +1359,12 @@ function FR:UpdateOverviewTab()
         end
         if self.overviewPrizesLbl and raffleData.prizes then
             local p = raffleData.prizes
-            self.overviewPrizesLbl:SetText(string.format("• Payouts: 🥇 |cFFD700%sg|r • 🥈 |cFFAA00%sg|r • 🥉 |cFF8800%sg|r • Guild: |c00FFCC%sg|r",
+            self.overviewPrizesLbl:SetText(string.format("• Payouts: |cFFD700[1st]|r |cFFD700%sg|r • |cE6E6FA[2nd]|r |cFFAA00%sg|r • |cCD853F[3rd]|r |cFF8800%sg|r • Guild: |c00FFCC%sg|r",
                 ZO_LocalizeDecimalNumber(p.first or 0), ZO_LocalizeDecimalNumber(p.second or 0), ZO_LocalizeDecimalNumber(p.third or 0), ZO_LocalizeDecimalNumber(p.guild or 0)))
         end
         if self.overviewWinnersLbl and raffleData.winners then
             local winLines = { string.format("• |cE6C387Prior Week Winners (%s):|r", raffleData.weekLabel or "Sealed") }
-            local medalIcons = { "🥇", "🥈", "🥉" }
+            local medalIcons = { "|cFFD700[1st]|r", "|cE6E6FA[2nd]|r", "|cCD853F[3rd]|r" }
             for idx, w in ipairs(raffleData.winners) do
                 local icon = medalIcons[idx] or "✦"
                 table.insert(winLines, string.format("   %s %s: |c00FFCC%s|r — |cFFD700%s gold|r |c888888(Ticket #%d)|r",

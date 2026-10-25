@@ -233,9 +233,14 @@ function FR:CreateHUD()
         local saleCount = FR.GetCount and FR:GetCount("sales") or 0
         local deposits = FR.GetCount and FR:GetCount("deposits") or 0
         local totalGold = FR.savedVars and FR.savedVars.totalSalesGold or 0
+        local isDirty = FR._svDirty == true
+        local lastSaveTs = (FR.savedVars and FR.savedVars.lastPrioritySaveTs) or FR._lastPrioritySaveTs or 0
+        local saveStatus = isDirty and "|cFFD700● Staged (Auto-Save Pending)|r"
+            or (lastSaveTs > 0 and string.format("|c59E08A● Flushed (%s ago)|r", ZO_FormatDurationAgo(math.max(0, GetTimeStamp() - lastSaveTs)))
+            or "|c59E08A● Staged & Ready|r")
         local lines = {
             "|cFF9900Fissal Relay Sync Engine|r",
-            "|c888888Status:|r |c59E08A● Staged & Ready|r",
+            "|c888888Status:|r " .. saveStatus,
             "",
             string.format("|c00FFCC%s|r Guild Sales recorded", ZO_LocalizeDecimalNumber(saleCount)),
             string.format("|cFFAA00%s|r Guild Bank Deposits recorded", ZO_LocalizeDecimalNumber(deposits)),
@@ -244,12 +249,13 @@ function FR:CreateHUD()
             table.insert(lines, string.format("|cFFD700%s gold|r total sales volume", ZO_LocalizeDecimalNumber(totalGold)))
         end
         table.insert(lines, "")
-        table.insert(lines, "|cE6C387How Sync Works:|r")
-        table.insert(lines, "ESO stores all trade history securely in SavedVariables.")
-        table.insert(lines, "Upon /reloadui or logout, the Fissal Relay desktop courier")
-        table.insert(lines, "relays staged records to your homelab database and Discord.")
+        table.insert(lines, "|cE6C387How Micro-Sync Works:|r")
+        table.insert(lines, "Fissal Relay automatically flushes new sales, bank deposits,")
+        table.insert(lines, "and kiosk sweeps to disk in the background (30s debounce,")
+        table.insert(lines, "wayshrine zoning, or /reloadui) so RedfurSync.exe can upload")
+        table.insert(lines, "live without interrupting gameplay.")
         table.insert(lines, "")
-        table.insert(lines, "|c888888• Zero manual exporting needed.\n• Safe, non-destructive caching.|r")
+        table.insert(lines, "|c888888• Zero manual exporting needed.\n• Safe, non-destructive background caching.|r")
         SetTooltipText(InformationTooltip, table.concat(lines, "\n"))
     end
     if readyLbl then
@@ -644,8 +650,9 @@ function FR:UpdateHUD()
     if self.hudElements.readyVal then
         local totalStaged = saleCount + deposits
         if totalStaged > 0 then
-            self.hudElements.readyVal:SetText(string.format("|c59E08A● Ready|r |c00FFCC%s|r |c888888sales|r • |cFFAA00%s|r |c888888deps|r",
-                ZO_LocalizeDecimalNumber(saleCount), ZO_LocalizeDecimalNumber(deposits)))
+            local badge = self._svDirty and "|cFFD700● Staged|r" or "|c59E08A● Synced|r"
+            self.hudElements.readyVal:SetText(string.format("%s |c00FFCC%s|r |c888888sales|r • |cFFAA00%s|r |c888888deps|r",
+                badge, ZO_LocalizeDecimalNumber(saleCount), ZO_LocalizeDecimalNumber(deposits)))
         else
             self.hudElements.readyVal:SetText("|c888888○ Idle (0 staged)|r")
         end

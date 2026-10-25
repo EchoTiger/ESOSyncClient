@@ -748,7 +748,9 @@ namespace RedfurSync
                 if (statuses.Count == 0)
                 {
                     string dispName = AppConfig.Instance.DisplayName;
-                    string userStatus = string.IsNullOrWhiteSpace(dispName) ? "" : $"> OPERATOR: {dispName.ToUpper()}";
+                    string userStatus = AppConfig.Instance.IsAnonymousToken
+                        ? "> ANONYMOUS MODE (BANK-ONLY) • PAIR IN SETUP FOR DISCORD CREDIT"
+                        : (string.IsNullOrWhiteSpace(dispName) ? "" : $"> OPERATOR: {dispName.ToUpper()}");
 
                     statuses.Add(("> STAND BY... MONITORING ESO LIVE", CAccent, 0));
                     statuses.Add(("● TONAL TRANSCEIVER RESONANT • REDFUR RELAY", CGoldBrt, 0));
@@ -1006,9 +1008,10 @@ namespace RedfurSync
                 using var b2 = new SolidBrush(CTextSub);
                 g.DrawString($"v{RelayVersion.Current} • WIN-X64", f2, b2, (int)(8 * _scale), (int)(24 * _scale));
 
-                bool isPaired = !string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken) || !string.IsNullOrWhiteSpace(AppConfig.Instance.ApiKey);
-                string badgeStatus = !isPaired ? "● UNPAIRED" : (_isConnected ? "● ONLINE" : "● OFFLINE");
-                Color badgeCol = !isPaired ? CWarn : (_isConnected ? CGreen : CBarFail);
+                bool isAnon = AppConfig.Instance.IsAnonymousToken;
+                bool isPaired = (!string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken) && !isAnon) || !string.IsNullOrWhiteSpace(AppConfig.Instance.ApiKey);
+                string badgeStatus = isAnon ? "● ANON (BANK)" : (!isPaired ? "● UNPAIRED" : (_isConnected ? "● ONLINE" : "● OFFLINE"));
+                Color badgeCol = (isAnon || !isPaired) ? CWarn : (_isConnected ? CGreen : CBarFail);
 
                 using var f3 = Mono(7f, _scale, FontStyle.Bold);
                 using var b3 = new SolidBrush(badgeCol);
@@ -1017,6 +1020,8 @@ namespace RedfurSync
                 // Decorative corner micro-rivets on badge
                 DrawCornerRivets(g, w - 4, h - 4, (int)(2 * _scale), Color.FromArgb(100, CGoldMid));
             };
+            navBadge.Cursor = Cursors.Hand;
+            navBadge.Click += (_, _) => SwitchTab("setup");
             _navRail.Controls.Add(navBadge);
             _rootLayout.Controls.Add(_navRail, 0, 1);
 
@@ -1601,7 +1606,7 @@ namespace RedfurSync
             }
 
             // Smooth live animation of active transmitting rows (plasma gauge & carrier waves)
-            if (isUploading)
+            if (isUploading && _activeTabId == "sync")
             {
                 int animCycle = (_animFrame / 2) % 4;
                 string waveGlyph = animCycle switch { 0 => "▪▫▫▫", 1 => "▫▪▫▫", 2 => "▫▫▪▫", _ => "▫▫▫▪" };
@@ -1765,12 +1770,17 @@ namespace RedfurSync
                 }
                 else
                 {
-                    _syncStateBadge.Text = "● SYNC IDLE";
-                    _syncStateBadge.ForeColor = CGreen;
-                    _messageBoardText = failed > 0 ? $"Notice: {failed} file{(failed == 1 ? "" : "s")} failed to upload" : "All guild data synchronized • Watching for ESO updates";
-                    _messageBoardColor = failed > 0 ? CBarFail : CGreen;
-                    _titleStatusLabel.Text = failed > 0 ? "⚠ ATTENTION NEEDED" : "● CONNECTED TO REDFUR RELAY";
-                    _titleStatusLabel.ForeColor = failed > 0 ? CBarFail : CGreen;
+                    bool isAnonMode = AppConfig.Instance.IsAnonymousToken;
+                    _syncStateBadge.Text = isAnonMode ? "● ANON IDLE" : "● SYNC IDLE";
+                    _syncStateBadge.ForeColor = isAnonMode ? CGoldBrt : CGreen;
+                    _messageBoardText = failed > 0
+                        ? $"Notice: {failed} file{(failed == 1 ? "" : "s")} failed to upload"
+                        : (isAnonMode
+                            ? "Anonymous Mode (Bank-Only) • Pair in Setup for Discord Credit & Full Sync"
+                            : "All guild data synchronized • Watching for ESO updates");
+                    _messageBoardColor = failed > 0 ? CBarFail : (isAnonMode ? CGoldBrt : CGreen);
+                    _titleStatusLabel.Text = failed > 0 ? "⚠ ATTENTION NEEDED" : (isAnonMode ? "● ANONYMOUS MODE (BANK-ONLY)" : "● CONNECTED TO REDFUR RELAY");
+                    _titleStatusLabel.ForeColor = failed > 0 ? CBarFail : (isAnonMode ? CGoldBrt : CGreen);
                 }
 
                 if (_messageBoardLabel != null)
@@ -1958,7 +1968,9 @@ namespace RedfurSync
                     };
                     var emptyLabel = new Label
                     {
-                        Text = "✓ All guild data synchronized with Redfur Relay. Monitoring for changes.",
+                        Text = AppConfig.Instance.IsAnonymousToken
+                            ? "● Anonymous Mode (Bank-Only) active. Pair with a 6-digit code in Setup for Discord credit & full sync."
+                            : "✓ All guild data synchronized with Redfur Relay. Monitoring for changes.",
                         ForeColor = CTextSub,
                         Font = Body(8.5f, _scale, FontStyle.Italic),
                         Dock = DockStyle.Fill,
@@ -3977,8 +3989,9 @@ namespace RedfurSync
                         }
                     }
                     catch { }
-                    FissalBox.Show(message, "Pairing Complete");
                     _ = _watcher.StartAsync();
+                    RefreshSyncView();
+                    FissalBox.Show(message, "Pairing Complete");
                 }
                 else
                 {
@@ -4031,7 +4044,13 @@ namespace RedfurSync
 
             _navBadgePanel?.Invalidate();
 
-            string authMode = hasToken ? "Device Token (rfr_... / DPAPI Encrypted)" : hasKey ? "Master API Key (Direct Owner Access)" : "Unlinked";
+            string authMode = (hasToken && isAnon)
+                ? "Anonymous Token (rfr_anon_... / Bank-Only Quarantine)"
+                : hasToken
+                    ? "Verified Device Token (rfr_... / DPAPI Encrypted)"
+                    : hasKey
+                        ? "Master API Key (Direct Owner Access)"
+                        : "Unlinked";
             _lblDeviceInfo.Text = $"Auth Mode: {authMode}\nToken Storage: DPAPI Encrypted (CurrentUser)\nUpdate Endpoint: {cfg.UpdateUrl}";
             UpdateSilentSyncButton();
             UpdateSyncMmButton();

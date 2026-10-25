@@ -294,11 +294,23 @@ public static class LuaStreamingReader
         return guilds;
     }
 
+    /// <summary>
+    /// Single-pass stream reader that extracts both kiosk observations and knownTradingGuilds in one file scan.
+    /// </summary>
+    public static (List<KioskObservation> Kiosks, Dictionary<int, string> KnownGuilds) ReadKiosksAndKnownGuilds(string filePath)
+    {
+        return (ReadKioskObservations(filePath), ReadKnownTradingGuilds(filePath));
+    }
+
     private static void CountBracesOnLine(ReadOnlySpan<char> span, ref int depth)
     {
         for (int i = 0; i < span.Length; i++)
         {
             char c = span[i];
+            if (c == '-' && i + 1 < span.Length && span[i + 1] == '-')
+            {
+                break; // Ignore rest of line after unquoted Lua comment
+            }
             if (c == '"')
             {
                 i++;

@@ -791,7 +791,7 @@ function FR:BuildMotDStudio(parent)
     undoBtn:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -179, 48)
     undoBtn:SetDimensions(64, 24)
     undoBtn:SetFont("ZoFontGameSmall")
-    undoBtn:SetText("↶ Undo")
+    undoBtn:SetText("<< Undo")
     self:StyleTactileButton(undoBtn, {
         normalBg = { 0.08, 0.08, 0.12, 0.90 },
         hoverBg = { 0.12, 0.12, 0.18, 0.98 },
@@ -810,7 +810,7 @@ function FR:BuildMotDStudio(parent)
     redoBtn:SetAnchor(TOPRIGHT, editBg, BOTTOMRIGHT, -107, 48)
     redoBtn:SetDimensions(64, 24)
     redoBtn:SetFont("ZoFontGameSmall")
-    redoBtn:SetText("Redo ↷")
+    redoBtn:SetText("Redo >>")
     self:StyleTactileButton(redoBtn, {
         normalBg = { 0.08, 0.08, 0.12, 0.90 },
         hoverBg = { 0.12, 0.12, 0.18, 0.98 },

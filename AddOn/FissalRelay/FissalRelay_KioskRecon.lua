@@ -1144,6 +1144,7 @@ function FR:RecordCanonicalKiosk(rawTrader, guildId, rawGuildName, sourceTag, xC
     local xStr = xCoord and string.format("%.4f", tonumber(xCoord) or 0) or (prevObs and prevObs.x) or "0.0000"
     local yStr = yCoord and string.format("%.4f", tonumber(yCoord) or 0) or (prevObs and prevObs.y) or "0.0000"
 
+    self._kioskTelemetryCache = nil
     self.savedVars.kiosks[resolved.trader] = {
         trader = resolved.trader,
         guildId = cleanGuildId,
@@ -1182,6 +1183,10 @@ function FR:RecordCanonicalKiosk(rawTrader, guildId, rawGuildName, sourceTag, xC
             self.ColorText(resolved.city, "00FFCC"),
             resolved.zone,
             self.ColorText(guildName, badgeColor)))
+    end
+
+    if isNewOrChanged and self.MarkSavedVarsDirty then
+        self:MarkSavedVarsDirty("kiosk_recon")
     end
 
     return true, isNewOrChanged
@@ -1324,8 +1329,13 @@ function FR:OnActiveBidsResponse(guildId, result)
         end
     end
 
-    if added > 0 and self.UpdateBidsUI and self.consoleWindow and not self.consoleWindow:IsHidden() then
-        self:UpdateBidsUI()
+    if added > 0 then
+        if self.MarkSavedVarsDirty then
+            self:MarkSavedVarsDirty("active_bids")
+        end
+        if self.UpdateBidsUI and self.consoleWindow and not self.consoleWindow:IsHidden() then
+            self:UpdateBidsUI()
+        end
     end
 end
 
@@ -1478,6 +1488,7 @@ function FR:StopKioskSweep(reason)
     st.pendingGuildId = nil
     st.currentGuildId = nil
     st.currentGuildName = ""
+    self._kioskTelemetryCache = nil
     st.lastCompletedTs = GetTimeStamp()
     st.lastHarvested = st.kiosksHarvested or 0
     st.lastNewOrUpdated = st.newOrUpdated or 0
@@ -1497,6 +1508,9 @@ function FR:StopKioskSweep(reason)
         self.ColorText(tostring(st.kiosksHarvested or 0), "00FFCC"),
         self.ColorText(tostring(st.newOrUpdated or 0), "59E08A"),
         self.ColorText(tostring(totalWeekKiosks), "FFD700")))
+    if (st.kiosksHarvested or 0) > 0 and self.RequestPrioritySave then
+        self:RequestPrioritySave(true)
+    end
     if self.PlayFissalSound then self.PlayFissalSound() end
 end
 
@@ -1517,7 +1531,22 @@ end
 
 function FR:GetKioskReconTelemetry()
     local st = self.kioskSweepState or {}
-    local curWeekStart = self.GetTuesdayTradeWeek and self:GetTuesdayTradeWeek(GetTimeStamp()) or 0
+    local nowTs = GetTimeStamp()
+    local ttl = st.active and 2 or 10
+    if self._kioskTelemetryCache and (nowTs - self._kioskTelemetryCache.ts) < ttl and self._kioskTelemetryCache.active == (st.active == true) then
+        local cached = self._kioskTelemetryCache.data
+        if st.active then
+            cached.passIndex = st.passIndex or 0
+            cached.totalPasses = st.totalPasses or 0
+            cached.currentPassLabel = st.currentPassLabel or ""
+            cached.probeIndex = st.probeIndex or 0
+            cached.totalProbes = st.totalProbes or 0
+            cached.kiosksHarvested = st.kiosksHarvested or 0
+            cached.newOrUpdated = st.newOrUpdated or 0
+        end
+        return cached
+    end
+    local curWeekStart = self.GetTuesdayTradeWeek and self:GetTuesdayTradeWeek(nowTs) or 0
     local weekCount = 0
     local totalCataloged = 0
     local bySource = {
@@ -1574,7 +1603,7 @@ function FR:GetKioskReconTelemetry()
         probedThisWeek = NonContiguousCount(self.savedVars.probedGuildsWeek.probed)
     end
 
-    return {
+    local data = {
         active = st.active == true,
         phase = st.phase or "idle",
         passIndex = st.passIndex or 0,
@@ -1597,6 +1626,8 @@ function FR:GetKioskReconTelemetry()
         probedThisWeek = probedThisWeek,
         bySource = bySource,
     }
+    self._kioskTelemetryCache = { ts = nowTs, active = (st.active == true), data = data }
+    return data
 end
 
 local function IsGuildBrowserShowing()
