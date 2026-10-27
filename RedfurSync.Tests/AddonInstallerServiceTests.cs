@@ -196,7 +196,7 @@ public sealed class AddonInstallerServiceTests
     {
         try
         {
-            var jsonResponse = "{\"addonVersion\":\"1.9.3\",\"addonUrl\":\"https://redfur.ech-o.net/api/relay/v1/download-addon\"}";
+            var jsonResponse = "{\"addonVersion\":\"1.9.5\",\"addonUrl\":\"https://redfur.ech-o.net/api/relay/v1/download-addon\"}";
             var handler = new FakeHttpMessageHandler((req, _) =>
             {
                 Assert.Equal("https://redfur.ech-o.net/api/relay/v1/download", req.RequestUri?.ToString());
@@ -210,7 +210,7 @@ public sealed class AddonInstallerServiceTests
             var ok = await AddonInstallerService.CheckRemoteAddonVersionAsync("https://redfur.ech-o.net/upload", client);
 
             Assert.True(ok);
-            Assert.Equal("1.9.3", AddonInstallerService.ActiveLatestAddonVersion);
+            Assert.Equal("1.9.5", AddonInstallerService.ActiveLatestAddonVersion);
             Assert.Equal("https://redfur.ech-o.net/api/relay/v1/download-addon", AddonInstallerService.RemoteAddonDownloadUrl);
         }
         finally

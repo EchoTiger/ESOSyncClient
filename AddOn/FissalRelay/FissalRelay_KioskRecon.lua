@@ -1046,6 +1046,32 @@ function FR:ResolveCanonicalKiosk(rawTrader, rawCity, rawZone)
         }
     end
 
+    -- 3. Unambiguous Prefix / First-Name match in 291 Directory (e.g. "Muz-Shah" -> "Muz-Shah the Broker")
+    if #lowerTrader >= 4 and self.KIOSK_DIRECTORY then
+        local prefixHit = nil
+        local prefixCount = 0
+        for _, entry in ipairs(self.KIOSK_DIRECTORY) do
+            local tLower = string.lower(entry.trader)
+            if tLower:sub(1, #lowerTrader + 1) == (lowerTrader .. " ")
+                or tLower:sub(1, #lowerTrader + 1) == (lowerTrader .. "-")
+            then
+                if parsedCity == "" or string.lower(entry.city) == string.lower(parsedCity) then
+                    prefixHit = entry
+                    prefixCount = prefixCount + 1
+                end
+            end
+        end
+        if prefixCount == 1 and prefixHit then
+            return {
+                trader = prefixHit.trader,
+                city = prefixHit.city,
+                zone = prefixHit.zone,
+                isOutlaw = prefixHit.isOutlaw,
+                matchedDirectory = true,
+            }
+        end
+    end
+
     return {
         trader = cleanTrader,
         city = parsedCity ~= "" and parsedCity or "Tamriel",
@@ -1240,15 +1266,81 @@ function FR:InspectUnitKiosk(unitTag, sourceTag, silent)
         local extracted = ExtractGuildNameFromCaption(caption)
         if extracted and extracted ~= "" and extracted ~= noOwnerCaption then
             guildName = extracted
-        elseif self.savedVars and self.savedVars.knownTradingGuilds and self.savedVars.knownTradingGuilds[guildId] then
+        elseif GetGuildNameAttribute then
+            local attrName = GetGuildNameAttribute(guildId)
+            if attrName and attrName ~= "" then
+                guildName = CleanEsoString(attrName)
+            end
+        end
+        if (not guildName or guildName == "") and self.savedVars and self.savedVars.knownTradingGuilds and self.savedVars.knownTradingGuilds[guildId] then
             guildName = self.savedVars.knownTradingGuilds[guildId]
         end
     end
 
-    if not guildName then return false end
-
     local x, y = GetMapPlayerPosition("player")
+
+    if not guildName then
+        -- Drive-By Reticle Buffer: If ESO is still resolving the uncached guild name asynchronously (~150ms),
+        -- buffer the trader & coordinates keyed by ownerGuildId so EVENT_GUILD_NAME_AVAILABLE records it
+        -- even after the player's crosshair has already swept past the NPC!
+        if guildId > 0 then
+            if not self._pendingReticleKiosks then self._pendingReticleKiosks = {} end
+            self._pendingReticleKiosks[guildId] = {
+                trader = unitName,
+                guildId = guildId,
+                source = sourceTag or "Reticle Recon",
+                x = x,
+                y = y,
+                silent = silent,
+                ts = GetTimeStamp(),
+            }
+        end
+        return false
+    end
+
+    if guildId > 0 and self._pendingReticleKiosks then
+        self._pendingReticleKiosks[guildId] = nil
+    end
+
     return self:RecordCanonicalKiosk(unitName, guildId, guildName, sourceTag or "Reticle Recon", x, y, silent)
+end
+
+function FR:ResolvePendingReticleKiosk(guildId, eventGuildName)
+    if not self._pendingReticleKiosks then return false end
+    local numId = tonumber(guildId) or 0
+    local nowTs = GetTimeStamp()
+
+    if numId > 0 and self._pendingReticleKiosks[numId] then
+        local pending = self._pendingReticleKiosks[numId]
+        self._pendingReticleKiosks[numId] = nil
+        if (nowTs - (pending.ts or 0)) <= 30 then
+            local gName = CleanEsoString(eventGuildName or "")
+            if gName == "" and GetGuildNameAttribute then
+                gName = CleanEsoString(GetGuildNameAttribute(numId) or "")
+            end
+            if gName == "" and self.savedVars and self.savedVars.knownTradingGuilds then
+                gName = self.savedVars.knownTradingGuilds[numId] or ""
+            end
+            if gName ~= "" then
+                return self:RecordCanonicalKiosk(pending.trader, numId, gName, pending.source, pending.x, pending.y, pending.silent)
+            end
+        end
+        return false
+    end
+
+    -- Fallback sweep over any recent pending entries if event didn't pass guildId
+    for pGuildId, pending in pairs(self._pendingReticleKiosks) do
+        if (nowTs - (pending.ts or 0)) > 30 then
+            self._pendingReticleKiosks[pGuildId] = nil
+        else
+            local gName = GetGuildNameAttribute and CleanEsoString(GetGuildNameAttribute(pGuildId) or "") or ""
+            if gName ~= "" then
+                self._pendingReticleKiosks[pGuildId] = nil
+                self:RecordCanonicalKiosk(pending.trader, pGuildId, gName, pending.source, pending.x, pending.y, pending.silent)
+            end
+        end
+    end
+    return false
 end
 
 --[[ =========================================================================
@@ -1368,23 +1460,33 @@ FR.kioskSweepState = {
 
 local function BuildGuildFinderPasses()
     local passes = {}
-    local tradingFocus = GUILD_FOCUS_ATTRIBUTE_VALUE_TRADING or 1
     local alliances = {
-        { id = ALLIANCE_ALDMERI_DOMINION or 1, label = "Trading (AD)" },
-        { id = ALLIANCE_DAGGERFALL_COVENANT or 3, label = "Trading (DC)" },
-        { id = ALLIANCE_EBONHEART_PACT or 2, label = "Trading (EP)" },
+        { id = ALLIANCE_ALDMERI_DOMINION or 1, code = "AD" },
+        { id = ALLIANCE_DAGGERFALL_COVENANT or 3, code = "DC" },
+        { id = ALLIANCE_EBONHEART_PACT or 2, code = "EP" },
     }
-    for _, a in ipairs(alliances) do
-        table.insert(passes, {
-            focus = tradingFocus,
-            alliance = a.id,
-            label = a.label,
-        })
+
+    -- Split high-density trader categories (Trading, Social, Group PvE) by Alliance up front
+    -- so ESO's per-query result cap never truncates guilds holding kiosks.
+    local allianceSplitFocuses = {
+        { id = GUILD_FOCUS_ATTRIBUTE_VALUE_TRADING or 1, label = "Trading" },
+        { id = GUILD_FOCUS_ATTRIBUTE_VALUE_SOCIAL, label = "Social" },
+        { id = GUILD_FOCUS_ATTRIBUTE_VALUE_GROUP_PVE, label = "Group PvE" },
+    }
+    for _, f in ipairs(allianceSplitFocuses) do
+        if f.id then
+            for _, a in ipairs(alliances) do
+                table.insert(passes, {
+                    focus = f.id,
+                    alliance = a.id,
+                    label = string.format("%s (%s)", f.label, a.code),
+                    baseLabel = f.label,
+                })
+            end
+        end
     end
 
     local otherFocuses = {
-        { id = GUILD_FOCUS_ATTRIBUTE_VALUE_SOCIAL, label = "Social" },
-        { id = GUILD_FOCUS_ATTRIBUTE_VALUE_GROUP_PVE, label = "Group PvE" },
         { id = GUILD_FOCUS_ATTRIBUTE_VALUE_CRAFTING, label = "Crafting" },
         { id = GUILD_FOCUS_ATTRIBUTE_VALUE_PVP, label = "PvP" },
         { id = GUILD_FOCUS_ATTRIBUTE_VALUE_QUESTING, label = "Questing" },
@@ -1394,8 +1496,9 @@ local function BuildGuildFinderPasses()
         if f.id then
             table.insert(passes, {
                 focus = f.id,
-                alliance = nil, -- all alliances
+                alliance = nil, -- all alliances (dynamically splits if result cap hit)
                 label = f.label,
+                baseLabel = f.label,
             })
         end
     end
@@ -1483,6 +1586,13 @@ end
 function FR:StopKioskSweep(reason)
     local st = self.kioskSweepState
     if not st or not st.active then return end
+    local wasSilent = st.isSilent
+    local remainingUnprobed = st.remainingUnprobed or 0
+    if reason == "stopped by user" then
+        self._trickleProbeToken = (self._trickleProbeToken or 0) + 1
+        self._trickleProbePending = false
+    end
+
     st.active = false
     st.phase = "idle"
     st.pendingGuildId = nil
@@ -1503,15 +1613,33 @@ function FR:StopKioskSweep(reason)
     end
 
     local totalWeekKiosks = self:GetCurrentWeekKioskCount()
-    self.PrintChat(string.format("Tamriel Kiosk Sweep %s: %s kiosks harvested (%s new/updated). Current week coverage: %s/291 Tamriel traders.",
-        reason or "complete",
-        self.ColorText(tostring(st.kiosksHarvested or 0), "00FFCC"),
-        self.ColorText(tostring(st.newOrUpdated or 0), "59E08A"),
-        self.ColorText(tostring(totalWeekKiosks), "FFD700")))
+    if not wasSilent or (st.newOrUpdated or 0) > 0 then
+        self.PrintChat(string.format("Tamriel Kiosk Sweep %s: %s kiosks harvested (%s new/updated). Current week coverage: %s/291 Tamriel traders.",
+            reason or "complete",
+            self.ColorText(tostring(st.kiosksHarvested or 0), "00FFCC"),
+            self.ColorText(tostring(st.newOrUpdated or 0), "59E08A"),
+            self.ColorText(tostring(totalWeekKiosks), "FFD700")))
+    end
     if (st.kiosksHarvested or 0) > 0 and self.RequestPrioritySave then
         self:RequestPrioritySave(true)
     end
-    if self.PlayFissalSound then self.PlayFissalSound() end
+    if not wasSilent and self.PlayFissalSound then self.PlayFissalSound() end
+
+    -- Polite Background Trickle Prober: If unlisted trading guilds remain unprobed for this week
+    -- and we haven't mapped all ~285 active kiosks yet, schedule a quiet 45s breather and probe the next batch!
+    local allowTrickle = (not self.savedVars or not self.savedVars.settings or self.savedVars.settings.autoTrickleKioskProbes ~= false)
+    if reason == "complete" and allowTrickle and remainingUnprobed > 0 and totalWeekKiosks < 285 then
+        local token = (self._trickleProbeToken or 0) + 1
+        self._trickleProbeToken = token
+        self._trickleProbePending = true
+        zo_callLater(function()
+            if self._trickleProbeToken ~= token then return end
+            self._trickleProbePending = false
+            if not (self.kioskSweepState and self.kioskSweepState.active) and not self.isBumping then
+                self:StartKioskSweep({ silent = true, probeOnly = true })
+            end
+        end, 45000)
+    end
 end
 
 function FR:GetCurrentWeekKioskCount()
@@ -1728,6 +1856,27 @@ function FR:OnGuildFinderSearchComplete(eventCode, searchId)
         return
     end
 
+    -- Adaptive Pass Subdivision: If an all-alliance pass returns >= 25 results, dynamically enqueue
+    -- alliance-specific sub-passes (AD, DC, EP) for that focus so no results are truncated by ESO's cap.
+    local curPass = st.passes and st.passes[st.passIndex]
+    if curPass and curPass.alliance == nil and numResults >= 25 and not curPass.didSplit then
+        curPass.didSplit = true
+        local alliances = {
+            { id = ALLIANCE_ALDMERI_DOMINION or 1, code = "AD" },
+            { id = ALLIANCE_DAGGERFALL_COVENANT or 3, code = "DC" },
+            { id = ALLIANCE_EBONHEART_PACT or 2, code = "EP" },
+        }
+        for idx, a in ipairs(alliances) do
+            table.insert(st.passes, st.passIndex + idx, {
+                focus = curPass.focus,
+                alliance = a.id,
+                label = string.format("%s (%s)", curPass.baseLabel or curPass.label, a.code),
+                baseLabel = curPass.baseLabel or curPass.label,
+            })
+        end
+        st.totalPasses = #st.passes
+    end
+
     self:UpdateSweepButtonUI()
     if self.UpdateBidsUI and self.consoleWindow and not self.consoleWindow:IsHidden() and self.bidsSubView == "recon" then
         self:UpdateBidsUI()
@@ -1753,8 +1902,8 @@ function FR:EnsureProbedGuildsWeekTable()
     return self.savedVars.probedGuildsWeek.probed, curWeekStart
 end
 
--- Maximum uncached C++ Guild Info network requests allowed per single sweep to guarantee zero server disconnects
-local MAX_NETWORK_PROBES_PER_SWEEP = 18
+-- Maximum uncached C++ Guild Info network requests allowed per single sweep batch to guarantee zero server disconnects
+local MAX_NETWORK_PROBES_PER_SWEEP = 24
 
 function FR:StartKnownGuildProbe()
     local st = self.kioskSweepState
@@ -1776,9 +1925,18 @@ function FR:StartKnownGuildProbe()
                 if (tonumber(k.timestamp) or 0) >= curWeekStart then
                     alreadyConfirmedGuildIds[gId] = true
                 else
-                    priorKioskHolders[gId] = true
+                    priorKioskHolders[gId] = math.max(priorKioskHolders[gId] or 0, tonumber(k.timestamp) or 1)
                 end
             end
+        end
+    end
+
+    -- Also elevate guilds known to hold kiosks on the Redfur fleet server (`guildKioskPriority`)
+    local serverPriority = (self.savedVars and self.savedVars.guildKioskPriority) or {}
+    for gId, meta in pairs(serverPriority) do
+        local numId = tonumber(gId)
+        if numId and numId > 0 and type(meta) == "table" and meta.hasTrader then
+            priorKioskHolders[numId] = math.max(priorKioskHolders[numId] or 0, tonumber(meta.lastSeen) or 1)
         end
     end
 
@@ -1807,8 +1965,22 @@ function FR:StartKnownGuildProbe()
     end
 
     table.sort(cachedInMemoryList)
-    table.sort(priorityUnprobedList)
-    table.sort(standardUnprobedList)
+    -- Sort priority guilds by most recently seen trader activity first, then newest guildId
+    table.sort(priorityUnprobedList, function(a, b)
+        local scoreA = priorKioskHolders[a] or 0
+        local scoreB = priorKioskHolders[b] or 0
+        if scoreA ~= scoreB then return scoreA > scoreB end
+        return a > b
+    end)
+    -- Sort standard unprobed guilds by newest guildId descending (active modern trading guilds before defunct 2014 IDs)
+    table.sort(standardUnprobedList, function(a, b)
+        local metaA = serverPriority[a]
+        local metaB = serverPriority[b]
+        local seenA = (type(metaA) == "table" and tonumber(metaA.lastSeen)) or 0
+        local seenB = (type(metaB) == "table" and tonumber(metaB.lastSeen)) or 0
+        if seenA ~= seenB then return seenA > seenB end
+        return a > b
+    end)
 
     -- 1. Harvest all zero-cost client-memory cached guilds immediately
     for _, id in ipairs(cachedInMemoryList) do
@@ -1816,7 +1988,7 @@ function FR:StartKnownGuildProbe()
         self:HarvestGuildAttributeKiosk(id, "Guild ID Probe")
     end
 
-    -- 2. Enqueue up to MAX_NETWORK_PROBES_PER_SWEEP uncached guilds (prioritizing prior kiosk holders)
+    -- 2. Enqueue up to MAX_NETWORK_PROBES_PER_SWEEP uncached guilds (prioritizing active kiosk holders)
     for _, id in ipairs(priorityUnprobedList) do
         if #st.probeQueue < MAX_NETWORK_PROBES_PER_SWEEP then
             table.insert(st.probeQueue, id)
@@ -1830,11 +2002,12 @@ function FR:StartKnownGuildProbe()
 
     st.totalProbes = #st.probeQueue
     local totalRemainingUnprobed = math.max(0, (#priorityUnprobedList + #standardUnprobedList) - st.totalProbes)
+    st.remainingUnprobed = totalRemainingUnprobed
     self:UpdateSweepButtonUI()
 
     if not st.isSilent and st.totalPasses > 0 then
         if st.totalProbes > 0 then
-            self.PrintChat(string.format("Sweep Phase 1/2 (Guild Finder) complete: %s kiosks mapped. Phase 2/2: Politely probing batch of %s unlisted guilds (~3.6s pacing, %s remaining for later sweeps)...",
+            self.PrintChat(string.format("Sweep Phase 1/2 (Guild Finder) complete: %s kiosks mapped. Phase 2/2: Politely probing batch of %s unlisted guilds (~3.6s pacing, %s remaining for background trickle)...",
                 self.ColorText(tostring(st.kiosksHarvested or 0), "00FFCC"),
                 self.ColorText(tostring(st.totalProbes), "FFD700"),
                 tostring(totalRemainingUnprobed)))
@@ -1959,6 +2132,7 @@ function FR:OnGuildInfoRequestComplete(eventCode, guildId)
 
     -- Always harvest passively even when the user clicks a guild in Guild Browser manually
     self:HarvestGuildAttributeKiosk(guildId, "Guild ID Probe")
+    self:ResolvePendingReticleKiosk(guildId)
 
     local st = self.kioskSweepState
     if not st or not st.active or st.phase ~= "guild_probe" then
@@ -1991,7 +2165,7 @@ function FR:StartKioskSweep(opts)
             -- Promote silent background sweep to visible mode and report live progress
             st.isSilent = false
             local phaseStr = (st.phase == "guild_finder")
-                and string.format("Phase 1/2 (Guild Finder Pass %d/%d: %s)", st.passIndex or 0, st.totalPasses or 9, st.currentPassLabel or "")
+                and string.format("Phase 1/2 (Guild Finder Pass %d/%d: %s)", st.passIndex or 0, st.totalPasses or 13, st.currentPassLabel or "")
                 or string.format("Phase 2/2 (Probing Guild IDs %d/%d)", st.probeIndex or 0, st.totalProbes or 0)
             self.PrintChat(string.format("Tamriel Kiosk Sweep is actively running: %s — %s kiosks harvested so far (%s/291 week total). Click again to stop.",
                  self.ColorText(phaseStr, "FFD700"),
@@ -2006,7 +2180,11 @@ function FR:StartKioskSweep(opts)
         return
     end
 
-    -- Scan our own guilds' kiosks (pure local read, zero network packets) and sync AwesomeGuildStore if present.
+    -- Cancel any pending trickle timer when starting a sweep
+    self._trickleProbeToken = (self._trickleProbeToken or 0) + 1
+    self._trickleProbePending = false
+
+    -- Scan our own guilds' kiosks (pure local read, zero network packets) and sync AwesomeGuildStore + Fleet Kiosks if present.
     -- Note: Do NOT call PollActiveGuildBids() here so we never send burst C++ packets alongside GuildFinderRequestSearch!
     self:ScanOwnedKiosks()
     self:SyncFromAwesomeGuildStore()
@@ -2019,10 +2197,11 @@ function FR:StartKioskSweep(opts)
         phase = opts.probeOnly and "guild_probe" or "guild_finder",
         passes = passes,
         passIndex = 0,
-        totalPasses = #passes,
+        totalPasses = opts.probeOnly and 0 or #passes,
         currentPassLabel = "",
         probeIndex = 0,
         totalProbes = 0,
+        remainingUnprobed = 0,
         networkProbesSent = 0,
         currentGuildId = nil,
         currentGuildName = "",
@@ -2039,8 +2218,8 @@ function FR:StartKioskSweep(opts)
     }
 
     if not opts.silent then
-        self.PrintChat(string.format("Initiating Polite Tamriel Kiosk Sweep (%d Guild Finder passes @ 3.2s pacing + capped 18-guild probe batch)... Watch live progress on the Fissal Relay HUD!",
-            #passes))
+        self.PrintChat(string.format("Initiating Polite Tamriel Kiosk Sweep (%d Guild Finder passes @ 3.2s pacing + capped %d-guild priority probe batch)... Watch live progress on the Fissal Relay HUD!",
+            #passes, MAX_NETWORK_PROBES_PER_SWEEP))
     end
 
     self:UpdateSweepButtonUI()
@@ -2053,7 +2232,7 @@ function FR:StartKioskSweep(opts)
 end
 
 --[[ =========================================================================
-     AWESOMEGUILDSTORE & INITIALIZATION HOOKS
+     AWESOMEGUILDSTORE, FLEET SYNC & INITIALIZATION HOOKS
 ========================================================================= ]]--
 
 function FR:SyncFromAwesomeGuildStore()
@@ -2061,9 +2240,12 @@ function FR:SyncFromAwesomeGuildStore()
     if not self.savedVars.knownTradingGuilds then
         self.savedVars.knownTradingGuilds = {}
     end
+    if not self.savedVars.guildKioskPriority then
+        self.savedVars.guildKioskPriority = {}
+    end
 
     local added = 0
-    -- Seed from embedded 636 PC-NA trading guilds
+    -- 1. Seed from embedded 636 PC-NA trading guilds
     for gId, gName in pairs(self.SEED_TRADING_GUILDS) do
         if not self.savedVars.knownTradingGuilds[gId] then
             self.savedVars.knownTradingGuilds[gId] = gName
@@ -2071,7 +2253,73 @@ function FR:SyncFromAwesomeGuildStore()
         end
     end
 
-    -- Also harvest any guildId -> guildName mappings from AwesomeGuildStore if loaded
+    -- 2. Ingest Server-Indexed Known Trading Guilds (`FR.ServerKnownGuilds` exported in FissalRelay_RaffleData.lua)
+    if type(self.ServerKnownGuilds) == "table" then
+        for gId, meta in pairs(self.ServerKnownGuilds) do
+            local numId = tonumber(gId)
+            if numId and numId > 0 and type(meta) == "table" and type(meta.name) == "string" and meta.name ~= "" then
+                if not self.savedVars.knownTradingGuilds[numId] then
+                    added = added + 1
+                end
+                self.savedVars.knownTradingGuilds[numId] = CleanEsoString(meta.name)
+                self.savedVars.guildKioskPriority[numId] = {
+                    lastSeen = tonumber(meta.lastSeen) or 0,
+                    hasTrader = meta.hasTrader == true,
+                }
+            end
+        end
+    end
+
+    -- 3. Ingest Fleet-Verified Kiosks (`FR.SpreadsheetKiosks` exported in FissalRelay_RaffleData.lua)
+    if type(self.SpreadsheetKiosks) == "table" then
+        if not self.savedVars.spreadsheetKiosks then
+            self.savedVars.spreadsheetKiosks = {}
+        end
+        if not self.savedVars.kiosks then
+            self.savedVars.kiosks = {}
+        end
+        local curWeekStart = self.GetTuesdayTradeWeek and self:GetTuesdayTradeWeek(GetTimeStamp()) or 0
+        for traderKey, fleetObs in pairs(self.SpreadsheetKiosks) do
+            if type(fleetObs) == "table" then
+                local resolved = self:ResolveCanonicalKiosk(fleetObs.trader or traderKey, fleetObs.city, fleetObs.zone)
+                if resolved and resolved.matchedDirectory and not self:IsBlacklistedTrader(resolved.trader) then
+                    local fTs = tonumber(fleetObs.timestamp) or 0
+                    self.savedVars.spreadsheetKiosks[resolved.trader] = {
+                        trader = resolved.trader,
+                        guildId = tonumber(fleetObs.guildId) or 0,
+                        guildName = fleetObs.guildName or "Vacant",
+                        zone = resolved.zone,
+                        city = resolved.city,
+                        timestamp = fTs,
+                        source = fleetObs.source or "Fleet Sync",
+                    }
+                    -- Also hydrate savedVars.kiosks if the fleet observation is from the current trade week
+                    -- and newer than (or missing from) the player's local savedVars.kiosks!
+                    if fTs >= curWeekStart then
+                        local localObs = self.savedVars.kiosks[resolved.trader]
+                        local localTs = localObs and (tonumber(localObs.timestamp) or 0) or 0
+                        if not localObs or localTs < curWeekStart then
+                            self.savedVars.kiosks[resolved.trader] = {
+                                trader = resolved.trader,
+                                guildId = tonumber(fleetObs.guildId) or 0,
+                                guildName = self:NormalizeKioskGuildName(fleetObs.guildName, fleetObs.guildId, fleetObs.source or "Fleet Sync"),
+                                zone = resolved.zone,
+                                city = resolved.city,
+                                x = fleetObs.x or "0.0000",
+                                y = fleetObs.y or "0.0000",
+                                timestamp = fTs,
+                                observedBy = fleetObs.observedBy or "Redfur Fleet",
+                                source = fleetObs.source or "Fleet Sync",
+                            }
+                            self._kioskTelemetryCache = nil
+                        end
+                    end
+                end
+            end
+        end
+    end
+
+    -- 4. Also harvest any guildId -> guildName mappings from AwesomeGuildStore if loaded
     if AwesomeGuildStore and AwesomeGuildStore.internal and AwesomeGuildStore.internal.guildIdMapping then
         local mapping = AwesomeGuildStore.internal.guildIdMapping
         if type(mapping.idToName) == "table" then
@@ -2154,7 +2402,8 @@ function FR:InitializeKioskReconEngine()
         end)
     end
     if EVENT_GUILD_NAME_AVAILABLE then
-        EVENT_MANAGER:RegisterForEvent(self.name .. "_GuildNameAvail", EVENT_GUILD_NAME_AVAILABLE, function()
+        EVENT_MANAGER:RegisterForEvent(self.name .. "_GuildNameAvail", EVENT_GUILD_NAME_AVAILABLE, function(eventCode, guildId, guildName)
+            self:ResolvePendingReticleKiosk(guildId, guildName)
             self:InspectUnitKiosk("reticleover", "Reticle Recon", false)
             self:InspectUnitKiosk("interact", "Interact Recon", false)
         end)

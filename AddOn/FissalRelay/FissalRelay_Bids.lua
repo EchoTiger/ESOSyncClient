@@ -24,6 +24,8 @@ local ROWS_PER_PAGE = 10
 FR.bidsSubView = "bids" -- "bids" or "recon"
 FR.bidsGuildFilter = "ALL" -- "ALL" or specific guildId (number)
 FR.bidsRoundFilter = "CURRENT" -- "CURRENT", "PRIOR", or "ALL"
+FR.reconStatusFilter = "ALL" -- "ALL", "VERIFIED", "UNVERIFIED", "VACANT", "OUTLAW"
+FR.reconSearchQuery = ""
 FR.bidsSortCol = "timestamp"
 FR.bidsSortAsc = false
 FR.bidsCurrentPage = 1
@@ -243,7 +245,12 @@ function FR:CollectReconData()
     local verifiedThisWeekCount = 0
     local vacantCount = 0
     local unverifiedCount = 0
+    local totalDirectoryCount = 0
+    local statusFilt = self.reconStatusFilter or "ALL"
+    local searchQ = string.lower(tostring(self.reconSearchQuery or "")):gsub("^%s+", ""):gsub("%s+$", "")
+
     for _, k in pairs(reconMap) do
+        totalDirectoryCount = totalDirectoryCount + 1
         if k.isCurrentWeek then
             verifiedThisWeekCount = verifiedThisWeekCount + 1
             if k.isOpen then
@@ -252,8 +259,35 @@ function FR:CollectReconData()
         elseif k.isUnverified then
             unverifiedCount = unverifiedCount + 1
         end
-        table.insert(recon, k)
+
+        local passStatus = true
+        if statusFilt == "VERIFIED" then
+            passStatus = (k.isCurrentWeek == true)
+        elseif statusFilt == "UNVERIFIED" then
+            passStatus = (not k.isCurrentWeek)
+        elseif statusFilt == "VACANT" then
+            passStatus = (k.isOpen == true and k.isCurrentWeek == true)
+        elseif statusFilt == "OUTLAW" then
+            passStatus = (string.find(string.lower(k.notes or ""), "outlaw") ~= nil) or (string.find(string.lower(k.city or ""), "refuge") ~= nil)
+        end
+
+        local passSearch = true
+        if searchQ ~= "" then
+            local hay = string.lower(string.format("%s %s %s %s %s %s",
+                k.trader or "",
+                k.city or "",
+                k.zone or "",
+                k.guildName or "",
+                k.source or "",
+                k.notes or ""))
+            passSearch = (string.find(hay, searchQ, 1, true) ~= nil)
+        end
+
+        if passStatus and passSearch then
+            table.insert(recon, k)
+        end
     end
+    self.reconTotalDirectoryCount = totalDirectoryCount > 0 and totalDirectoryCount or 291
     self.reconVerifiedThisWeekCount = verifiedThisWeekCount
     self.reconVacantCount = vacantCount
     self.reconUnverifiedCount = unverifiedCount
@@ -583,6 +617,113 @@ function FR:BuildBidsReconUI(parent)
     end)
     self.bidsRoundBtns["CURRENT"] = activeRoundBtn
 
+    -- 3B. Secondary Filter Bar for Ground Recon Vault (Status Filter Pills & Live Search Box)
+    local reconFilterBar = wm:CreateControl("$(parent)_ReconFilterBar", card, CT_CONTROL)
+    reconFilterBar:SetAnchor(TOPLEFT, card, TOPLEFT, 12, 34)
+    reconFilterBar:SetAnchor(TOPRIGHT, card, TOPRIGHT, -12, 34)
+    reconFilterBar:SetHeight(28)
+    reconFilterBar:SetHidden(true)
+    self.reconFilterBar = reconFilterBar
+
+    self.reconStatusBtns = {}
+    local reconFilters = {
+        { id = "ALL", label = "All (291)", width = 76, tip = "Show all 291 canonical Tamriel guild traders." },
+        { id = "VERIFIED", label = "Verified", width = 72, tip = "Show only kiosks verified for the current Tuesday trade week." },
+        { id = "UNVERIFIED", label = "Unverified", width = 82, tip = "Show only kiosks not yet verified this trade week (ideal for targeted scouting!)." },
+        { id = "VACANT", label = "Vacant ⭐", width = 78, tip = "Show only verified Vacant / Open Spot kiosks available for immediate hire." },
+        { id = "OUTLAW", label = "Refuges", width = 68, tip = "Show only Outlaws Refuge traders across Tamriel." },
+    }
+    local prevReconBtn = nil
+    for _, rf in ipairs(reconFilters) do
+        local rBtn = wm:CreateControl("$(parent)_RF_" .. rf.id, reconFilterBar, CT_BUTTON)
+        if not prevReconBtn then
+            rBtn:SetAnchor(LEFT, reconFilterBar, LEFT, 0, 0)
+        else
+            rBtn:SetAnchor(LEFT, prevReconBtn, RIGHT, 6, 0)
+        end
+        rBtn:SetDimensions(rf.width, 22)
+        rBtn:SetFont("ZoFontGameSmall")
+        rBtn:SetText(rf.label)
+        self:StyleTactileButton(rBtn, {
+            normalBg = { 0.08, 0.08, 0.12, 0.85 },
+            hoverBg = { 0.08, 0.18, 0.20, 0.95 },
+            normalEdge = { 0.30, 0.30, 0.35, 0.65 },
+            hoverEdge = { 0, 0.90, 0.80, 1.0 },
+            tooltipTitle = rf.label,
+            tooltipText = rf.tip,
+        })
+        rBtn:SetHandler("OnClicked", function()
+            self.reconStatusFilter = rf.id
+            self.bidsCurrentPage = 1
+            self:UpdateBidsFilterButtons()
+            self:UpdateBidsUI()
+        end)
+        self.reconStatusBtns[rf.id] = rBtn
+        prevReconBtn = rBtn
+    end
+
+    -- Clear Search Button [×] on far right of reconFilterBar
+    local clearSearchBtn = wm:CreateControl("$(parent)_ClearSearch", reconFilterBar, CT_BUTTON)
+    clearSearchBtn:SetAnchor(RIGHT, reconFilterBar, RIGHT, 0, 0)
+    clearSearchBtn:SetDimensions(24, 22)
+    clearSearchBtn:SetFont("ZoFontGameBold")
+    clearSearchBtn:SetText("×")
+    self:StyleTactileButton(clearSearchBtn, {
+        normalBg = { 0.12, 0.06, 0.06, 0.85 },
+        hoverBg = { 0.24, 0.08, 0.08, 0.95 },
+        normalEdge = { 0.45, 0.22, 0.22, 0.70 },
+        hoverEdge = { 1.0, 0.35, 0.35, 1.0 },
+        tooltipTitle = "Clear Search",
+        tooltipText = "Clear the trader/city/zone/guild search filter.",
+    })
+
+    local searchBg = wm:CreateControl("$(parent)_SearchBg", reconFilterBar, CT_BACKDROP)
+    searchBg:SetAnchor(RIGHT, clearSearchBtn, LEFT, -4, 0)
+    searchBg:SetDimensions(235, 22)
+    searchBg:SetCenterColor(0.03, 0.04, 0.06, 0.92)
+    searchBg:SetEdgeColor(0, 0.75, 0.65, 0.65)
+    searchBg:SetEdgeTexture("", 8, 1, 0)
+
+    local searchIconLbl = wm:CreateControl("$(parent)_SearchHint", searchBg, CT_LABEL)
+    searchIconLbl:SetAnchor(LEFT, searchBg, LEFT, 6, 0)
+    searchIconLbl:SetFont("ZoFontGameSmall")
+    searchIconLbl:SetColor(0.45, 0.65, 0.65, 0.85)
+    searchIconLbl:SetText("Filter:")
+
+    local searchEdit = wm:CreateControl("$(parent)_SearchEdit", searchBg, CT_EDITBOX)
+    searchEdit:SetAnchor(LEFT, searchIconLbl, RIGHT, 5, 0)
+    searchEdit:SetAnchor(RIGHT, searchBg, RIGHT, -6, 0)
+    searchEdit:SetHeight(20)
+    searchEdit:SetFont("ZoFontGameSmall")
+    searchEdit:SetMaxInputChars(48)
+    searchEdit:SetMouseEnabled(true)
+    searchEdit:SetHandler("OnTextChanged", function(eb)
+        local txt = eb:GetText() or ""
+        if self.reconSearchQuery ~= txt then
+            self.reconSearchQuery = txt
+            self.bidsCurrentPage = 1
+            self:CollectReconData()
+            self:RenderBidsRows()
+        end
+    end)
+    searchEdit:SetHandler("OnEscape", function(eb)
+        eb:LoseFocus()
+    end)
+    searchEdit:SetHandler("OnEnter", function(eb)
+        eb:LoseFocus()
+    end)
+    self.reconSearchEdit = searchEdit
+
+    clearSearchBtn:SetHandler("OnClicked", function()
+        self.reconSearchQuery = ""
+        if self.reconSearchEdit then
+            self.reconSearchEdit:SetText("")
+            self.reconSearchEdit:LoseFocus()
+        end
+        self.bidsCurrentPage = 1
+        self:UpdateBidsUI()
+    end)
+
     -- 4. Financial Telemetry Ribbon
     local ribbon = wm:CreateControl("$(parent)_Ribbon", card, CT_BACKDROP)
     ribbon:SetAnchor(TOPLEFT, card, TOPLEFT, 10, 64)
@@ -860,6 +1001,23 @@ function FR:UpdateBidsFilterButtons()
             end
         end
     end
+
+    -- Recon Status Buttons
+    for id, btn in pairs(self.reconStatusBtns or {}) do
+        if btn.bg then
+            if id == (self.reconStatusFilter or "ALL") then
+                btn.isCustomActive = true
+                btn.bg:SetCenterColor(0.04, 0.18, 0.16, 0.95)
+                btn.bg:SetEdgeColor(0, 0.90, 0.80, 1.0)
+                btn:SetNormalFontColor(0, 1, 0.85, 1)
+            else
+                btn.isCustomActive = false
+                btn.bg:SetCenterColor(0.08, 0.08, 0.12, 0.85)
+                btn.bg:SetEdgeColor(0.30, 0.30, 0.35, 0.65)
+                btn:SetNormalFontColor(0.7, 0.7, 0.7, 1)
+            end
+        end
+    end
 end
 
 function FR:UpdateHeaderArrows()
@@ -928,6 +1086,7 @@ function FR:UpdateBidsUI()
 
     -- Toggle filter bar and keep ribbon visible in both views
     if self.bidsFilterBar then self.bidsFilterBar:SetHidden(not isBids) end
+    if self.reconFilterBar then self.reconFilterBar:SetHidden(isBids) end
     if self.bidsRibbon then self.bidsRibbon:SetHidden(false) end
 
     -- Update column header labels
@@ -962,10 +1121,10 @@ function FR:UpdateBidsUI()
             local verifiedWk = self.reconVerifiedThisWeekCount or 0
             local vacantCnt = self.reconVacantCount or 0
             local unverifiedCnt = self.reconUnverifiedCount or 0
-            local totalDir = #(self.reconList or {})
+            local totalDir = self.reconTotalDirectoryCount or 291
             self.bidsRibbonLbl:SetText(string.format(
-                "• |c00FFCCGround Recon:|r Verified This Week: |c59E08A%d / %d|r  |  Vacant: |cFFD700%d|r  |  Unverified: |c888888%d|r",
-                verifiedWk, totalDir, vacantCnt, unverifiedCnt
+                "• |c00FFCCGround Recon:|r Verified This Week: |c59E08A%d / %d|r  |  Vacant: |cFFD700%d|r  |  Unverified: |c888888%d|r  |  Showing: |cFFFFFF%d|r",
+                verifiedWk, totalDir, vacantCnt, unverifiedCnt, #(self.reconList or {})
             ))
         end
     end

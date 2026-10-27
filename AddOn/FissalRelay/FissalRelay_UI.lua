@@ -729,7 +729,7 @@ function FR:CreateBumperUI()
 
     -- 1. Main TopLevelWindow (Draggable & clamped)
     local bumper = wm:CreateTopLevelWindow("FissalRelay_Bumper")
-    bumper:SetDimensions(320, 292)
+    bumper:SetDimensions(320, 314)
     bumper:SetClampedToScreen(true)
     bumper:SetMouseEnabled(true)
     bumper:SetMovable(true)
@@ -951,10 +951,51 @@ function FR:CreateBumperUI()
     self.bumperWaitLHCheck = wlhCheck
     self.bumperWaitLHLbl = wlhLbl
 
+    -- 14B. Alt-Tab Safe Mode (Borderless Fullscreen) Checkbox Row
+    local borderlessRow = wm:CreateControl("$(parent)_BorderlessRow", bumper, CT_CONTROL)
+    borderlessRow:SetAnchor(TOPLEFT, bumper, TOPLEFT, 10, 243)
+    borderlessRow:SetDimensions(300, 20)
+    borderlessRow:SetMouseEnabled(true)
+
+    local blCheck = wm:CreateControl("$(parent)_Check", borderlessRow, CT_BUTTON)
+    blCheck:SetAnchor(LEFT, borderlessRow, LEFT, 2, 0)
+    blCheck:SetDimensions(18, 18)
+    blCheck:SetFont("ZoFontGameBold")
+    blCheck:SetText("[ ]")
+
+    local blLbl = wm:CreateControl("$(parent)_Lbl", borderlessRow, CT_LABEL)
+    blLbl:SetAnchor(LEFT, blCheck, RIGHT, 6, 0)
+    blLbl:SetFont("ZoFontGameSmall")
+    blLbl:SetText("Alt-Tab Safe Mode (Borderless)")
+
+    local function ToggleBorderlessMode()
+        local cur = (self.savedVars.settings.bumperBorderlessMode ~= false)
+        self.savedVars.settings.bumperBorderlessMode = not cur
+        if self.savedVars.settings.bumperBorderlessMode and self.EnsureBorderlessForBump then
+            self:EnsureBorderlessForBump()
+        end
+        self:UpdateBumperUI()
+    end
+
+    blCheck:SetHandler("OnClicked", ToggleBorderlessMode)
+    borderlessRow:SetHandler("OnMouseUp", function(_, button, upInside)
+        if upInside and button == MOUSE_BUTTON_INDEX_LEFT then
+            ToggleBorderlessMode()
+        end
+    end)
+    borderlessRow:SetHandler("OnMouseEnter", function(c)
+        InitializeTooltip(InformationTooltip, c, TOP, 0, -4)
+        SetTooltipText(InformationTooltip, "Automatically switches ESO from Exclusive Fullscreen to Borderless Windowed Fullscreen when bumping so you can freely Alt-Tab without display lockups or stalled page scans.")
+    end)
+    borderlessRow:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
+
+    self.bumperBorderlessCheck = blCheck
+    self.bumperBorderlessLbl = blLbl
+
     -- 15. Action Button Divider
     local divider4 = wm:CreateControl("$(parent)_Div4", bumper, CT_TEXTURE)
-    divider4:SetAnchor(TOPLEFT, bumper, TOPLEFT, 8, 245)
-    divider4:SetAnchor(TOPRIGHT, bumper, TOPRIGHT, -8, 245)
+    divider4:SetAnchor(TOPLEFT, bumper, TOPLEFT, 8, 267)
+    divider4:SetAnchor(TOPRIGHT, bumper, TOPRIGHT, -8, 267)
     divider4:SetHeight(1)
     divider4:SetColor(0.3, 0.3, 0.35, 0.4)
 
@@ -1035,7 +1076,10 @@ function FR:CreateBumperUI()
                     self:UpdateBumperUI()
                 end
             elseif newState == SCENE_HIDING or newState == SCENE_HIDDEN then
-                if not self.isBumping then
+                if self.isBumping then
+                    self:CancelBump("Guild Store closed")
+                end
+                if not self.isWaitingForLibHistoireReload then
                     self.bumperWindow:SetHidden(true)
                 end
             end
@@ -1159,6 +1203,21 @@ function FR:UpdateBumperUI(customStatus)
             self.bumperWaitLHCheck:SetText("|c555555□|r")
             if self.bumperWaitLHLbl then
                 self.bumperWaitLHLbl:SetText("|c888888Wait for LibHistoire requests|r")
+            end
+        end
+    end
+
+    local isBorderless = (not self.savedVars or not self.savedVars.settings or self.savedVars.settings.bumperBorderlessMode ~= false)
+    if self.bumperBorderlessCheck then
+        if isBorderless then
+            self.bumperBorderlessCheck:SetText("|c00FFCC■|r")
+            if self.bumperBorderlessLbl then
+                self.bumperBorderlessLbl:SetText("|c00FFCCAlt-Tab Safe Mode (Borderless)|r")
+            end
+        else
+            self.bumperBorderlessCheck:SetText("|c555555□|r")
+            if self.bumperBorderlessLbl then
+                self.bumperBorderlessLbl:SetText("|c888888Alt-Tab Safe Mode (Borderless)|r")
             end
         end
     end
@@ -1388,6 +1447,18 @@ function FR:CreateSettingsMenu()
                 if FR.UpdateBumperUI then FR:UpdateBumperUI() end
             end,
             disabled = function() return not FR.savedVars.settings.bumperAutoReload end,
+            default = true,
+        },
+        {
+            type = "checkbox",
+            name = "Alt-Tab Safe Mode (Borderless Fullscreen)",
+            tooltip = "Automatically switches ESO from Exclusive Fullscreen to Borderless Windowed Fullscreen when starting a TTC Bump so you can freely Alt-Tab while bumping without display lockups or stalled page scans.",
+            getFunc = function() return FR.savedVars.settings.bumperBorderlessMode ~= false end,
+            setFunc = function(value)
+                FR.savedVars.settings.bumperBorderlessMode = value
+                if value and FR.EnsureBorderlessForBump then FR:EnsureBorderlessForBump() end
+                if FR.UpdateBumperUI then FR:UpdateBumperUI() end
+            end,
             default = true,
         },
         {

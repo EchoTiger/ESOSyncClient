@@ -10,7 +10,7 @@ FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
 FR.name = "FissalRelay"
-FR.version = "1.9.3"
+FR.version = "1.9.5"
 FR.author = "Echo & Fissal"
 
 -- Defaults for SavedVariables
@@ -67,6 +67,8 @@ local DEFAULT_SAVED_VARS = {
         showBumper = true,
         bumperAutoReload = false,
         bumperWaitForLibHistoire = true,
+        bumperBorderlessMode = true,
+        autoTrickleKioskProbes = true,
         bankGuilds = {},
         raffleMail = {
             autoShowOnMail = true,
@@ -1923,6 +1925,102 @@ function FR:SetGuildBumpSelected(guildId, isSelected)
     self.savedVars.settings.bumpGuilds[guildId] = isSelected
 end
 
+function FR:EnsureBorderlessForBump()
+    if not self.savedVars or not self.savedVars.settings then return false end
+    if self.savedVars.settings.bumperBorderlessMode == false then return false end
+    if not GetSetting or not SetSetting or not SETTING_TYPE_GRAPHICS or not GRAPHICS_SETTING_FULLSCREEN then
+        return false
+    end
+
+    local exclusiveVal = tostring(FULLSCREEN_MODE_FULLSCREEN_EXCLUSIVE or 1)
+    local borderlessVal = tostring(FULLSCREEN_MODE_FULLSCREEN_WINDOWED or 2)
+    local okGet, curMode = pcall(GetSetting, SETTING_TYPE_GRAPHICS, GRAPHICS_SETTING_FULLSCREEN)
+    if okGet and tostring(curMode) == exclusiveVal then
+        local okSet = pcall(SetSetting, SETTING_TYPE_GRAPHICS, GRAPHICS_SETTING_FULLSCREEN, borderlessVal)
+        if okSet then
+            if ApplySettings then pcall(ApplySettings) end
+            PrintChat("|c59E08AAlt-Tab Safe Mode:|r Switched display from Exclusive Fullscreen to |c00FFCCBorderless Windowed Fullscreen|r so you can freely Alt-Tab while bumping!")
+            return true
+        end
+    end
+    return false
+end
+
+function FR:StopBumperTicker()
+    EVENT_MANAGER:UnregisterForUpdate(self.name .. "_BumperTick")
+    self.bumpStepState = "idle"
+end
+
+function FR:StartBumperTicker()
+    local evName = self.name .. "_BumperTick"
+    EVENT_MANAGER:UnregisterForUpdate(evName)
+    EVENT_MANAGER:RegisterForUpdate(evName, 250, function()
+        self:OnBumperTick()
+    end)
+end
+
+function FR:OnBumperTick()
+    if not self.isBumping then
+        self:StopBumperTicker()
+        return
+    end
+
+    local isStoreOpen = (IsTradingHouseOpen and IsTradingHouseOpen())
+        or (TRADING_HOUSE_SCENE and (TRADING_HOUSE_SCENE:GetState() == SCENE_SHOWING or TRADING_HOUSE_SCENE:GetState() == SCENE_SHOWN))
+    if not isStoreOpen then
+        self:CancelBump("Guild Store closed")
+        return
+    end
+
+    local nowMs = GetGameTimeMilliseconds and GetGameTimeMilliseconds() or (GetTimeStamp() * 1000)
+    local st = self.bumpStepState
+
+    if st == "switching_guild" then
+        if nowMs >= (self.bumpNextActionMs or 0) then
+            if TRADING_HOUSE_SEARCH and TRADING_HOUSE_SEARCH.ResetAllSearchData then
+                pcall(function() TRADING_HOUSE_SEARCH:ResetAllSearchData() end)
+            end
+            self.bumpPageRetries = 0
+            self:ExecuteBumpPage()
+        end
+    elseif st == "waiting_cooldown" then
+        local cdMs = GetTradingHouseCooldownRemaining and GetTradingHouseCooldownRemaining() or 0
+        if cdMs <= 0 and nowMs >= (self.bumpNextActionMs or 0) then
+            self.bumpStepState = "awaiting_response"
+            self.bumpSearchSentMs = nowMs
+            ExecuteTradingHouseSearch(self.bumpCurrentPage)
+        end
+    elseif st == "awaiting_response" then
+        -- Watchdog: If Alt-Tab frame throttling or a dropped C++ search packet caused
+        -- ExecuteTradingHouseSearch to be ignored, retry the page politely after 6.5s!
+        if (nowMs - (self.bumpSearchSentMs or nowMs)) >= 6500 then
+            self.bumpPageRetries = (self.bumpPageRetries or 0) + 1
+            if self.bumpPageRetries <= 3 then
+                local entry = self.bumpQueue and self.bumpQueue[self.currentBumpIndex]
+                local gName = entry and entry.name or "Guild"
+                if self.UpdateBumperUI then
+                    self:UpdateBumperUI(string.format("Resuming %s: Page %d (retry %d/3)...",
+                        gName, (self.bumpCurrentPage or 0) + 1, self.bumpPageRetries))
+                end
+                self.bumpStepState = "waiting_cooldown"
+                self.bumpNextActionMs = nowMs + 600
+            else
+                -- Move to next guild if 3 retries on the same page timed out
+                local entry = self.bumpQueue and self.bumpQueue[self.currentBumpIndex]
+                local gName = entry and entry.name or "Guild"
+                PrintChat(string.format("✓ %s bumped (%d items).", ColorText(gName, "00FFCC"), self.bumpItemsScannedInGuild or 0))
+                self.currentBumpIndex = self.currentBumpIndex + 1
+                self.bumpStepState = "next_guild_delay"
+                self.bumpNextActionMs = nowMs + 1000
+            end
+        end
+    elseif st == "next_guild_delay" then
+        if nowMs >= (self.bumpNextActionMs or 0) then
+            self:StepNextBumpGuild()
+        end
+    end
+end
+
 function FR:StartBump()
     if self.isBumping then
         PrintChat("Bumping is already active. Click [Cancel] to halt.")
@@ -1944,6 +2042,9 @@ function FR:StartBump()
     if TamrielTradeCentre.Settings then
         TamrielTradeCentre.Settings.EnableAutoRecordStoreEntries = true
     end
+
+    -- Automatically switch Exclusive Fullscreen -> Borderless Windowed Fullscreen if enabled
+    self:EnsureBorderlessForBump()
 
     local queue = {}
     local numTradingGuilds = GetNumTradingHouseGuilds()
@@ -1972,19 +2073,23 @@ function FR:StartBump()
     self.bumpQueue = queue
     self.currentBumpIndex = 1
     self.bumpTotalItemsScanned = 0
+    self.bumpPageRetries = 0
     self.isBumping = true
 
     PrintChat(string.format("Beginning TTC Bump across %s guild(s)...", ColorText(tostring(#queue), "00FFCC")))
     if self.UpdateBumperUI then self:UpdateBumperUI() end
+    self:StartBumperTicker()
     self:StepNextBumpGuild()
 end
 
-function FR:CancelBump()
+function FR:CancelBump(reason)
+    self:StopBumperTicker()
     if self.isBumping or self.isWaitingForLibHistoireReload then
         self.isBumping = false
         self.isWaitingForLibHistoireReload = false
         self.bumpQueue = {}
-        PrintChat("TTC Bumping / Auto-reload halted by user.")
+        local msg = reason and string.format("TTC Bumping halted (%s).", reason) or "TTC Bumping / Auto-reload halted by user."
+        PrintChat(msg)
         if self.UpdateBumperUI then self:UpdateBumperUI("Bumping halted.") end
     end
 end
@@ -2108,9 +2213,13 @@ function FR:TriggerBumperAutoReload()
 end
 
 function FR:StepNextBumpGuild()
-    if not self.isBumping then return end
+    if not self.isBumping then
+        self:StopBumperTicker()
+        return
+    end
 
     if self.currentBumpIndex > #self.bumpQueue then
+        self:StopBumperTicker()
         self.isBumping = false
         self.savedVars.lastBumpTime = GetTimeStamp()
         self._bumpTelemetryCache = nil
@@ -2136,6 +2245,7 @@ function FR:StepNextBumpGuild()
     local entry = self.bumpQueue[self.currentBumpIndex]
     self.bumpCurrentPage = 0
     self.bumpItemsScannedInGuild = 0
+    self.bumpPageRetries = 0
 
     PrintChat(string.format("[%d/%d] Switching store to %s...",
         self.currentBumpIndex, #self.bumpQueue, ColorText(entry.name, "00FFCC")))
@@ -2143,23 +2253,19 @@ function FR:StepNextBumpGuild()
 
     SelectTradingHouseGuildId(entry.id)
 
-    zo_callLater(function()
-        if not self.isBumping then return end
-        if TRADING_HOUSE_SEARCH and TRADING_HOUSE_SEARCH.ResetAllSearchData then
-            TRADING_HOUSE_SEARCH:ResetAllSearchData()
-        end
-        self:ExecuteBumpPage()
-    end, 1500)
+    local nowMs = GetGameTimeMilliseconds and GetGameTimeMilliseconds() or (GetTimeStamp() * 1000)
+    self.bumpStepState = "switching_guild"
+    self.bumpNextActionMs = nowMs + 1500
 end
 
 function FR:ExecuteBumpPage()
     if not self.isBumping then return end
 
-    local delay = math.max(GetTradingHouseCooldownRemaining() + 1000, 3000)
-    zo_callLater(function()
-        if not self.isBumping then return end
-        ExecuteTradingHouseSearch(self.bumpCurrentPage)
-    end, delay)
+    local nowMs = GetGameTimeMilliseconds and GetGameTimeMilliseconds() or (GetTimeStamp() * 1000)
+    local cdMs = GetTradingHouseCooldownRemaining and GetTradingHouseCooldownRemaining() or 0
+    local delay = math.max(cdMs + 600, 2600)
+    self.bumpStepState = "waiting_cooldown"
+    self.bumpNextActionMs = nowMs + delay
 end
 
 function FR:OnTradingHouseSearchResultsForBump()
@@ -2168,6 +2274,7 @@ function FR:OnTradingHouseSearchResultsForBump()
     local numItemsOnPage, currentPage, hasMorePages = GetTradingHouseSearchResultsInfo()
     local entry = self.bumpQueue[self.currentBumpIndex]
     local guildName = entry and entry.name or "Guild"
+    self.bumpPageRetries = 0
 
     if numItemsOnPage and numItemsOnPage > 0 then
         self.bumpItemsScannedInGuild = self.bumpItemsScannedInGuild + numItemsOnPage
@@ -2184,12 +2291,16 @@ function FR:OnTradingHouseSearchResultsForBump()
         else
             PrintChat(string.format("✓ %s bumped (%d items).", ColorText(guildName, "00FFCC"), self.bumpItemsScannedInGuild))
             self.currentBumpIndex = self.currentBumpIndex + 1
-            zo_callLater(function() self:StepNextBumpGuild() end, 1000)
+            local nowMs = GetGameTimeMilliseconds and GetGameTimeMilliseconds() or (GetTimeStamp() * 1000)
+            self.bumpStepState = "next_guild_delay"
+            self.bumpNextActionMs = nowMs + 1000
         end
     else
         PrintChat(string.format("✓ %s bumped (%d items).", ColorText(guildName, "00FFCC"), self.bumpItemsScannedInGuild))
         self.currentBumpIndex = self.currentBumpIndex + 1
-        zo_callLater(function() self:StepNextBumpGuild() end, 1000)
+        local nowMs = GetGameTimeMilliseconds and GetGameTimeMilliseconds() or (GetTimeStamp() * 1000)
+        self.bumpStepState = "next_guild_delay"
+        self.bumpNextActionMs = nowMs + 1000
     end
 end
 
@@ -2256,9 +2367,14 @@ end
 
 function FR:ResolveGuildId(guildIndexOrId)
     local numGuilds = GetNumGuilds()
-    if not guildIndexOrId then return GetGuildId(1) end
+    if not guildIndexOrId then return GetGuildId(self.lastSingleGuildIndex or 1) end
 
     local n = tonumber(guildIndexOrId)
+    if n == 0 then
+        local fallbackIdx = self.lastSingleGuildIndex or 1
+        if fallbackIdx < 1 or fallbackIdx > numGuilds then fallbackIdx = 1 end
+        return GetGuildId(fallbackIdx)
+    end
     if n and n >= 1 and n <= numGuilds then
         return GetGuildId(n)
     end
@@ -2277,7 +2393,80 @@ function FR:ResolveGuildId(guildIndexOrId)
         end
     end
 
-    return GetGuildId(1)
+    return GetGuildId(self.lastSingleGuildIndex or 1)
+end
+
+function FR:GetGuildKey(guildId)
+    local id = tonumber(guildId) or 0
+    if id == 788815 then return "post" end
+    if id == 865409 then return "dealers" end
+    if id == 822467 then return "caravan" end
+    local gName = (GetGuildName(id) or ""):lower()
+    if gName:find("post", 1, true) then return "post" end
+    if gName:find("dealer", 1, true) then return "dealers" end
+    if gName:find("caravan", 1, true) then return "caravan" end
+    return nil
+end
+
+function FR:GetGuildShortTag(guildId)
+    local key = self:GetGuildKey(guildId)
+    if key == "post" then return "Post" end
+    if key == "dealers" then return "Dealers" end
+    if key == "caravan" then return "Caravan" end
+    local gName = GetGuildName(guildId) or "Guild"
+    return string.sub(gName, 1, 10)
+end
+
+function FR:GetGuildBadgeColor(guildId)
+    local key = self:GetGuildKey(guildId)
+    if key == "post" then return "FFD700" end
+    if key == "dealers" then return "00FFCC" end
+    if key == "caravan" then return "FF9900" end
+    return "CCCCCC"
+end
+
+function FR:IsRedfurGuild(guildId)
+    return self:GetGuildKey(guildId) ~= nil
+end
+
+function FR:GetRedfurGuilds()
+    local list = {}
+    local numGuilds = GetNumGuilds()
+    local orderWeight = { post = 1, dealers = 2, caravan = 3 }
+    for i = 1, numGuilds do
+        local gId = GetGuildId(i)
+        local gKey = self:GetGuildKey(gId)
+        if gKey then
+            table.insert(list, {
+                guildId = gId,
+                guildIndex = i,
+                guildName = GetGuildName(gId) or ("Guild " .. i),
+                guildKey = gKey,
+                shortTag = self:GetGuildShortTag(gId),
+                badgeColor = self:GetGuildBadgeColor(gId),
+                order = orderWeight[gKey] or 9,
+            })
+        end
+    end
+    if #list == 0 then
+        for i = 1, numGuilds do
+            local gId = GetGuildId(i)
+            table.insert(list, {
+                guildId = gId,
+                guildIndex = i,
+                guildName = GetGuildName(gId) or ("Guild " .. i),
+                guildKey = tostring(gId),
+                shortTag = self:GetGuildShortTag(gId),
+                badgeColor = "CCCCCC",
+                order = i,
+            })
+        end
+    end
+    table.sort(list, function(a, b)
+        if a.order ~= b.order then return a.order < b.order end
+        return a.guildIndex < b.guildIndex
+    end)
+    return list
 end
 
 function FR:GetMemberRankIndex(guildId, depositorName)
@@ -3033,6 +3222,12 @@ end
 
 local function OnCloseTradingHouse(eventCode)
     FR._kioskRecordedThisVisit = false
+    if FR.isBumping then
+        FR:CancelBump("Guild Store closed")
+    end
+    if FR.bumperWindow and not FR.isWaitingForLibHistoireReload then
+        FR.bumperWindow:SetHidden(true)
+    end
 end
 
 local function OnTradingHouseResponse(eventCode, responseType, result)
@@ -3136,6 +3331,9 @@ local function OnPlayerActivated(eventCode, initial)
 
     -- Wayshrine / Zone load kiosk & micro-sync reconciliation
     zo_callLater(function()
+        if FR.ReconcileOfficialStaffConfig then
+            FR:ReconcileOfficialStaffConfig()
+        end
         if not initial then
             if FR.ScanOwnedKiosks then FR:ScanOwnedKiosks() end
             if FR.SyncFromAwesomeGuildStore then FR:SyncFromAwesomeGuildStore() end
@@ -3189,6 +3387,9 @@ local function OnAddOnLoaded(eventCode, addOnName)
             initialized = false,
             mailDelay = 2500,
         }
+    end
+    if FR.ReconcileOfficialStaffConfig then
+        FR:ReconcileOfficialStaffConfig()
     end
 
     -- Ground Recon Quarantine Purge (Ruling 4.2 & Fable 5.1): Remove Kargiz, Shuzug, and assistant bankers

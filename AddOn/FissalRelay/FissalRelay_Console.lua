@@ -428,7 +428,7 @@ function FR:CreateConsoleUI()
     title:SetVerticalAlignment(TEXT_ALIGN_CENTER)
     title:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
     title:SetFont("ZoFontGameBold")
-    title:SetText(string.format("|cFF9900FISSAL RELAY PRIME|r  |c00FFCCCOMMAND CONSOLE|r  |c888888v%s|r", self.version or "1.9.3"))
+    title:SetText(string.format("|cFF9900FISSAL RELAY PRIME|r  |c00FFCCCOMMAND CONSOLE|r  |c888888v%s|r", self.version or "1.9.5"))
 
     -- 7. Top Divider Line
     local topDiv = wm:CreateControl("$(parent)_DivTop", console, CT_TEXTURE)
@@ -437,14 +437,35 @@ function FR:CreateConsoleUI()
     topDiv:SetHeight(1)
     topDiv:SetColor(0.8, 0.5, 0.1, 0.4)
 
-    -- 8. Guild Switcher Tabs (Row 1 under title, 8px spacing)
+    -- 8. Guild Switcher Tabs (Row 1 under title: [★ All Redfur] + Guilds 1..5, 8px spacing)
     self.guildButtons = {}
     local guildGap = 8
-    local defaultSlot = math.floor((CONSOLE_WIDTH - 24 + guildGap) / 5)
+    local allBtnWidth = 128
+    local defaultSlot = math.floor((CONSOLE_WIDTH - 24 - (allBtnWidth + guildGap) + guildGap) / 5)
+
+    local allBtn = wm:CreateControl("$(parent)_GuildTab_All", console, CT_BUTTON)
+    allBtn:SetAnchor(TOPLEFT, console, TOPLEFT, 12, 48)
+    allBtn:SetDimensions(allBtnWidth, 24)
+    allBtn:SetFont("ZoFontGameBold")
+    allBtn:SetText("★ All Redfur")
+    self:StyleTactileButton(allBtn, {
+        normalBg = { 0.10, 0.05, 0.05, 0.90 },
+        hoverBg = { 0.22, 0.10, 0.06, 0.98 },
+        normalEdge = { 0.65, 0.35, 0.15, 0.80 },
+        hoverEdge = { 1.00, 0.75, 0.20, 1.0 },
+        normalTextColor = { 0.95, 0.78, 0.35, 1 },
+        hoverTextColor = { 1, 0.95, 0.55, 1 },
+        tooltipTitle = "★ All Redfur Guilds (1-Click AFK)",
+        tooltipText = "Manage and batch-execute Auto-Ranking and Auto-Welcoming across all three Redfur guilds (Post, Dealers, Caravan) with a single click.",
+    })
+    allBtn:SetHandler("OnClicked", function()
+        self:SelectConsoleGuild(0)
+    end)
+    self.guildButtons[0] = allBtn
 
     for i = 1, 5 do
         local gBtn = wm:CreateControl("$(parent)_GuildTab_" .. i, console, CT_BUTTON)
-        gBtn:SetAnchor(TOPLEFT, console, TOPLEFT, 12 + (i - 1) * defaultSlot, 48)
+        gBtn:SetAnchor(TOPLEFT, console, TOPLEFT, 12 + allBtnWidth + guildGap + (i - 1) * defaultSlot, 48)
         gBtn:SetDimensions(defaultSlot - guildGap, 24)
         gBtn:SetFont("ZoFontGameSmall")
         self:StyleTactileButton(gBtn, {
@@ -1089,11 +1110,42 @@ end
 function FR:SelectConsoleGuild(guildIndex)
     local rawGuilds = GetNumGuilds()
     local numGuilds = math.min(math.max(rawGuilds, 1), 5)
-    if guildIndex < 1 or guildIndex > rawGuilds then guildIndex = 1 end
+    if guildIndex ~= 0 and (guildIndex < 1 or guildIndex > rawGuilds) then
+        guildIndex = 1
+    end
+    if guildIndex >= 1 and guildIndex <= rawGuilds then
+        self.lastSingleGuildIndex = guildIndex
+    elseif not self.lastSingleGuildIndex then
+        self.lastSingleGuildIndex = 1
+    end
     self.selectedGuildIndex = guildIndex
 
     local guildGap = 8
-    local tabSlot = math.floor((CONSOLE_WIDTH - 24 + guildGap) / numGuilds)
+    local allBtnWidth = 128
+    local tabSlot = math.floor((CONSOLE_WIDTH - 24 - (allBtnWidth + guildGap) + guildGap) / numGuilds)
+
+    -- Style [★ All Redfur] button (slot 0)
+    local allBtn = self.guildButtons and self.guildButtons[0]
+    if allBtn then
+        allBtn:ClearAnchors()
+        allBtn:SetAnchor(TOPLEFT, self.consoleWindow, TOPLEFT, 12, 48)
+        allBtn:SetDimensions(allBtnWidth, 24)
+        allBtn:SetHidden(false)
+        allBtn:SetText("★ All Redfur")
+        if allBtn.bg then
+            if guildIndex == 0 then
+                allBtn.isCustomActive = true
+                allBtn.bg:SetCenterColor(0.24, 0.10, 0.05, 0.96)
+                allBtn.bg:SetEdgeColor(1.0, 0.78, 0.20, 1.0)
+                allBtn:SetNormalFontColor(1, 0.90, 0.30, 1)
+            else
+                allBtn.isCustomActive = false
+                allBtn.bg:SetCenterColor(0.10, 0.05, 0.05, 0.90)
+                allBtn.bg:SetEdgeColor(0.65, 0.35, 0.15, 0.80)
+                allBtn:SetNormalFontColor(0.90, 0.72, 0.35, 1)
+            end
+        end
+    end
 
     -- Update guild buttons visual state and dynamically distribute horizontally
     for i = 1, 5 do
@@ -1103,7 +1155,7 @@ function FR:SelectConsoleGuild(guildIndex)
                 local gId = GetGuildId(i)
                 local name = GetGuildName(gId)
                 btn:ClearAnchors()
-                btn:SetAnchor(TOPLEFT, self.consoleWindow, TOPLEFT, 12 + (i - 1) * tabSlot, 48)
+                btn:SetAnchor(TOPLEFT, self.consoleWindow, TOPLEFT, 12 + allBtnWidth + guildGap + (i - 1) * tabSlot, 48)
                 btn:SetDimensions(tabSlot - guildGap, 24)
                 btn:SetHidden(false)
                 btn:SetText(name ~= "" and name or ("Guild " .. i))
@@ -1142,8 +1194,18 @@ function FR:SelectConsoleGuild(guildIndex)
         if self.UpdateTTCBumperTab then self:UpdateTTCBumperTab() end
         if self.UpdateBumperUI then self:UpdateBumperUI() end
     elseif self.activeConsoleTab == 6 and self.UpdateAutoRanksUI then
+        if self.EvaluateAutoRanks then
+            self:EvaluateAutoRanks(guildIndex == 0 and 0 or self:ResolveGuildId(guildIndex))
+        end
+        if self.rankConfigDrawer and not self.rankConfigDrawer:IsHidden() and self.RefreshRankConfigDrawer then
+            self:RefreshRankConfigDrawer()
+        end
+        if self.autoWelcomeDrawer and not self.autoWelcomeDrawer:IsHidden() and self.RefreshAutoWelcomeDrawer then
+            self:RefreshAutoWelcomeDrawer()
+        end
         self:UpdateAutoRanksUI()
     end
+    self:UpdateConsoleStatus()
 end
 
 function FR:SelectConsoleTab(tabId)
@@ -1204,8 +1266,86 @@ end
 
 function FR:UpdateOverviewTab()
     if not self.consoleWindow or self.consoleWindow:IsHidden() then return end
-    local gIdx = self.selectedGuildIndex or 1
+    local gIdx = self.selectedGuildIndex
+    if gIdx == nil then gIdx = 1 end
     local numGuilds = GetNumGuilds()
+
+    if gIdx == 0 then
+        local rfGuilds = (self.GetRedfurGuilds and self:GetRedfurGuilds()) or {}
+        local totalMembers, totalOnline = 0, 0
+        local stallBadges = {}
+        local totalPot, totalTickets, totalEntrants, totalDeps = 0, 0, 0, 0
+        local potBreakdowns = {}
+
+        for _, g in ipairs(rfGuilds) do
+            local mCount = GetNumGuildMembers(g.guildId) or 0
+            totalMembers = totalMembers + mCount
+            for m = 1, mCount do
+                local _, _, _, playerStatus, secsSinceLogoff = GetGuildMemberInfo(g.guildId, m)
+                if (playerStatus ~= PLAYER_STATUS_OFFLINE) and (secsSinceLogoff == 0) then
+                    totalOnline = totalOnline + 1
+                end
+            end
+
+            local stall = "None"
+            if self.savedVars and self.savedVars.kiosks then
+                for trader, data in pairs(self.savedVars.kiosks) do
+                    if data.guildName == g.guildName then
+                        stall = trader
+                        break
+                    end
+                end
+            end
+            table.insert(stallBadges, string.format("|c%s%s:|r %s", g.badgeColor or "00FFCC", g.shortTag, stall))
+
+            local liveM = self.CalculateRaffleMetrics and self:CalculateRaffleMetrics(g.guildId, 7, 1000)
+            local gPot = (liveM and liveM.totalGold) or 0
+            totalPot = totalPot + gPot
+            totalTickets = totalTickets + ((liveM and liveM.totalTickets) or 0)
+            totalEntrants = totalEntrants + ((liveM and liveM.entrants) or 0)
+            totalDeps = totalDeps + ((liveM and liveM.entries) or 0)
+            table.insert(potBreakdowns, string.format("   • |c%s%s:|r |cFFD700%sg|r (%s tix)",
+                g.badgeColor or "00FFCC", g.guildName, ZO_LocalizeDecimalNumber(gPot), ZO_LocalizeDecimalNumber((liveM and liveM.totalTickets) or 0)))
+        end
+
+        if self.overviewGuildNameLbl then
+            self.overviewGuildNameLbl:SetText("• Fleet: |cFFD700★ All Redfur Guilds|r |c888888(Post • Dealers • Caravan)|r")
+        end
+        if self.overviewMembersLbl then
+            self.overviewMembersLbl:SetText(string.format("• Combined Roster: |cFFFFFF%s|r |c888888members|r • |c59E08A● %s online|r",
+                ZO_LocalizeDecimalNumber(totalMembers), ZO_LocalizeDecimalNumber(totalOnline)))
+        end
+        if self.overviewKioskLbl then
+            self.overviewKioskLbl:SetText("• Stalls: " .. (#stallBadges > 0 and table.concat(stallBadges, "  •  ") or "|c888888None|r"))
+        end
+        if self.overviewPermsLbl then
+            self.overviewPermsLbl:SetText("• Mode: |c59E08A✦ 1-Click AFK Multi-Guild Automation Active|r")
+        end
+
+        local saleCount = self:GetCount("sales")
+        local depositCount = self:GetCount("deposits")
+        if self.overviewRecordsLbl then
+            self.overviewRecordsLbl:SetText(string.format("• Staged Cache: |c00FFCC%s|r |c888888sales|r • |cFFAA00%s|r |c888888bank deps|r",
+                ZO_LocalizeDecimalNumber(saleCount), ZO_LocalizeDecimalNumber(depositCount)))
+        end
+        if self.overviewPotLbl then
+            self.overviewPotLbl:SetText(string.format("• Fleet Pot: |cFFD700%sg|r |c59E08A(All Redfur)|r", ZO_LocalizeDecimalNumber(totalPot)))
+        end
+        if self.overviewTixLbl then
+            self.overviewTixLbl:SetText(string.format("• Tickets: |c00FFCC%s|r", ZO_LocalizeDecimalNumber(totalTickets)))
+        end
+        if self.overviewEntLbl then
+            self.overviewEntLbl:SetText(string.format("• Entrants: |cFFFFFF%d|r |c888888(%d deps)|r", totalEntrants, totalDeps))
+        end
+        if self.overviewPrizesLbl then
+            self.overviewPrizesLbl:SetText("• Use |cFFD700[Auto-Ranks]|r tab to run 1-click AFK Auto-Ranking & Auto-Welcoming across all Redfur guilds.")
+        end
+        if self.overviewWinnersLbl then
+            self.overviewWinnersLbl:SetText("• |cE6C387Live Fleet Raffle Breakdown:|r\n" .. table.concat(potBreakdowns, "\n"))
+        end
+        return
+    end
+
     local guildId = (numGuilds > 0 and gIdx >= 1 and gIdx <= numGuilds) and GetGuildId(gIdx) or 0
     if not guildId or guildId == 0 then
         if self.overviewGuildNameLbl then self.overviewGuildNameLbl:SetText("Guild: No Active Guilds") end
@@ -1398,11 +1538,12 @@ function FR:UpdateConsoleStatus()
     if not self.consoleStatusLbl then return end
     local saleCount = self:GetCount("sales")
     local depositCount = self:GetCount("deposits")
-    self.consoleStatusLbl:SetText(string.format("%s | Sales: %s | Bank: %s | Guild: %d",
+    local gBadge = (self.selectedGuildIndex == 0) and ColorText("★ All Redfur", "FFD700") or tostring(self.selectedGuildIndex or 1)
+    self.consoleStatusLbl:SetText(string.format("%s | Sales: %s | Bank: %s | Guild: %s",
         ColorText("[ON] Connected", "59E08A"),
         ColorText(FormatGold(saleCount), "00FFCC"),
         ColorText(FormatGold(depositCount), "FFAA00"),
-        self.selectedGuildIndex or 1))
+        gBadge))
 end
 
 --[[ =========================================================================

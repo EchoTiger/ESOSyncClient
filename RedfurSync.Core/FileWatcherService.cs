@@ -22,7 +22,7 @@ namespace RedfurSync
             "GS08Data.lua",  "GS09Data.lua",  "GS10Data.lua",  "GS11Data.lua",
             "GS12Data.lua",  "GS13Data.lua",  "GS14Data.lua",  "GS15Data.lua",
             "GS16Data.lua",  "GS17Data.lua",  "RaffleGold.lua", "RaffleGoldRTP.lua", "RaffleGoldRD.lua",
-            "FissalRelay.lua"
+            "FissalRelay.lua", "TamrielTradeCentre.lua"
         };
 
         public static bool IsGsFile(string? fileName)

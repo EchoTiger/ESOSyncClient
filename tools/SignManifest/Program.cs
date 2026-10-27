@@ -24,8 +24,8 @@ var manifestObj = new
     schema = 1,
     product = "fissal-relay",
     channel = "stable",
-    sequence = 74,
-    version = "1.9.3",
+    sequence = 76,
+    version = "1.9.5",
     issued_at = DateTimeOffset.UtcNow.ToString("O"),
     expires_at = DateTimeOffset.UtcNow.AddYears(1).ToString("O"),
     min_updater_version = "1.4.0",
@@ -42,7 +42,7 @@ var manifestObj = new
     downloadUrl = "https://redfur.ech-o.net/api/relay/v1/update-download",
     sizeBytes = exeSize,
     sha256 = exeHash,
-    changelog = "- feat(ui): clear Anonymous (Bank-Only) vs Verified Paired badges in nav rail, micro-display, and setup dialog\n- perf(addon): O(1) coalesced SavedVars priority-save debounce, memoized Kiosk Recon & Member Sales caches, and instant Roster Auditor sorting\n- fix(console): Redfur Caravan raffle overview support, dynamic label anchoring, and ESO font-safe rank/medal badges\n- perf(client): GDI+ font handle cache, inline Lua comment brace-lexer hardening, and 166 KB slim addon archive"
+    changelog = "- fix(bumper): Alt-Tab Safe Mode (Borderless Fullscreen auto-switch) & focus-loss-proof 250ms state machine with retry watchdog\n- feat(recon): alliance-split & adaptive Guild Finder passes, priority guild ID prober + 45s background trickle, and drive-by reticle buffer\n- feat(ui): Ground Recon Vault status filter pills ([All], [Verified], [Unverified], [Vacant ⭐], [Refuges]) & live search box\n- feat(sync): two-way fleet kiosk & 701+ known trading guild registry sync via FissalRelay_RaffleData.lua"
 };
 
 var jsonOpts = new JsonSerializerOptions { WriteIndented = true };
