@@ -6,6 +6,9 @@ using System.IO.Compression;
 using System.Linq;
 using System.Net.Http;
 using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Runtime.InteropServices.ComTypes;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -39,9 +42,10 @@ namespace RedfurSync
     {
         public const string AddonDirectoryName = "FissalRelay";
         public const string ClientDirectoryName = "Client";
+        public const string InstallFolderName = "FissalRelay";
         public const string TargetExeName = "RedfurSync.exe";
-        public const string LatestAddonVersion = "1.9.5";
-        public const int LatestAddonVersionCode = 10905;
+        public const string LatestAddonVersion = "1.9.6";
+        public const int LatestAddonVersionCode = 10906;
         public static readonly string[] AddonFiles = new[]
         {
             "FissalRelay.txt",
@@ -58,8 +62,8 @@ namespace RedfurSync
         };
 
         public const string TtcPriceTableUrl = "https://us.tamrieltradecentre.com/download/PriceTable";
-        public const string LibHistoireDownloadUrl = "https://github.com/sirinsidiator/ESO-LibHistoire/archive/refs/heads/master.zip";
-        public const string LibAddonMenuDownloadUrl = "https://github.com/sirinsidiator/ESO-LibAddonMenu/archive/refs/heads/master.zip";
+        public const string LibHistoireDownloadUrl = "https://redfur.ech-o.net/api/relay/v1/download-dep/libhistoire";
+        public const string LibAddonMenuDownloadUrl = "https://redfur.ech-o.net/api/relay/v1/download-dep/lam2";
 
         public static string ActiveLatestAddonVersion { get; set; } = LatestAddonVersion;
         public static string? RemoteAddonDownloadUrl { get; set; } = null;
@@ -126,13 +130,17 @@ namespace RedfurSync
             }
             catch { }
 
-            var candidates = new List<string>
+            var candidates = new List<string>();
+            var myDocs = Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
+            if (!string.IsNullOrWhiteSpace(myDocs))
+                candidates.Add(Path.Combine(myDocs, "Elder Scrolls Online", "live"));
+
+            var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+            if (!string.IsNullOrWhiteSpace(userProfile))
             {
-                @"E:\Files\Documents\Elder Scrolls Online\live",
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "Elder Scrolls Online", "live"),
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Documents", "Elder Scrolls Online", "live"),
-                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "OneDrive", "Documents", "Elder Scrolls Online", "live"),
-            };
+                candidates.Add(Path.Combine(userProfile, "Documents", "Elder Scrolls Online", "live"));
+                candidates.Add(Path.Combine(userProfile, "OneDrive", "Documents", "Elder Scrolls Online", "live"));
+            }
 
             foreach (var envVar in new[] { "OneDrive", "OneDriveConsumer" })
             {
@@ -143,13 +151,23 @@ namespace RedfurSync
                 }
             }
 
-            // Check standard drives
-            foreach (var drive in DriveInfo.GetDrives())
+            candidates.Add(@"E:\Files\Documents\Elder Scrolls Online\live");
+
+            // Check fixed local drives only (skip network/removable/unmounted volumes that could block startup)
+            try
             {
-                if (!drive.IsReady) continue;
-                candidates.Add(Path.Combine(drive.RootDirectory.FullName, "Files", "Documents", "Elder Scrolls Online", "live"));
-                candidates.Add(Path.Combine(drive.RootDirectory.FullName, "Documents", "Elder Scrolls Online", "live"));
+                foreach (var drive in DriveInfo.GetDrives())
+                {
+                    try
+                    {
+                        if (drive.DriveType != DriveType.Fixed || !drive.IsReady) continue;
+                        candidates.Add(Path.Combine(drive.RootDirectory.FullName, "Files", "Documents", "Elder Scrolls Online", "live"));
+                        candidates.Add(Path.Combine(drive.RootDirectory.FullName, "Documents", "Elder Scrolls Online", "live"));
+                    }
+                    catch { }
+                }
             }
+            catch { }
 
             foreach (var path in candidates)
             {
@@ -168,21 +186,21 @@ namespace RedfurSync
             return null;
         }
 
-        public static string GetTargetExePath(string esoLiveDir)
+        public static string GetTargetExePath(string? esoLiveDir = null, string? localAppDataOverride = null)
         {
-            return Path.Combine(esoLiveDir, "AddOns", AddonDirectoryName, ClientDirectoryName, TargetExeName);
+            var localAppData = !string.IsNullOrWhiteSpace(localAppDataOverride)
+                ? localAppDataOverride
+                : Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            if (string.IsNullOrWhiteSpace(localAppData))
+                localAppData = AppConfig.ConfigDirectory;
+
+            return Path.Combine(localAppData, "Programs", InstallFolderName, TargetExeName);
         }
 
-        public static bool ShouldRelocate(out string targetExePath, out string esoLiveDir, Func<string>? customProvider = null)
+        public static bool ShouldRelocate(out string targetExePath, out string esoLiveDir, Func<string>? customProvider = null, string? localAppDataOverride = null)
         {
-            targetExePath = string.Empty;
-            esoLiveDir = string.Empty;
-
-            var foundLive = FindEsoLiveDirectory(customProvider);
-            if (string.IsNullOrWhiteSpace(foundLive)) return false;
-
-            esoLiveDir = foundLive;
-            targetExePath = GetTargetExePath(foundLive);
+            targetExePath = GetTargetExePath(null, localAppDataOverride);
+            esoLiveDir = FindEsoLiveDirectory(customProvider) ?? string.Empty;
 
             var currentExe = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName;
             if (string.IsNullOrWhiteSpace(currentExe) || !File.Exists(currentExe)) return false;
@@ -192,15 +210,64 @@ namespace RedfurSync
 
             if (string.IsNullOrWhiteSpace(currentDir) || string.IsNullOrWhiteSpace(targetDir)) return false;
 
-            // If already in target directory or in AddOns\FissalRelay, no relocation needed
             if (string.Equals(Path.GetFullPath(currentDir), Path.GetFullPath(targetDir), StringComparison.OrdinalIgnoreCase))
                 return false;
 
-            var parentTargetDir = Path.GetDirectoryName(targetDir);
-            if (parentTargetDir != null && string.Equals(Path.GetFullPath(currentDir), Path.GetFullPath(parentTargetDir), StringComparison.OrdinalIgnoreCase))
+            return true;
+        }
+
+        public static bool IsValidEsoAddonInstalled(string addonsRoot, string folderName)
+        {
+            if (string.IsNullOrWhiteSpace(addonsRoot) || string.IsNullOrWhiteSpace(folderName))
                 return false;
 
-            return true;
+            string dir = Path.Combine(addonsRoot, folderName);
+            if (!Directory.Exists(dir)) return false;
+
+            var manifestCandidates = new List<string>
+            {
+                Path.Combine(dir, folderName + ".addon"),
+                Path.Combine(dir, folderName + ".txt")
+            };
+
+            try
+            {
+                foreach (var f in Directory.EnumerateFiles(dir))
+                {
+                    var ext = Path.GetExtension(f);
+                    if (ext.Equals(".addon", StringComparison.OrdinalIgnoreCase) || ext.Equals(".txt", StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (!manifestCandidates.Contains(f, StringComparer.OrdinalIgnoreCase))
+                            manifestCandidates.Add(f);
+                    }
+                }
+            }
+            catch { }
+
+            foreach (var manifestPath in manifestCandidates)
+            {
+                try
+                {
+                    if (!File.Exists(manifestPath)) continue;
+                    var text = File.ReadAllText(manifestPath);
+                    if (string.IsNullOrWhiteSpace(text)) continue;
+                    // Reject unbuilt GitHub repository checkouts containing unexpanded build tokens
+                    if (text.Contains("@BUILD_NUMBER@", StringComparison.Ordinal) ||
+                        text.Contains("@API_VERSION@", StringComparison.Ordinal) ||
+                        text.Contains("{{", StringComparison.Ordinal))
+                    {
+                        return false;
+                    }
+                    if (text.Contains("## Title:", StringComparison.OrdinalIgnoreCase) ||
+                        text.Contains("## APIVersion:", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return true;
+                    }
+                }
+                catch { }
+            }
+
+            return false;
         }
 
         public static (string? version, int? versionCode) ParseManifestVersion(string manifestContent)
@@ -273,8 +340,12 @@ namespace RedfurSync
             string manifestPath = Path.Combine(addonDir, "FissalRelay.txt");
             string mainLuaPath = Path.Combine(addonDir, "FissalRelay.lua");
 
-            bool libHistoire = Directory.Exists(Path.Combine(addonsRoot, "LibHistoire"));
-            bool libAddonMenu = Directory.Exists(Path.Combine(addonsRoot, "LibAddonMenu-2.0"));
+            bool libAddonMenu = IsValidEsoAddonInstalled(addonsRoot, "LibAddonMenu-2.0");
+            bool libHistoire = IsValidEsoAddonInstalled(addonsRoot, "LibHistoire")
+                && IsValidEsoAddonInstalled(addonsRoot, "LibAsync")
+                && IsValidEsoAddonInstalled(addonsRoot, "LibDebugLogger")
+                && IsValidEsoAddonInstalled(addonsRoot, "LibCustomMenu")
+                && libAddonMenu;
 
             string effectiveLatest = RelayVersion.IsServerNewer(ActiveLatestAddonVersion, LatestAddonVersion)
                 ? ActiveLatestAddonVersion
@@ -460,8 +531,14 @@ namespace RedfurSync
                 var addonDir = Path.Combine(esoLiveDir, "AddOns", AddonDirectoryName);
                 Directory.CreateDirectory(addonDir);
 
-                var clientDir = Path.Combine(addonDir, ClientDirectoryName);
-                Directory.CreateDirectory(clientDir);
+                // Clean up legacy empty Client subdirectory if left over from older versions
+                var legacyClientDir = Path.Combine(addonDir, ClientDirectoryName);
+                try
+                {
+                    if (Directory.Exists(legacyClientDir) && !Directory.EnumerateFileSystemEntries(legacyClientDir).Any())
+                        Directory.Delete(legacyClientDir, false);
+                }
+                catch { }
 
                 // Priority 1: Download latest verified archive ONLY if remote URL is available AND server is strictly newer than embedded version
                 if (!string.IsNullOrWhiteSpace(RemoteAddonDownloadUrl) && RelayVersion.IsServerNewer(ActiveLatestAddonVersion, LatestAddonVersion))
@@ -567,7 +644,7 @@ namespace RedfurSync
             InstallOrUpdateAddon(esoLiveDir, out _);
         }
 
-        public static void RelocateSelfAndCreateShortcut(string esoLiveDir, string targetExePath)
+        public static void RelocateSelfAndCreateShortcut(string? esoLiveDir, string targetExePath)
         {
             var targetDir = Path.GetDirectoryName(targetExePath);
             if (!string.IsNullOrWhiteSpace(targetDir))
@@ -578,13 +655,16 @@ namespace RedfurSync
             var currentExe = Environment.ProcessPath ?? Process.GetCurrentProcess().MainModule?.FileName;
             if (string.IsNullOrWhiteSpace(currentExe) || !File.Exists(currentExe)) return;
 
-            // Install or ensure addon files
-            InstallAddonFiles(esoLiveDir);
+            // Install or ensure addon files when ESO live directory is present
+            if (!string.IsNullOrWhiteSpace(esoLiveDir) && Directory.Exists(esoLiveDir))
+            {
+                InstallAddonFiles(esoLiveDir);
+            }
 
             // Copy executable
             File.Copy(currentExe, targetExePath, overwrite: true);
 
-            // Copy config.json or app.ico if in the same folder
+            // Copy app.ico if in the same folder
             var currentDir = Path.GetDirectoryName(currentExe);
             if (!string.IsNullOrWhiteSpace(currentDir) && !string.IsNullOrWhiteSpace(targetDir))
             {
@@ -595,29 +675,68 @@ namespace RedfurSync
                 }
             }
 
-            // Create Desktop Shortcut
+            // Create Desktop Shortcut via native Windows Shell COM (no PowerShell spawn)
             CreateDesktopShortcut(targetExePath);
+        }
+
+        [ComImport]
+        [Guid("00021401-0000-0000-C000-000000000046")]
+        private class ShellLinkCoClass { }
+
+        [ComImport]
+        [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+        [Guid("000214F9-0000-0000-C000-000000000046")]
+        private interface IShellLinkW
+        {
+            void GetPath([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszFile, int cch, IntPtr pfd, uint fFlags);
+            void GetIDList(out IntPtr ppidl);
+            void SetIDList(IntPtr pidl);
+            void GetDescription([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszName, int cch);
+            void SetDescription([MarshalAs(UnmanagedType.LPWStr)] string pszName);
+            void GetWorkingDirectory([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszDir, int cch);
+            void SetWorkingDirectory([MarshalAs(UnmanagedType.LPWStr)] string pszDir);
+            void GetArguments([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszArgs, int cch);
+            void SetArguments([MarshalAs(UnmanagedType.LPWStr)] string pszArgs);
+            void GetHotkey(out short pwHotkey);
+            void SetHotkey(short wHotkey);
+            void GetShowCmd(out int piShowCmd);
+            void SetShowCmd(int iShowCmd);
+            void GetIconLocation([Out, MarshalAs(UnmanagedType.LPWStr)] StringBuilder pszIconPath, int cch, out int piIcon);
+            void SetIconLocation([MarshalAs(UnmanagedType.LPWStr)] string pszIconPath, int iIcon);
+            void SetRelativePath([MarshalAs(UnmanagedType.LPWStr)] string pszPathRel, uint dwReserved);
+            void Resolve(IntPtr hwnd, uint fFlags);
+            void SetPath([MarshalAs(UnmanagedType.LPWStr)] string pszFile);
         }
 
         public static void CreateDesktopShortcut(string targetExePath)
         {
+            if (!OperatingSystem.IsWindows()) return;
+
             try
             {
                 var desktopPath = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-                var shortcutPath = Path.Combine(desktopPath, "Fissal Relay.lnk");
+                if (string.IsNullOrWhiteSpace(desktopPath) || !Directory.Exists(desktopPath)) return;
 
-                // Use PowerShell to generate the shortcut safely without external COM dependencies
-                var psScript = $"$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('{shortcutPath.Replace("'", "''")}'); $s.TargetPath = '{targetExePath.Replace("'", "''")}'; $s.WorkingDirectory = '{Path.GetDirectoryName(targetExePath)!.Replace("'", "''")}'; $s.Description = 'Fissal Cogwork Relay for Redfur Guilds'; $s.Save()";
-                
-                var psi = new ProcessStartInfo
+                var shortcutPath = Path.Combine(desktopPath, "Fissal Relay.lnk");
+                var workingDir = Path.GetDirectoryName(targetExePath) ?? desktopPath;
+
+                var linkObj = new ShellLinkCoClass();
+                try
                 {
-                    FileName = "powershell.exe",
-                    Arguments = $"-NoProfile -ExecutionPolicy Bypass -Command \"{psScript}\"",
-                    CreateNoWindow = true,
-                    UseShellExecute = false,
-                };
-                using var p = Process.Start(psi);
-                p?.WaitForExit(3000);
+                    var shellLink = (IShellLinkW)linkObj;
+                    shellLink.SetPath(targetExePath);
+                    shellLink.SetWorkingDirectory(workingDir);
+                    shellLink.SetDescription("Fissal Cogwork Relay for Redfur Guilds");
+                    shellLink.SetIconLocation(targetExePath, 0);
+
+                    var persistFile = (IPersistFile)linkObj;
+                    persistFile.Save(shortcutPath, true);
+                }
+                finally
+                {
+                    if (Marshal.IsComObject(linkObj))
+                        Marshal.FinalReleaseComObject(linkObj);
+                }
             }
             catch (Exception ex)
             {
@@ -704,6 +823,20 @@ namespace RedfurSync
             }
         }
 
+        private static readonly HashSet<string> AllowedDependencyFolders = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "LibHistoire",
+            "LibAddonMenu-2.0",
+            "LibAsync",
+            "LibDebugLogger",
+            "LibCustomMenu"
+        };
+
+        private static readonly HashSet<string> BlockedArchiveExtensions = new(StringComparer.OrdinalIgnoreCase)
+        {
+            ".exe", ".dll", ".bat", ".cmd", ".ps1", ".vbs", ".msi", ".scr", ".com"
+        };
+
         public static async Task<bool> DownloadAndInstallDependencyAsync(string esoLiveDir, string depName, string downloadUrl, HttpClient? httpClient = null, CancellationToken cancellationToken = default)
         {
             try
@@ -714,14 +847,13 @@ namespace RedfurSync
                 }
 
                 var addonsRoot = Path.Combine(esoLiveDir, "AddOns");
-                var targetDir = Path.Combine(addonsRoot, depName);
-                Directory.CreateDirectory(targetDir);
-                string canonicalTargetRoot = Path.GetFullPath(targetDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                Directory.CreateDirectory(addonsRoot);
+                string canonicalAddonsRoot = Path.GetFullPath(addonsRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
 
-                using var ownedClient = httpClient == null ? new HttpClient() : null;
+                using var ownedClient = httpClient == null ? new HttpClient { Timeout = TimeSpan.FromSeconds(25) } : null;
                 var client = httpClient ?? ownedClient!;
                 using var request = new HttpRequestMessage(HttpMethod.Get, downloadUrl);
-                request.Headers.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) FissalRelay/1.9.5");
+                request.Headers.UserAgent.ParseAdd($"Mozilla/5.0 (Windows NT 10.0; Win64; x64) FissalRelay/{LatestAddonVersion}");
 
                 using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
                 if (!response.IsSuccessStatusCode) return false;
@@ -729,22 +861,49 @@ namespace RedfurSync
                 using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
                 using var archive = new ZipArchive(stream, ZipArchiveMode.Read);
 
-                // Detect if all non-empty entries share a single root directory prefix (e.g. ESO-LibHistoire-master/)
-                string rootPrefix = string.Empty;
-                var firstEntry = archive.Entries.FirstOrDefault(e => !string.IsNullOrEmpty(e.Name));
-                if (firstEntry != null && firstEntry.FullName.Contains('/'))
+                var fileEntries = archive.Entries.Where(e => !string.IsNullOrEmpty(e.Name)).ToList();
+                if (fileEntries.Count == 0) return false;
+
+                // Determine whether archive already puts files under known AddOns subfolders (e.g. LibHistoire/..., LibAsync/..., LibAddonMenu-2.0/...)
+                bool isMultiAddonBundle = fileEntries.All(e =>
                 {
-                    var slashIdx = firstEntry.FullName.IndexOf('/');
-                    var candidatePrefix = firstEntry.FullName.Substring(0, slashIdx + 1);
-                    if (archive.Entries.All(e => string.IsNullOrEmpty(e.Name) || e.FullName.StartsWith(candidatePrefix, StringComparison.OrdinalIgnoreCase)))
+                    var norm = e.FullName.Replace('\\', '/');
+                    int slash = norm.IndexOf('/');
+                    return slash > 0 && AllowedDependencyFolders.Contains(norm.Substring(0, slash));
+                });
+
+                string extractBaseDir;
+                string canonicalTargetRoot;
+                string rootPrefix = string.Empty;
+
+                if (isMultiAddonBundle)
+                {
+                    extractBaseDir = addonsRoot;
+                    canonicalTargetRoot = canonicalAddonsRoot;
+                }
+                else
+                {
+                    var targetDir = Path.Combine(addonsRoot, depName);
+                    Directory.CreateDirectory(targetDir);
+                    extractBaseDir = targetDir;
+                    canonicalTargetRoot = Path.GetFullPath(targetDir).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+
+                    var firstNorm = fileEntries[0].FullName.Replace('\\', '/');
+                    int slashIdx = firstNorm.IndexOf('/');
+                    if (slashIdx > 0)
                     {
-                        rootPrefix = candidatePrefix;
+                        var candidatePrefix = firstNorm.Substring(0, slashIdx + 1);
+                        if (archive.Entries.All(e => string.IsNullOrEmpty(e.Name) || e.FullName.Replace('\\', '/').StartsWith(candidatePrefix, StringComparison.OrdinalIgnoreCase)))
+                        {
+                            rootPrefix = candidatePrefix;
+                        }
                     }
                 }
 
+                int extractedFiles = 0;
                 foreach (var entry in archive.Entries)
                 {
-                    string relPath = entry.FullName;
+                    string relPath = entry.FullName.Replace('\\', '/');
                     if (!string.IsNullOrEmpty(rootPrefix) && relPath.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase))
                     {
                         relPath = relPath.Substring(rootPrefix.Length);
@@ -752,8 +911,15 @@ namespace RedfurSync
 
                     if (string.IsNullOrWhiteSpace(relPath)) continue;
 
+                    if (!string.IsNullOrEmpty(entry.Name))
+                    {
+                        var ext = Path.GetExtension(entry.Name);
+                        if (BlockedArchiveExtensions.Contains(ext))
+                            continue;
+                    }
+
                     relPath = relPath.Replace('/', Path.DirectorySeparatorChar);
-                    var destPath = Path.Combine(targetDir, relPath);
+                    var destPath = Path.Combine(extractBaseDir, relPath);
                     if (!Path.GetFullPath(destPath).StartsWith(canonicalTargetRoot, StringComparison.OrdinalIgnoreCase))
                     {
                         throw new InvalidDataException($"Dependency archive entry '{entry.FullName}' escapes target directory.");
@@ -771,10 +937,11 @@ namespace RedfurSync
                             Directory.CreateDirectory(parentDir);
                         }
                         entry.ExtractToFile(destPath, overwrite: true);
+                        extractedFiles++;
                     }
                 }
 
-                return true;
+                return extractedFiles > 0 && IsValidEsoAddonInstalled(addonsRoot, depName);
             }
             catch (Exception ex)
             {
@@ -833,14 +1000,13 @@ namespace RedfurSync
             }
         }
 
-        private const string AddonManifestTemplate = @"## Title: |cFF9900Fissal's|r Cogwork Relay |c888888v1.9.5|r
+        private const string AddonManifestTemplate = @"## Title: |cFF9900Fissal's|r Cogwork Relay |c888888v1.9.6|r
 ## Author: Echo & Fissal
-## Version: 1.9.5
-## AddOnVersion: 10905
-## APIVersion: 101048 101049 101050
+## Version: 1.9.6
+## AddOnVersion: 10906
+## APIVersion: 101051 101052
 ## SavedVariables: FissalRelay_SavedVariables
-## DependsOn: LibHistoire>=1062 LibAddonMenu-2.0>=41
-## OptionalDependsOn: LibCustomMenu TamrielTradeCentre
+## OptionalDependsOn: LibHistoire>=1062 LibAddonMenu-2.0>=41 LibCustomMenu TamrielTradeCentre MasterMerchant LibGuildStore AwesomeGuildStore RaffleGold
 
 FissalRelay.lua
 FissalRelay_UI.lua

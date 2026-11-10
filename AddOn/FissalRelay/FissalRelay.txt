@@ -1,11 +1,10 @@
-## Title: |cFF9900Fissal's|r Cogwork Relay |c888888v1.9.5|r
+## Title: |cFF9900Fissal's|r Cogwork Relay |c888888v1.9.6|r
 ## Author: Echo & Fissal
-## Version: 1.9.5
-## AddOnVersion: 10905
-## APIVersion: 101048 101049 101050
+## Version: 1.9.6
+## AddOnVersion: 10906
+## APIVersion: 101051 101052
 ## SavedVariables: FissalRelay_SavedVariables
-## DependsOn: LibHistoire>=1062 LibAddonMenu-2.0>=41
-## OptionalDependsOn: LibCustomMenu TamrielTradeCentre
+## OptionalDependsOn: LibHistoire>=1062 LibAddonMenu-2.0>=41 LibCustomMenu TamrielTradeCentre MasterMerchant LibGuildStore AwesomeGuildStore RaffleGold
 
 FissalRelay.lua
 FissalRelay_UI.lua

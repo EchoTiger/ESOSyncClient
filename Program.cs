@@ -21,39 +21,48 @@ namespace RedfurSync
             try { AllowSetForegroundWindow(ASFW_ANY); } catch { }
             TraceLog("Main started. Args: " + string.Join(" ", args));
 
-            // ── Crash-during-commit recovery (Fable 5.1 Ruling 3.5) ──────────────
-            UpdateInstaller.RecoverPendingUpdate(AppDomain.CurrentDomain.BaseDirectory);
+            // ── DPI & Visual Styles (must precede any WinForms handle or dialog) ──
+            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+            FissalTheme.EnableDarkModeSupport();
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
 
-            // ── Post-update verification handshake ─────────────────────────────
             bool isPostUpdateVerify = false;
+            bool startMinimized = false;
             foreach (var arg in args)
             {
                 if (arg.Equals("--post-update-verify", StringComparison.OrdinalIgnoreCase))
-                {
                     isPostUpdateVerify = true;
-                    TraceLog("Executing post-update verification...");
-                    try
-                    {
-                        _ = AppConfig.Instance;
-                        var healthyPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "HEALTHY");
-                        File.WriteAllText(healthyPath, $"HEALTHY {DateTimeOffset.UtcNow:O}");
-                        TraceLog("HEALTHY sentinel written successfully.");
-                    }
-                    catch (Exception ex)
-                    {
-                        TraceLog($"Post-update verification failed: {ex.Message}");
-                        return;
-                    }
-                    break;
-                }
+                else if (arg.Equals("--startup", StringComparison.OrdinalIgnoreCase) ||
+                         arg.Equals("--minimized", StringComparison.OrdinalIgnoreCase) ||
+                         arg.Equals("--tray", StringComparison.OrdinalIgnoreCase))
+                    startMinimized = true;
             }
 
-            // ── DPI awareness ─────────────────────────────────────────────────
-            // Must be called before anything else to prevent blurry text on
-            // high-DPI / 4K displays. PerMonitorV2 lets each monitor use its
-            // own scaling factor and re-scales when windows move between them.
-            Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
-            FissalTheme.EnableDarkModeSupport();
+            // ── Post-update verification handshake (MUST run before RecoverPendingUpdate) ──
+            if (isPostUpdateVerify)
+            {
+                TraceLog("Executing post-update verification...");
+                try
+                {
+                    _ = AppConfig.Instance;
+                    var installDir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppDomain.CurrentDomain.BaseDirectory;
+                    var healthyPath = Path.Combine(installDir, "HEALTHY");
+                    File.WriteAllText(healthyPath, $"HEALTHY {DateTimeOffset.UtcNow:O}");
+                    TraceLog("HEALTHY sentinel written successfully.");
+                }
+                catch (Exception ex)
+                {
+                    TraceLog($"Post-update verification failed: {ex.Message}");
+                    return;
+                }
+            }
+            else
+            {
+                // ── Crash-during-commit recovery (Fable 5.1 Ruling 3.5) ──────────────
+                var installDir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppDomain.CurrentDomain.BaseDirectory;
+                UpdateInstaller.RecoverPendingUpdate(installDir);
+            }
 
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
             Application.ThreadException += (_, e) =>
@@ -83,14 +92,13 @@ namespace RedfurSync
             AppConfig.FaultReporter = (title, message) => FissalBox.Show(message, title);
 
             _mutex = new Mutex(true, MutexName, out bool isNew);
+            bool ownsMutex = isNew;
             TraceLog("Mutex checked. isNew: " + isNew);
 
             if (!isNew)
             {
                 try { AllowSetForegroundWindow(ASFW_ANY); } catch { }
 
-                // During --post-update-verify, the old instance is shutting down after seeing HEALTHY.
-                // Wait up to 5 seconds to acquire the mutex before attempting any wake signal.
                 if (!isPostUpdateVerify)
                 {
                     // Try to signal the running instance to wake
@@ -107,51 +115,48 @@ namespace RedfurSync
 
                     if (signaled)
                     {
-                        // Another instance is alive and was signaled — exit gracefully
                         return;
                     }
                 }
 
-                // Either we are in --post-update-verify waiting for the old instance to exit,
-                // or the previous instance is dead. Wait up to 5 seconds to acquire ownership.
+                // During --post-update-verify, give the previous instance up to 25s to observe HEALTHY and exit.
+                var mutexWait = isPostUpdateVerify ? TimeSpan.FromSeconds(25) : TimeSpan.FromSeconds(5);
                 TraceLog(isPostUpdateVerify
-                    ? "Post-update handover — waiting up to 5s for previous instance to release mutex..."
+                    ? "Post-update handover — waiting up to 25s for previous instance to release mutex..."
                     : "Wake event not found — previous instance may be dead. Attempting mutex takeover...");
                 try
                 {
-                    bool acquired = _mutex.WaitOne(TimeSpan.FromSeconds(5), false);
+                    bool acquired = _mutex.WaitOne(mutexWait, false);
                     if (!acquired)
                     {
                         TraceLog("Could not acquire mutex. Another instance may still be running.");
                         return;
                     }
+                    ownsMutex = true;
                     TraceLog("Mutex acquired — proceeding as primary.");
                 }
                 catch (AbandonedMutexException)
                 {
-                    // Mutex was abandoned by the previous process — we now own it
+                    ownsMutex = true;
                     TraceLog("Abandoned mutex recovered. Proceeding as primary.");
                 }
             }
 
-            // Only the primary instance may clean a stale ".old" — a second instance
-            // must never delete the backup while the first is mid-update.
+            // Only the primary instance may clean stale update backups
             string? exePath = Environment.ProcessPath;
             if (!string.IsNullOrEmpty(exePath))
             {
-                string oldExe = exePath + ".old";
-                if (File.Exists(oldExe))
+                foreach (var suffix in new[] { ".old", ".prev", ".xvol.tmp" })
                 {
-                    try { File.Delete(oldExe); } catch { /* It will be deleted next time */ }
-                }
-                string prevExe = exePath + ".prev";
-                if (File.Exists(prevExe))
-                {
-                    try { File.Delete(prevExe); } catch { }
+                    string stale = exePath + suffix;
+                    if (File.Exists(stale))
+                    {
+                        try { File.Delete(stale); } catch { }
+                    }
                 }
                 try
                 {
-                    var baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                    var baseDir = Path.GetDirectoryName(exePath) ?? AppDomain.CurrentDomain.BaseDirectory;
                     foreach (var p in Directory.EnumerateFiles(baseDir, "*.prev"))
                     {
                         try { File.Delete(p); } catch { }
@@ -160,27 +165,49 @@ namespace RedfurSync
                 catch { }
             }
 
-            // ── Self-Relocation into ESO AddOns Chamber ─────────────────────────────
-            if (AddonInstallerService.ShouldRelocate(out var targetExePath, out var esoLiveDir))
+            // ── Self-Relocation into %LOCALAPPDATA%\Programs\FissalRelay ──────────
+            if (!isPostUpdateVerify && AddonInstallerService.ShouldRelocate(out var targetExePath, out var esoLiveDir))
             {
                 try
                 {
+                    bool hadStartup = StartupHelper.IsStartupEnabled();
                     AddonInstallerService.RelocateSelfAndCreateShortcut(esoLiveDir, targetExePath);
-                    FissalBox.Show(
-                        "Fissal has relocated our Relay into your ESO AddOns chamber:\n\n" +
-                        targetExePath + "\n\n" +
-                        "A desktop shortcut 'Fissal Relay' has been forged, and the FissalRelay in-game addon is installed!\n\n" +
-                        "Launching from your new brass chamber now...",
-                        "Fissal's Cogwork Relocation");
+
+                    if (hadStartup || (AppConfig.Instance.RunOnStartup &&
+                        (!string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken) || !string.IsNullOrWhiteSpace(AppConfig.Instance.ApiKey))))
+                    {
+                        StartupHelper.SetStartupForPath(targetExePath, true);
+                    }
+
+                    if (!startMinimized)
+                    {
+                        string addonNote = !string.IsNullOrWhiteSpace(esoLiveDir)
+                            ? "A desktop shortcut 'Fissal Relay' has been forged, and the FissalRelay in-game addon is installed!\n\n"
+                            : "A desktop shortcut 'Fissal Relay' has been forged! You can link your ESO folder anytime in the Addon tab.\n\n";
+
+                        FissalBox.Show(
+                            "Fissal has anchored our Relay in your local programs chamber:\n\n" +
+                            targetExePath + "\n\n" +
+                            addonNote +
+                            "Launching from your brass chamber now...",
+                            "Fissal's Cogwork Relocation");
+                    }
+
+                    // Release mutex BEFORE spawning relocated instance so child acquires ownership immediately
+                    if (ownsMutex)
+                    {
+                        SafeReleaseMutex();
+                        ownsMutex = false;
+                    }
 
                     var psi = new System.Diagnostics.ProcessStartInfo
                     {
                         FileName = targetExePath,
+                        Arguments = startMinimized ? "--startup" : string.Empty,
                         UseShellExecute = true,
                         WorkingDirectory = Path.GetDirectoryName(targetExePath)
                     };
                     System.Diagnostics.Process.Start(psi);
-                    _mutex.ReleaseMutex();
                     return;
                 }
                 catch (Exception ex)
@@ -206,21 +233,6 @@ namespace RedfurSync
                 }
             }
 
-            Application.EnableVisualStyles();
-            Application.SetCompatibleTextRenderingDefault(false);
-
-            bool startMinimized = false;
-            foreach (var arg in args)
-            {
-                if (arg.Equals("--startup", StringComparison.OrdinalIgnoreCase) ||
-                    arg.Equals("--minimized", StringComparison.OrdinalIgnoreCase) ||
-                    arg.Equals("--tray", StringComparison.OrdinalIgnoreCase))
-                {
-                    startMinimized = true;
-                    break;
-                }
-            }
-
             FissalTheme.SetTheme(AppConfig.Instance.Theme);
             TraceLog("Creating TrayApp...");
             using var app = new TrayApp(startMinimized);
@@ -228,23 +240,54 @@ namespace RedfurSync
             Application.Run();
             TraceLog("Application.Run returned!");
 
-            _mutex.ReleaseMutex();
+            if (ownsMutex)
+            {
+                SafeReleaseMutex();
+            }
         }
 
-        
+        internal static void SafeReleaseMutex()
+        {
+            var m = _mutex;
+            if (m == null) return;
+            try { m.ReleaseMutex(); }
+            catch (ApplicationException) { }
+            catch (ObjectDisposedException) { }
+        }
+
+        private static string GetLogFilePath(string fileName)
+        {
+            var logDir = Path.Combine(AppConfig.ConfigDirectory, "logs");
+            Directory.CreateDirectory(logDir);
+            var logPath = Path.Combine(logDir, fileName);
+            try
+            {
+                var fi = new FileInfo(logPath);
+                if (fi.Exists && fi.Length > 2 * 1024 * 1024)
+                {
+                    var rotated = logPath + ".1";
+                    File.Move(logPath, rotated, overwrite: true);
+                }
+            }
+            catch { }
+            return logPath;
+        }
+
         private static void TraceLog(string msg)
         {
-            try {
-                var p = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "debug.log");
+            try
+            {
+                var p = GetLogFilePath("debug.log");
                 File.AppendAllText(p, $"[{DateTime.Now:HH:mm:ss.fff}] {msg}\n");
-            } catch {}
+            }
+            catch { }
         }
 
         private static void LogCrash(Exception ex)
         {
             try
             {
-                var crashFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "crash.log");
+                var crashFile = GetLogFilePath("crash.log");
                 File.AppendAllText(crashFile, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {ex}\n\n");
             }
             catch { }

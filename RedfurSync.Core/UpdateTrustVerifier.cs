@@ -83,9 +83,11 @@ namespace RedfurSync
     {
         public const string PrimaryPublicKeyBase64 = "Hm2nHWon0NlLPFFSvdn5e+MrOZhEqx/BTybr7OWnZFo=";
         public const string RecoveryPublicKeyBase64 = "wyhdxHRTHL/0OHYsAyI0JY9bm8V+qg0uATsLuDuLtsk=";
+        public const string NextPublicKeyBase64 = "QX+yG8dCSgNAIG/nhX73/pbas+LPsNGgP+t5Auq74gI=";
 
         public static readonly byte[] PrimaryPublicKey = Convert.FromBase64String(PrimaryPublicKeyBase64);
         public static readonly byte[] RecoveryPublicKey = Convert.FromBase64String(RecoveryPublicKeyBase64);
+        public static readonly byte[] NextPublicKey = Convert.FromBase64String(NextPublicKeyBase64);
 
         private static readonly JsonSerializerOptions JsonOpts = new()
         {
@@ -113,7 +115,7 @@ namespace RedfurSync
 
             var revoked = new HashSet<string>(revokedKeyIds ?? Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
 
-            var trustedKeys = new List<byte[]> { PrimaryPublicKey, RecoveryPublicKey };
+            var trustedKeys = new List<byte[]> { PrimaryPublicKey, RecoveryPublicKey, NextPublicKey };
             if (extraTrustedKeys != null)
                 trustedKeys.AddRange(extraTrustedKeys);
 

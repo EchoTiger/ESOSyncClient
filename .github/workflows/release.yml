@@ -98,11 +98,17 @@ jobs:
           -p:DebugType=None
           -p:DebugSymbols=false
 
-      - name: Create release archive
+      - name: Create release archive & ESO addon bundle
         shell: pwsh
         run: |
           Copy-Item publish/RedfurSync.exe RedfurSync.exe
           Compress-Archive -Path publish/RedfurSync.exe -DestinationPath RedfurSync-win-x64.zip
+
+          $addonStage = New-Item -ItemType Directory -Path "addon-stage/FissalRelay" -Force
+          Get-ChildItem -Path "AddOn/FissalRelay" -File | Where-Object { $_.Extension -in '.lua', '.txt' } | ForEach-Object {
+            Copy-Item $_.FullName -Destination $addonStage.FullName
+          }
+          Compress-Archive -Path "addon-stage/FissalRelay" -DestinationPath "FissalRelay-v$($env:RELEASE_VERSION).zip"
 
       - name: Build release changelog
         shell: pwsh
@@ -118,34 +124,36 @@ jobs:
           if ($changelog.Length -gt 4000) { $changelog = $changelog.Substring(0, 4000) + "`n- (truncated)" }
           Set-Content -Path changelog.txt -Value $changelog -Encoding utf8
 
-      - name: Create update manifest
+      - name: Sign update manifest (when RELAY_SIGNING_PRIVATE_KEY_B64 is configured)
+        id: sign_manifest
         shell: pwsh
+        env:
+          RELAY_SIGNING_PRIVATE_KEY_B64: ${{ secrets.RELAY_SIGNING_PRIVATE_KEY_B64 }}
+          RELAY_SEQUENCE: ${{ vars.RELAY_RELEASE_SEQUENCE }}
         run: |
-          $exe = Get-Item publish/RedfurSync.exe
-          $hash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-          $changelog = (Get-Content changelog.txt -Raw).TrimEnd()
-          $releaseTag = "v$($env:RELEASE_VERSION)"
-          $manifest = [ordered]@{
-            version = $env:RELEASE_VERSION
-            downloadUrl = "https://github.com/EchoTiger/ESOSyncClient/releases/download/$releaseTag/RedfurSync.exe"
-            changelog = $changelog
-            sizeBytes = [int64]$exe.Length
-            sha256 = $hash
+          if ([string]::IsNullOrWhiteSpace($env:RELAY_SIGNING_PRIVATE_KEY_B64)) {
+            Write-Host "RELAY_SIGNING_PRIVATE_KEY_B64 secret not set — skipping update-manifest.json signing (never emit unsigned manifests)."
+            "signed=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            exit 0
           }
-          $manifest | ConvertTo-Json | Set-Content -Path update-manifest.json -Encoding utf8
+          $seqArg = if ([string]::IsNullOrWhiteSpace($env:RELAY_SEQUENCE)) { @("--sequence", "$(([int][DateTimeOffset]::UtcNow.ToUnixTimeSeconds()))") } else { @("--sequence", $env:RELAY_SEQUENCE) }
+          $releaseTag = "v$($env:RELEASE_VERSION)"
+          $downloadUrl = "https://github.com/EchoTiger/ESOSyncClient/releases/download/$releaseTag/RedfurSync.exe"
+          dotnet run --project tools/SignManifest/SignManifest.csproj --configuration Release -- `
+            --exe RedfurSync.exe `
+            --out-dir . `
+            --version $env:RELEASE_VERSION `
+            --download-url $downloadUrl `
+            --changelog-file changelog.txt `
+            @seqArg
+          if ($LASTEXITCODE -ne 0) { throw "SignManifest failed with exit code $LASTEXITCODE" }
+          "signed=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
 
       - name: Verify release artifacts
         shell: pwsh
         run: |
           $exe = Get-Item RedfurSync.exe
           $exeHash = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-          $manifest = Get-Content update-manifest.json -Raw | ConvertFrom-Json
-          $expectedUrl = "https://github.com/EchoTiger/ESOSyncClient/releases/download/v$($env:RELEASE_VERSION)/RedfurSync.exe"
-          if ($manifest.version -ne $env:RELEASE_VERSION) { throw 'Manifest version does not match the release version.' }
-          if ($manifest.downloadUrl -ne $expectedUrl) { throw 'Manifest downloadUrl does not reference the tagged executable.' }
-          if ([int64]$manifest.sizeBytes -ne $exe.Length) { throw 'Manifest size does not match RedfurSync.exe.' }
-          if ($manifest.sha256 -ne $exeHash) { throw 'Manifest SHA-256 does not match RedfurSync.exe.' }
-          if ($manifest.sha256 -notmatch '^[a-f0-9]{64}$') { throw 'Manifest SHA-256 is malformed.' }
 
           Expand-Archive RedfurSync-win-x64.zip -DestinationPath verify-zip
           $zipExe = Get-Item verify-zip/RedfurSync.exe
@@ -154,18 +162,47 @@ jobs:
             throw 'The zip does not contain the verified RedfurSync.exe.'
           }
 
+          $addonZipName = "FissalRelay-v$($env:RELEASE_VERSION).zip"
+          Expand-Archive $addonZipName -DestinationPath verify-addon
+          if (Get-ChildItem verify-addon -Recurse -Include '*.exe','*.dll') {
+            throw 'Addon archive must never contain binaries.'
+          }
+          if (-not (Test-Path "verify-addon/FissalRelay/FissalRelay.txt")) {
+            throw 'Addon archive is missing FissalRelay/FissalRelay.txt.'
+          }
+
           $fileVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($exe.FullName).FileVersion
           if (-not $fileVersion.StartsWith("$($env:RELEASE_VERSION).")) {
             throw "Executable file version $fileVersion does not match release $env:RELEASE_VERSION."
           }
 
           $zipHashValue = (Get-FileHash RedfurSync-win-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          $manifestHash = (Get-FileHash update-manifest.json -Algorithm SHA256).Hash.ToLowerInvariant()
-          @(
+          $addonHashValue = (Get-FileHash $addonZipName -Algorithm SHA256).Hash.ToLowerInvariant()
+          $sumLines = @(
             "$exeHash  RedfurSync.exe"
             "$zipHashValue  RedfurSync-win-x64.zip"
-            "$manifestHash  update-manifest.json"
-          ) | Set-Content -Path SHA256SUMS.txt -Encoding ascii
+            "$addonHashValue  $addonZipName"
+          )
+
+          if (Test-Path update-manifest.json) {
+            if (-not (Test-Path update-manifest.sig)) {
+              throw 'Unsigned update-manifest.json is forbidden.'
+            }
+            $sigItem = Get-Item update-manifest.sig
+            if ($sigItem.Length -ne 64) {
+              throw "update-manifest.sig must be 64 bytes, found $($sigItem.Length)."
+            }
+            $manifest = Get-Content update-manifest.json -Raw | ConvertFrom-Json
+            if ($manifest.version -ne $env:RELEASE_VERSION) { throw 'Manifest version does not match release version.' }
+            if ([int64]$manifest.sizeBytes -ne $exe.Length) { throw 'Manifest size does not match RedfurSync.exe.' }
+            if ($manifest.sha256 -ne $exeHash) { throw 'Manifest SHA-256 does not match RedfurSync.exe.' }
+            $manifestHash = (Get-FileHash update-manifest.json -Algorithm SHA256).Hash.ToLowerInvariant()
+            $sigHash = (Get-FileHash update-manifest.sig -Algorithm SHA256).Hash.ToLowerInvariant()
+            $sumLines += "$manifestHash  update-manifest.json"
+            $sumLines += "$sigHash  update-manifest.sig"
+          }
+
+          $sumLines | Set-Content -Path SHA256SUMS.txt -Encoding ascii
 
       - name: Preserve verified artifacts
         uses: actions/upload-artifact@v7
@@ -176,24 +213,28 @@ jobs:
           path: |
             RedfurSync.exe
             RedfurSync-win-x64.zip
+            FissalRelay-v${{ steps.version.outputs.version }}.zip
             update-manifest.json
+            update-manifest.sig
             SHA256SUMS.txt
 
-      - name: Create draft GitHub release
+      - name: Create draft GitHub release (signed manifests required for auto-updater)
         if: steps.version.outputs.is_release == 'true'
         uses: softprops/action-gh-release@v3
         with:
           draft: true
           generate_release_notes: true
-          fail_on_unmatched_files: true
+          fail_on_unmatched_files: false
           files: |
             RedfurSync.exe
             RedfurSync-win-x64.zip
+            FissalRelay-v${{ steps.version.outputs.version }}.zip
             update-manifest.json
+            update-manifest.sig
             SHA256SUMS.txt
 
       - name: Publish verified GitHub release
-        if: steps.version.outputs.is_release == 'true'
+        if: steps.version.outputs.is_release == 'true' && steps.sign_manifest.outputs.signed == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}

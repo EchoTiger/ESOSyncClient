@@ -188,25 +188,71 @@ function FR:ReconcileOfficialStaffConfig()
             end
         end
 
+        -- Build fast in-memory lookup for official welcomed handles without cloning 1,600+ keys into SavedVariables
+        self._officialWelcomedByGuild = {}
         if official.autoWelcome.welcomed then
             for gk, handleMap in pairs(official.autoWelcome.welcomed) do
                 local targetGuildId = canonicalIds[gk]
                 if targetGuildId and type(handleMap) == "table" then
-                    aw.welcomed[targetGuildId] = aw.welcomed[targetGuildId] or {}
-                    aw.pending[targetGuildId] = aw.pending[targetGuildId] or {}
+                    local memMap = {}
                     for handle, ts in pairs(handleMap) do
                         local lower = string.lower(tostring(handle))
-                        if not aw.welcomed[targetGuildId][lower] then
-                            aw.welcomed[targetGuildId][lower] = tonumber(ts) or true
-                        end
-                        if aw.pending[targetGuildId][lower] then
-                            aw.pending[targetGuildId][lower] = nil
+                        memMap[lower] = tonumber(ts) or true
+                        local bare = string.gsub(lower, "^@", "")
+                        memMap[bare] = tonumber(ts) or true
+                        memMap["@" .. bare] = tonumber(ts) or true
+                        if aw.pending and aw.pending[targetGuildId] then
+                            for pKey, pDisp in pairs(aw.pending[targetGuildId]) do
+                                local pBare = string.gsub(string.lower(tostring(pDisp or pKey)), "^@", "")
+                                local pHash = self.HashWelcomeHandle and self:HashWelcomeHandle(pBare) or ""
+                                if memMap[pHash] or memMap[pBare] or memMap["@" .. pBare] then
+                                    aw.pending[targetGuildId][pKey] = nil
+                                end
+                            end
                         end
                     end
+                    self._officialWelcomedByGuild[targetGuildId] = memMap
                 end
             end
         end
+
+        -- Prune legacy cloned handle bloat from non-officer SavedVariables
+        if self.IsPlayerRedfurOfficer and not self:IsPlayerRedfurOfficer() then
+            aw.welcomed = {}
+            aw.pending = {}
+        end
     end
+end
+
+function FR:HashWelcomeHandle(displayName)
+    local bare = string.gsub(string.lower(tostring(displayName or "")), "^@", "")
+    if bare == "" then return "" end
+    local h1 = 5381
+    local h2 = 166136243
+    for i = 1, #bare do
+        local b = string.byte(bare, i)
+        h1 = (h1 * 33 + b) % 1000000007
+        h2 = (h2 * 131 + b) % 1000000009
+    end
+    return string.format("h_%d_%d", h1, h2)
+end
+
+function FR:IsOfficialWelcomed(guildId, displayName)
+    if not guildId or not displayName then return false end
+    local lower = string.lower(tostring(displayName))
+    local bare = string.gsub(lower, "^@", "")
+    local hashed = self:HashWelcomeHandle(bare)
+    local memMap = self._officialWelcomedByGuild and self._officialWelcomedByGuild[guildId]
+    if memMap and (memMap[hashed] or memMap[lower] or memMap[bare] or memMap["@" .. bare]) then
+        return true
+    end
+    local gKey = self.GetGuildKey and self:GetGuildKey(guildId)
+    local rawMap = gKey and FR.OfficialStaffConfig and FR.OfficialStaffConfig.autoWelcome
+        and FR.OfficialStaffConfig.autoWelcome.welcomed and FR.OfficialStaffConfig.autoWelcome.welcomed[gKey]
+    if type(rawMap) == "table" and (rawMap[hashed] or rawMap[lower] or rawMap["@" .. bare] or rawMap[bare]) then
+        return true
+    end
+    return false
 end
 
 -- Generates default rank ladder thresholds based on guild identity & rank structure
@@ -2378,7 +2424,9 @@ function FR:OpenAutoRanksConsole()
 end
 
 SLASH_COMMANDS["/autoranks"] = function() FR:OpenAutoRanksConsole() end
-SLASH_COMMANDS["/ar"] = function() FR:OpenAutoRanksConsole() end
+if not SLASH_COMMANDS["/ar"] then
+    SLASH_COMMANDS["/ar"] = function() FR:OpenAutoRanksConsole() end
+end
 
 --[[ =========================================================================
      AUTOWELCOME RECRUIT ENGINE & LETTER STUDIO MODAL
@@ -2461,9 +2509,15 @@ function FR:CanAutoWelcomeInGuild(guildId)
     if not (gCfg and gCfg.enabled) then
         return false
     end
+    if self.IsPlayerRedfurOfficer then
+        return self:IsPlayerRedfurOfficer(guildId) == true
+    end
     local isOfficer = (IsPlayerGuildMaster and IsPlayerGuildMaster(guildId))
-        or (DoesPlayerHaveGuildPermission and DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_INVITE))
-        or (self.CanTrackGuildBank and self:CanTrackGuildBank(guildId))
+        or (DoesPlayerHaveGuildPermission and (
+            (GUILD_PERMISSION_SET_MOTD and DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_SET_MOTD))
+            or (GUILD_PERMISSION_PROMOTE and DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_PROMOTE))
+            or (GUILD_PERMISSION_REMOVE and DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_REMOVE))
+        ))
     return isOfficer == true
 end
 
@@ -3092,72 +3146,62 @@ function FR:DispatchWelcomeMails(guildId)
         return
     end
 
+    if IsInGamepadPreferredMode and IsInGamepadPreferredMode() then
+        self.PrintChat("|cFFCC00AutoWelcome:|r Switch out of Gamepad UI mode before dispatching welcome letters.")
+        return
+    end
+
     self._welcomeDispatchInFlight = true
 
     if not SCENE_MANAGER:IsShowing("mailSend") then
         SCENE_MANAGER:Show("mailSend")
     end
 
-    local mailDelay = aw.mailDelay or 2500
+    local mailDelay = math.max(1500, tonumber(aw.mailDelay) or 2500)
     local total = #queue
     local sentCount = 0
+    local currentIdx = 0
+    local awaitingMailEvent = false
+    local evSuccess = "FissalRelay_AutoWelcome_MailSuccess"
+    local evFailed = "FissalRelay_AutoWelcome_MailFailed"
+    local evTimeout = "FissalRelay_AutoWelcome_MailTimeout"
 
     local scopeLabel = isAllGuilds and "ALL Redfur guilds" or (GetGuildName(targetGuildIds[1]) or "guild")
     self.PrintChat(string.format("✉ |c00FFCCAutoWelcome:|r Dispatching welcome letters to %d recruit(s) across %s with %dms pacing...", total, scopeLabel, mailDelay))
 
-    local function SendNext(idx)
-        if idx > total then
-            self._welcomeDispatchInFlight = false
-            self.PrintChat(string.format("✓ |c59E08AAutoWelcome Complete:|r Dispatched %d welcome letter(s).", sentCount))
-            if self.autoWelcomeStatusLbl then
-                self.autoWelcomeStatusLbl:SetText(string.format("Dispatched %d / %d", sentCount, total))
-            end
-            if sentCount > 0 and self.MarkSavedVarsDirty then
-                self:MarkSavedVarsDirty("auto_welcome")
-            end
-            self:RefreshAutoWelcomeDrawer()
-            self:UpdateAutoWelcomeButtonBadge()
-            return
+    local SendNext
+
+    local function CleanupDispatch(statusText, chatMsg)
+        awaitingMailEvent = false
+        self._welcomeDispatchInFlight = false
+        EVENT_MANAGER:UnregisterForEvent(evSuccess, EVENT_MAIL_SEND_SUCCESS)
+        EVENT_MANAGER:UnregisterForEvent(evFailed, EVENT_MAIL_SEND_FAILED)
+        EVENT_MANAGER:UnregisterForUpdate(evTimeout)
+        if chatMsg then
+            self.PrintChat(chatMsg)
         end
-
-        if not SCENE_MANAGER or not SCENE_MANAGER:IsShowing("mailSend") then
-            self._welcomeDispatchInFlight = false
-            self.PrintChat("|cFFCC00AutoWelcome:|r Mail window closed; paused dispatch so remaining recruits stay queued.")
-            if self.autoWelcomeStatusLbl then
-                self.autoWelcomeStatusLbl:SetText(string.format("Paused (%d / %d sent)", sentCount, total))
-            end
-            if sentCount > 0 and self.MarkSavedVarsDirty then
-                self:MarkSavedVarsDirty("auto_welcome")
-            end
-            self:RefreshAutoWelcomeDrawer()
-            self:UpdateAutoWelcomeButtonBadge()
-            return
+        if self.autoWelcomeStatusLbl and statusText then
+            self.autoWelcomeStatusLbl:SetText(statusText)
         end
-
-        local item = queue[idx]
-        local itemGuildId = item.guildId
-        local gCfg = aw.guildSettings and aw.guildSettings[itemGuildId]
-        local subjectTpl = (gCfg and gCfg.subject and gCfg.subject ~= "") and gCfg.subject or "Welcome to {guild_name}!"
-        local bodyTpl = (gCfg and gCfg.message and gCfg.message ~= "") and gCfg.message or "Welcome {name} to {guild_name}!"
-
-        local subject = FR:InterpolateWelcomeLetter(subjectTpl, itemGuildId, item.display)
-        local body = FR:InterpolateWelcomeLetter(bodyTpl, itemGuildId, item.display)
-
-        if self.autoWelcomeStatusLbl then
-            local tagPrefix = (isAllGuilds and item.guildShortTag) and ("[" .. item.guildShortTag .. "] ") or ""
-            self.autoWelcomeStatusLbl:SetText(string.format("Sending (%d/%d): %s%s...", idx, total, tagPrefix, item.display))
+        if sentCount > 0 and self.MarkSavedVarsDirty then
+            self:MarkSavedVarsDirty("auto_welcome")
         end
+        self:RefreshAutoWelcomeDrawer()
+        self:UpdateAutoWelcomeButtonBadge()
+    end
 
-        local ok = pcall(function()
-            SendMail(item.display, subject, body)
-        end)
+    EVENT_MANAGER:RegisterForEvent(evSuccess, EVENT_MAIL_SEND_SUCCESS, function()
+        if not self._welcomeDispatchInFlight or not awaitingMailEvent then return end
+        awaitingMailEvent = false
+        EVENT_MANAGER:UnregisterForUpdate(evTimeout)
 
-        if ok then
+        local item = queue[currentIdx]
+        if item then
             local nowTs = GetTimeStamp()
-            aw.welcomed[itemGuildId] = aw.welcomed[itemGuildId] or {}
-            aw.welcomed[itemGuildId][item.lower] = nowTs
-            if aw.pending[itemGuildId] then
-                aw.pending[itemGuildId][item.lower] = nil
+            aw.welcomed[item.guildId] = aw.welcomed[item.guildId] or {}
+            aw.welcomed[item.guildId][item.lower] = nowTs
+            if aw.pending[item.guildId] then
+                aw.pending[item.guildId][item.lower] = nil
             end
             aw.updatedAt = nowTs
             aw.updatedBy = GetDisplayName() or "@Staff"
@@ -3165,13 +3209,122 @@ function FR:DispatchWelcomeMails(guildId)
         end
 
         zo_callLater(function()
-            SendNext(idx + 1)
+            if self._welcomeDispatchInFlight then
+                SendNext(currentIdx + 1)
+            end
         end, mailDelay)
+    end)
+
+    EVENT_MANAGER:RegisterForEvent(evFailed, EVENT_MAIL_SEND_FAILED, function(_, reason)
+        if not self._welcomeDispatchInFlight or not awaitingMailEvent then return end
+        awaitingMailEvent = false
+        EVENT_MANAGER:UnregisterForUpdate(evTimeout)
+
+        local item = queue[currentIdx]
+        local targetLabel = item and item.display or "recruit"
+        -- Skip permanently unmailable recipients (unknown player / full inbox / ignored) without losing queue progress,
+        -- or pause if mailbox closed / not enough gold for postage.
+        if reason == MAIL_SEND_RESULT_CANT_SEND_TO_SELF
+            or reason == MAIL_SEND_RESULT_FAIL_INVALID_NAME
+            or reason == MAIL_SEND_RESULT_RECIPIENT_NOT_FOUND
+            or reason == MAIL_SEND_RESULT_FAIL_MAILBOX_FULL
+            or reason == MAIL_SEND_RESULT_FAIL_IGNORED
+        then
+            self.PrintChat(string.format("|cFFCC00AutoWelcome:|r Could not deliver to %s (ESO result %s); skipping for now.", targetLabel, tostring(reason)))
+            zo_callLater(function()
+                if self._welcomeDispatchInFlight then
+                    SendNext(currentIdx + 1)
+                end
+            end, mailDelay)
+        else
+            CleanupDispatch(
+                string.format("Paused (%d / %d sent)", sentCount, total),
+                string.format("|cFFCC00AutoWelcome:|r Paused on %s (ESO mail result %s). Open a mailbox to resume remaining recruits.", targetLabel, tostring(reason))
+            )
+        end
+    end)
+
+    SendNext = function(idx)
+        if not self._welcomeDispatchInFlight then return end
+        if idx > total then
+            CleanupDispatch(
+                string.format("Dispatched %d / %d", sentCount, total),
+                string.format("✓ |c59E08AAutoWelcome Complete:|r Dispatched %d welcome letter(s).", sentCount)
+            )
+            return
+        end
+
+        if not SCENE_MANAGER or not SCENE_MANAGER:IsShowing("mailSend") then
+            CleanupDispatch(
+                string.format("Paused (%d / %d sent)", sentCount, total),
+                "|cFFCC00AutoWelcome:|r Mail window closed; paused dispatch so remaining recruits stay queued."
+            )
+            return
+        end
+
+        currentIdx = idx
+        local item = queue[idx]
+        local itemGuildId = item.guildId
+        local gCfg = aw.guildSettings and aw.guildSettings[itemGuildId]
+        local subjectTpl = (gCfg and gCfg.subject and gCfg.subject ~= "") and gCfg.subject or "Welcome to {guild_name}!"
+        local bodyTpl = (gCfg and gCfg.message and gCfg.message ~= "") and gCfg.message or "Welcome {name} to {guild_name}!"
+
+        local rawSubject = FR:InterpolateWelcomeLetter(subjectTpl, itemGuildId, item.display)
+        local rawBody = FR:InterpolateWelcomeLetter(bodyTpl, itemGuildId, item.display)
+        local subject = self.TruncateUtf8 and self:TruncateUtf8(rawSubject, 50) or string.sub(rawSubject, 1, 50)
+        local body = self.TruncateUtf8 and self:TruncateUtf8(rawBody, 700) or string.sub(rawBody, 1, 700)
+
+        if self.autoWelcomeStatusLbl then
+            local tagPrefix = (isAllGuilds and item.guildShortTag) and ("[" .. item.guildShortTag .. "] ") or ""
+            self.autoWelcomeStatusLbl:SetText(string.format("Sending (%d/%d): %s%s...", idx, total, tagPrefix, item.display))
+        end
+
+        -- CRITICAL GOLD/ITEM SAFETY: Clear any previously queued gold or item attachments before calling SendMail!
+        if ClearQueuedMail then pcall(ClearQueuedMail) end
+        if QueueMoneyAttachment then pcall(QueueMoneyAttachment, 0) end
+        if MAIL_SEND and MAIL_SEND.ClearFields then pcall(function() MAIL_SEND:ClearFields() end) end
+
+        awaitingMailEvent = true
+        EVENT_MANAGER:UnregisterForUpdate(evTimeout)
+        EVENT_MANAGER:RegisterForUpdate(evTimeout, 10000, function()
+            if not self._welcomeDispatchInFlight or not awaitingMailEvent then return end
+            CleanupDispatch(
+                string.format("Timed out (%d / %d sent)", sentCount, total),
+                "|cFFCC00AutoWelcome:|r Mail server response timed out; remaining recruits stay safely queued."
+            )
+        end)
+
+        if RequestOpenMailbox then pcall(RequestOpenMailbox) end
+        local ok, err = pcall(function()
+            SendMail(item.display, subject, body)
+        end)
+        if not ok then
+            CleanupDispatch(
+                string.format("Paused (%d / %d sent)", sentCount, total),
+                string.format("|cFF5555AutoWelcome Error:|r %s", tostring(err))
+            )
+        end
     end
 
-    zo_callLater(function()
-        SendNext(1)
-    end, 200)
+    local waitAttempts = 0
+    local function WaitForMailSceneAndStart()
+        if not self._welcomeDispatchInFlight then return end
+        if SCENE_MANAGER and SCENE_MANAGER:IsShowing("mailSend") then
+            SendNext(1)
+            return
+        end
+        waitAttempts = waitAttempts + 1
+        if waitAttempts >= 15 then
+            CleanupDispatch(
+                "Open Mailbox Required",
+                "|cFFCC00AutoWelcome:|r Open any Mailbox or Mail Assistant first so ESO permits sending letters."
+            )
+            return
+        end
+        zo_callLater(WaitForMailSceneAndStart, 200)
+    end
+
+    zo_callLater(WaitForMailSceneAndStart, 250)
 end
 
 function FR:MarkAllCurrentWelcomed(guildId)
@@ -3231,6 +3384,10 @@ end
 
 function FR:ScanRosterForNewRecruits()
     if not self.savedVars or not self.savedVars.autoWelcome then return {} end
+    if self.IsPlayerRedfurOfficer and not self:IsPlayerRedfurOfficer() then
+        self:UpdateAutoWelcomeButtonBadge()
+        return {}
+    end
     local aw = self.savedVars.autoWelcome
     if not aw.initialized then
         self:CaptureInitialWelcomeRoster()
@@ -3242,25 +3399,28 @@ function FR:ScanRosterForNewRecruits()
     local found = {}
     for i = 1, GetNumGuilds() do
         local guildId = GetGuildId(i)
-        aw.welcomed[guildId] = aw.welcomed[guildId] or {}
-        aw.pending[guildId] = aw.pending[guildId] or {}
-        aw.firstSeen[guildId] = aw.firstSeen[guildId] or {}
-
         local canWelcome = self:CanAutoWelcomeInGuild(guildId)
-        local numM = GetNumGuildMembers(guildId)
-        for m = 1, numM do
-            local displayName = select(1, GetGuildMemberInfo(guildId, m))
-            if displayName then
-                local lower = string.lower(displayName)
-                local rawLower = string.gsub(lower, "^@", "")
-                if not aw.welcomed[guildId][lower] and not aw.pending[guildId][lower] then
-                    aw.firstSeen[guildId][lower] = aw.firstSeen[guildId][lower] or nowTs
-                    aw.firstSeen[guildId][rawLower] = aw.firstSeen[guildId][rawLower] or nowTs
-                    if canWelcome then
-                        aw.pending[guildId][lower] = displayName
-                        table.insert(found, { guildId = guildId, displayName = displayName })
-                    else
-                        aw.welcomed[guildId][lower] = true
+        if canWelcome or (self.IsRedfurGuild and self:IsRedfurGuild(guildId)) then
+            aw.welcomed[guildId] = aw.welcomed[guildId] or {}
+            aw.pending[guildId] = aw.pending[guildId] or {}
+            aw.firstSeen[guildId] = aw.firstSeen[guildId] or {}
+
+            local numM = GetNumGuildMembers(guildId)
+            for m = 1, numM do
+                local displayName = select(1, GetGuildMemberInfo(guildId, m))
+                if displayName then
+                    local lower = string.lower(displayName)
+                    local rawLower = string.gsub(lower, "^@", "")
+                    local alreadyWelcomed = aw.welcomed[guildId][lower] or self:IsOfficialWelcomed(guildId, lower)
+                    if not alreadyWelcomed and not aw.pending[guildId][lower] then
+                        aw.firstSeen[guildId][lower] = aw.firstSeen[guildId][lower] or nowTs
+                        aw.firstSeen[guildId][rawLower] = aw.firstSeen[guildId][rawLower] or nowTs
+                        if canWelcome then
+                            aw.pending[guildId][lower] = displayName
+                            table.insert(found, { guildId = guildId, displayName = displayName })
+                        else
+                            aw.welcomed[guildId][lower] = true
+                        end
                     end
                 end
             end
@@ -3277,15 +3437,22 @@ function FR:CaptureInitialWelcomeRoster()
     aw.welcomed = aw.welcomed or {}
     aw.pending = aw.pending or {}
 
-    for i = 1, GetNumGuilds() do
-        local guildId = GetGuildId(i)
-        aw.welcomed[guildId] = aw.welcomed[guildId] or {}
-        aw.pending[guildId] = aw.pending[guildId] or {}
-        local numM = GetNumGuildMembers(guildId)
-        for m = 1, numM do
-            local displayName = select(1, GetGuildMemberInfo(guildId, m))
-            if displayName then
-                aw.welcomed[guildId][string.lower(displayName)] = true
+    if not self.IsPlayerRedfurOfficer or self:IsPlayerRedfurOfficer() then
+        for i = 1, GetNumGuilds() do
+            local guildId = GetGuildId(i)
+            if self:IsRedfurGuild(guildId) then
+                aw.welcomed[guildId] = aw.welcomed[guildId] or {}
+                aw.pending[guildId] = aw.pending[guildId] or {}
+                local numM = GetNumGuildMembers(guildId)
+                for m = 1, numM do
+                    local displayName = select(1, GetGuildMemberInfo(guildId, m))
+                    if displayName then
+                        local lower = string.lower(displayName)
+                        if not self:IsOfficialWelcomed(guildId, lower) then
+                            aw.welcomed[guildId][lower] = true
+                        end
+                    end
+                end
             end
         end
     end
@@ -3295,6 +3462,9 @@ end
 
 function FR:OnGuildMemberAdded(guildId, displayName)
     if not self.savedVars or not self.savedVars.autoWelcome then return end
+    if not self:CanAutoWelcomeInGuild(guildId) then
+        return
+    end
     local aw = self.savedVars.autoWelcome
     aw.welcomed = aw.welcomed or {}
     aw.pending = aw.pending or {}
@@ -3309,11 +3479,7 @@ function FR:OnGuildMemberAdded(guildId, displayName)
     aw.firstSeen[guildId][lower] = aw.firstSeen[guildId][lower] or nowTs
     aw.firstSeen[guildId][rawLower] = aw.firstSeen[guildId][rawLower] or nowTs
 
-    if not self:CanAutoWelcomeInGuild(guildId) then
-        return
-    end
-
-    if not aw.welcomed[guildId][lower] then
+    if not aw.welcomed[guildId][lower] and not self:IsOfficialWelcomed(guildId, lower) then
         aw.pending[guildId][lower] = displayName
         self.PrintChat(string.format("✉ |c00FFCCAutoWelcome:|r New recruit queued for %s: %s", GetGuildName(guildId) or "Guild", displayName))
         self:UpdateAutoWelcomeButtonBadge()
@@ -3333,10 +3499,13 @@ EVENT_MANAGER:RegisterForEvent("FissalRelay_AutoWelcome_MemberAdded", EVENT_GUIL
 end)
 
 EVENT_MANAGER:RegisterForEvent("FissalRelay_AutoWelcome_PlayerActivated", EVENT_PLAYER_ACTIVATED, function()
-    local recruits = FR:ScanRosterForNewRecruits()
-    if recruits and #recruits > 0 then
-        FR.PrintChat(string.format("✉ |c00FFCCAutoWelcome:|r Detected %d new recruit(s) joined while offline.", #recruits))
-    end
+    EVENT_MANAGER:UnregisterForEvent("FissalRelay_AutoWelcome_PlayerActivated", EVENT_PLAYER_ACTIVATED)
+    zo_callLater(function()
+        local recruits = FR:ScanRosterForNewRecruits()
+        if recruits and #recruits > 0 then
+            FR.PrintChat(string.format("✉ |c00FFCCAutoWelcome:|r Detected %d new recruit(s) joined while offline.", #recruits))
+        end
+    end, 4000)
 end)
 
 if SCENE_MANAGER and SCENE_MANAGER:GetScene("mailSend") then

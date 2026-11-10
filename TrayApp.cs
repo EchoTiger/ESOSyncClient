@@ -136,9 +136,14 @@ namespace RedfurSync
                 }
             }
 
+            bool hasConfiguredIdentity = !string.IsNullOrWhiteSpace(config.DeviceToken) || !string.IsNullOrWhiteSpace(config.ApiKey);
             bool on = StartupHelper.IsStartupEnabled();
-            if (config.RunOnStartup && !on) StartupHelper.SetStartup(true);
-            UpdateStartupText(config.RunOnStartup || on);
+            if (config.RunOnStartup && !on && hasConfiguredIdentity)
+            {
+                StartupHelper.SetStartup(true);
+                on = true;
+            }
+            UpdateStartupText(on);
             UpdateSilentSyncText(config.SilentSync);
             var _ = _watcher.StartAsync();
         }
@@ -558,8 +563,11 @@ namespace RedfurSync
             System.Diagnostics.Process.Start(psi);
         }
 
-        private void ApplyUpdate(UploadJob job)
+        private bool _applyingUpdate;
+        private async void ApplyUpdate(UploadJob job)
         {
+            if (_applyingUpdate) return;
+
             var result = FissalBox.Show(
                 "A new module has been prepared for Fissal.\n\nDo you want to restart the program to apply the upgrade?", 
                 "Update Ready!", 
@@ -578,31 +586,55 @@ namespace RedfurSync
                 return;
             }
 
-            // Backup → replace → launch lives in Core so failure injection is testable on Linux.
-            var installer = new UpdateInstaller(new PhysicalUpdateFileSystem(), path =>
-            {
-                var psi = new ProcessStartInfo
-                {
-                    FileName = path,
-                    Arguments = "--post-update-verify",
-                    UseShellExecute = true
-                };
-                Process.Start(psi);
-            });
-            var outcome = installer.ApplyWithHandshake(
-                exePath,
-                job.FilePath,
-                sequence: AppConfig.Instance.LastVerifiedSequence,
-                fromVersion: RelayVersion.Current,
-                toVersion: job.UpdateVersion,
-                handshakeTimeout: TimeSpan.FromSeconds(30));
-            if (!outcome.Ok)
-            {
-                ShowAlert("Update Failed!", $"Fissal's claws slipped: {outcome.Message}", FissalAlert.AlertLevel.TotalError);
-                return;
-            }
+            _applyingUpdate = true;
+            UpdateStatus("Applying update & verifying health...");
 
-            Application.Exit();
+            try
+            {
+                long seq = AppConfig.Instance.LastVerifiedSequence;
+                string fromVer = RelayVersion.Current;
+                string toVer = job.UpdateVersion;
+                string stagedPath = job.FilePath;
+
+                // Run handshake off the UI thread so the message pump stays responsive during the 30s health check
+                var outcome = await System.Threading.Tasks.Task.Run(() =>
+                {
+                    var installer = new UpdateInstaller(new PhysicalUpdateFileSystem(), path =>
+                    {
+                        var psi = new ProcessStartInfo
+                        {
+                            FileName = path,
+                            Arguments = "--post-update-verify",
+                            UseShellExecute = true,
+                            WorkingDirectory = Path.GetDirectoryName(path)
+                        };
+                        Process.Start(psi);
+                    });
+                    return installer.ApplyWithHandshake(
+                        exePath,
+                        stagedPath,
+                        sequence: seq,
+                        fromVersion: fromVer,
+                        toVersion: toVer,
+                        handshakeTimeout: TimeSpan.FromSeconds(30));
+                });
+
+                if (!outcome.Ok)
+                {
+                    _applyingUpdate = false;
+                    ShowAlert("Update Failed!", $"Fissal's claws slipped: {outcome.Message}", FissalAlert.AlertLevel.TotalError);
+                    return;
+                }
+
+                _trayIcon.Visible = false;
+                Program.SafeReleaseMutex();
+                Application.Exit();
+            }
+            catch (Exception ex)
+            {
+                _applyingUpdate = false;
+                ShowAlert("Update Failed!", $"Fissal's claws slipped: {ex.Message}", FissalAlert.AlertLevel.TotalError);
+            }
         }
 
         private void OpenProgressForm()

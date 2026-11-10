@@ -1,35 +1,47 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Net;
+using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
+using System.Threading.Tasks;
 using NSec.Cryptography;
 using RedfurSync;
 using Xunit;
 
 namespace RedfurSync.Tests;
 
-public sealed class UpdateTrustAndHandshakeTests
+public sealed class UpdateTrustAndHandshakeTests : IDisposable
 {
-    private static readonly byte[] PrimaryPrivateKey = Convert.FromBase64String("wfOnpQt7X74D4ucVuSrBk6RBxzeDBsppnhkD9SfcSH8=");
-    private static readonly byte[] RecoveryPrivateKey = Convert.FromBase64String("OEfjRiW/601338IYND7YdyR3a4EJdGv8uB2yAorYQ78=");
+    private readonly Key _ephemeralPrimary = Key.Create(SignatureAlgorithm.Ed25519);
+    private readonly Key _ephemeralRecovery = Key.Create(SignatureAlgorithm.Ed25519);
+    private readonly byte[] _ephemeralPrimaryPub;
+    private readonly byte[] _ephemeralRecoveryPub;
 
-    private static byte[] SignWithPrimary(byte[] data)
+    public UpdateTrustAndHandshakeTests()
     {
-        var alg = SignatureAlgorithm.Ed25519;
-        using var key = Key.Import(alg, PrimaryPrivateKey, KeyBlobFormat.RawPrivateKey);
-        return alg.Sign(key, data);
+        _ephemeralPrimaryPub = _ephemeralPrimary.PublicKey.Export(KeyBlobFormat.RawPublicKey);
+        _ephemeralRecoveryPub = _ephemeralRecovery.PublicKey.Export(KeyBlobFormat.RawPublicKey);
     }
 
-    private static byte[] SignWithRecovery(byte[] data)
+    public void Dispose()
     {
-        var alg = SignatureAlgorithm.Ed25519;
-        using var key = Key.Import(alg, RecoveryPrivateKey, KeyBlobFormat.RawPrivateKey);
-        return alg.Sign(key, data);
+        _ephemeralPrimary.Dispose();
+        _ephemeralRecovery.Dispose();
     }
 
-    private static string CreateValidManifestJson(long sequence = 48, string version = "1.5.0", DateTimeOffset? expiresAt = null)
+    private byte[] SignWithPrimary(byte[] data) => SignatureAlgorithm.Ed25519.Sign(_ephemeralPrimary, data);
+    private byte[] SignWithRecovery(byte[] data) => SignatureAlgorithm.Ed25519.Sign(_ephemeralRecovery, data);
+    private byte[][] ExtraTrusted => new[] { _ephemeralPrimaryPub, _ephemeralRecoveryPub };
+
+    private static string CreateValidManifestJson(
+        long sequence = 48,
+        string version = "1.9.6",
+        DateTimeOffset? expiresAt = null,
+        string minUpdaterVersion = "1.4.0",
+        KeyRotationPayload? keyRotation = null)
     {
         var manifest = new UpdateManifest
         {
@@ -40,7 +52,8 @@ public sealed class UpdateTrustAndHandshakeTests
             Version = version,
             IssuedAt = DateTimeOffset.UtcNow,
             ExpiresAt = expiresAt ?? DateTimeOffset.UtcNow.AddDays(30),
-            MinUpdaterVersion = "1.4.0",
+            MinUpdaterVersion = minUpdaterVersion,
+            KeyRotation = keyRotation,
             Files = new List<UpdateFileArtifact>
             {
                 new()
@@ -48,7 +61,7 @@ public sealed class UpdateTrustAndHandshakeTests
                     Path = "RedfurSync.exe",
                     Sha256 = new string('a', 64),
                     Size = 1048576,
-                    Url = "https://redfur.ech-o.net/download/v1.5.0/RedfurSync.exe"
+                    Url = "https://redfur.ech-o.net/api/relay/v1/update-download"
                 }
             }
         };
@@ -60,37 +73,39 @@ public sealed class UpdateTrustAndHandshakeTests
     {
         string priId = UpdateTrustVerifier.ComputeKeyId(UpdateTrustVerifier.PrimaryPublicKey);
         string recId = UpdateTrustVerifier.ComputeKeyId(UpdateTrustVerifier.RecoveryPublicKey);
+        string nextId = UpdateTrustVerifier.ComputeKeyId(UpdateTrustVerifier.NextPublicKey);
 
         Assert.Equal("3313dc36e41f5ba5", priId);
         Assert.Equal("a2ce372539a50cfd", recId);
+        Assert.Equal("4e5c55198209bd16", nextId);
     }
 
     [Fact]
-    public void PrimaryKeySignedManifest_Succeeds()
+    public void TrustedKeySignedManifest_Succeeds()
     {
         var json = CreateValidManifestJson(sequence: 50);
         var bytes = Encoding.UTF8.GetBytes(json);
         var sig = SignWithPrimary(bytes);
 
         var (ok, manifest, error) = UpdateTrustVerifier.VerifyAndParse(
-            bytes, sig, lastVerifiedSequence: 40);
+            bytes, sig, extraTrustedKeys: ExtraTrusted, lastVerifiedSequence: 40);
 
         Assert.True(ok, error);
         Assert.NotNull(manifest);
         Assert.Equal(50, manifest.Sequence);
-        Assert.Equal("1.5.0", manifest.Version);
+        Assert.Equal("1.9.6", manifest.Version);
         Assert.Single(manifest.Files);
     }
 
     [Fact]
-    public void RecoveryKeySignedManifest_Succeeds()
+    public void SecondaryTrustedKeySignedManifest_Succeeds()
     {
         var json = CreateValidManifestJson(sequence: 51);
         var bytes = Encoding.UTF8.GetBytes(json);
         var sig = SignWithRecovery(bytes);
 
         var (ok, manifest, error) = UpdateTrustVerifier.VerifyAndParse(
-            bytes, sig, lastVerifiedSequence: 40);
+            bytes, sig, extraTrustedKeys: ExtraTrusted, lastVerifiedSequence: 40);
 
         Assert.True(ok, error);
         Assert.NotNull(manifest);
@@ -106,7 +121,7 @@ public sealed class UpdateTrustAndHandshakeTests
         sig[0] ^= 0xFF; // Corrupt signature byte
 
         var (ok, manifest, error) = UpdateTrustVerifier.VerifyAndParse(
-            bytes, sig, lastVerifiedSequence: 40);
+            bytes, sig, extraTrustedKeys: ExtraTrusted, lastVerifiedSequence: 40);
 
         Assert.False(ok);
         Assert.Null(manifest);
@@ -124,7 +139,7 @@ public sealed class UpdateTrustAndHandshakeTests
         bytes = Encoding.UTF8.GetBytes(json.Replace("53", "99"));
 
         var (ok, manifest, error) = UpdateTrustVerifier.VerifyAndParse(
-            bytes, sig, lastVerifiedSequence: 40);
+            bytes, sig, extraTrustedKeys: ExtraTrusted, lastVerifiedSequence: 40);
 
         Assert.False(ok);
         Assert.Null(manifest);
@@ -139,7 +154,7 @@ public sealed class UpdateTrustAndHandshakeTests
         var sig = SignWithPrimary(bytes);
 
         var (ok, manifest, error) = UpdateTrustVerifier.VerifyAndParse(
-            bytes, sig, lastVerifiedSequence: 40);
+            bytes, sig, extraTrustedKeys: ExtraTrusted, lastVerifiedSequence: 40);
 
         Assert.False(ok);
         Assert.Null(manifest);
@@ -154,7 +169,7 @@ public sealed class UpdateTrustAndHandshakeTests
         var sig = SignWithPrimary(bytes);
 
         var (ok, manifest, error) = UpdateTrustVerifier.VerifyAndParse(
-            bytes, sig, lastVerifiedSequence: 40);
+            bytes, sig, extraTrustedKeys: ExtraTrusted, lastVerifiedSequence: 40);
 
         Assert.True(ok);
         Assert.NotNull(manifest);
@@ -170,7 +185,7 @@ public sealed class UpdateTrustAndHandshakeTests
         var sig = SignWithPrimary(bytes);
 
         var (ok, manifest, error) = UpdateTrustVerifier.VerifyAndParse(
-            bytes, sig, lastVerifiedSequence: 40);
+            bytes, sig, extraTrustedKeys: ExtraTrusted, lastVerifiedSequence: 40);
 
         Assert.False(ok);
         Assert.Null(manifest);
@@ -184,14 +199,101 @@ public sealed class UpdateTrustAndHandshakeTests
         var bytes = Encoding.UTF8.GetBytes(json);
         var sig = SignWithPrimary(bytes);
 
-        string priId = UpdateTrustVerifier.ComputeKeyId(UpdateTrustVerifier.PrimaryPublicKey);
+        string priId = UpdateTrustVerifier.ComputeKeyId(_ephemeralPrimaryPub);
 
         var (ok, manifest, error) = UpdateTrustVerifier.VerifyAndParse(
-            bytes, sig, revokedKeyIds: new[] { priId }, lastVerifiedSequence: 40);
+            bytes, sig, extraTrustedKeys: new[] { _ephemeralPrimaryPub }, revokedKeyIds: new[] { priId }, lastVerifiedSequence: 40);
 
         Assert.False(ok);
         Assert.Null(manifest);
         Assert.Contains("signature verification failed", error, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CheckForUpdateAsync_RejectsUnsignedLegacyManifestWithoutSig()
+    {
+        var legacyJson = JsonSerializer.Serialize(new
+        {
+            version = "9.9.9",
+            downloadUrl = "https://redfur.ech-o.net/api/relay/v1/update-download",
+            changelog = "unsigned",
+            sizeBytes = 1048576,
+            sha256 = new string('a', 64)
+        });
+
+        var handler = new FakeHttpMessageHandler((req, _) =>
+        {
+            if (req.RequestUri?.AbsolutePath.EndsWith(".sig", StringComparison.Ordinal) == true)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound));
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(legacyJson, Encoding.UTF8, "application/json")
+            });
+        });
+
+        var config = new AppConfig
+        {
+            UpdateUrl = "https://redfur.ech-o.net/api/relay/v1/update-manifest"
+        };
+        using var uploader = new UploadService(config, FakeHttpMessageHandler.Returning(HttpStatusCode.OK), handler);
+
+        var payload = await uploader.CheckForUpdateAsync("1.9.5");
+
+        Assert.Null(payload);
+        Assert.Contains(".sig", uploader.LastError ?? string.Empty, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task CheckForUpdateAsync_EnforcesMinUpdaterVersionAndPersistsKeyRotation()
+    {
+        using var rotatedKey = Key.Create(SignatureAlgorithm.Ed25519);
+        string rotatedPubB64 = Convert.ToBase64String(rotatedKey.PublicKey.Export(KeyBlobFormat.RawPublicKey));
+
+        var json = CreateValidManifestJson(
+            sequence: 80,
+            version: "2.5.0",
+            minUpdaterVersion: "2.0.0",
+            keyRotation: new KeyRotationPayload
+            {
+                Add = new List<string> { rotatedPubB64 },
+                Revoke = new List<string> { "deadbeef00000000" }
+            });
+        var manifestBytes = Encoding.UTF8.GetBytes(json);
+        var sigBytes = SignWithPrimary(manifestBytes);
+
+        var handler = new FakeHttpMessageHandler((req, _) =>
+        {
+            if (req.RequestUri?.AbsolutePath.EndsWith(".sig", StringComparison.Ordinal) == true)
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new ByteArrayContent(sigBytes)
+                });
+            }
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new ByteArrayContent(manifestBytes)
+            });
+        });
+
+        var config = new AppConfig
+        {
+            UpdateUrl = "https://redfur.ech-o.net/api/relay/v1/update-manifest",
+            ExtraTrustedKeysB64 = new List<string> { Convert.ToBase64String(_ephemeralPrimaryPub) }
+        };
+        using var uploader = new UploadService(config, FakeHttpMessageHandler.Returning(HttpStatusCode.OK), handler);
+
+        var blocked = await uploader.CheckForUpdateAsync("1.9.6");
+        Assert.Null(blocked);
+        Assert.Contains("Manual update required", uploader.LastError ?? string.Empty, StringComparison.Ordinal);
+        Assert.Equal(80, config.LastVerifiedSequence);
+        Assert.Contains(rotatedPubB64, config.ExtraTrustedKeysB64);
+        Assert.Contains("deadbeef00000000", config.RevokedKeyIds);
+
+        var allowed = await uploader.CheckForUpdateAsync("2.0.0");
+        Assert.NotNull(allowed);
+        Assert.Equal("2.5.0", allowed!.Version);
     }
 
     [Fact]

@@ -1153,7 +1153,7 @@ function FR:SelectConsoleGuild(guildIndex)
         if btn then
             if i <= rawGuilds and i <= 5 then
                 local gId = GetGuildId(i)
-                local name = GetGuildName(gId)
+                local name = GetGuildName(gId) or ""
                 btn:ClearAnchors()
                 btn:SetAnchor(TOPLEFT, self.consoleWindow, TOPLEFT, 12 + allBtnWidth + guildGap + (i - 1) * tabSlot, 48)
                 btn:SetDimensions(tabSlot - guildGap, 24)

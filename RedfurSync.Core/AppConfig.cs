@@ -122,6 +122,9 @@ namespace RedfurSync
         [JsonPropertyName("RevokedKeyIds")]
         public List<string> RevokedKeyIds { get; set; } = new();
 
+        [JsonPropertyName("ExtraTrustedKeysB64")]
+        public List<string> ExtraTrustedKeysB64 { get; set; } = new();
+
         [JsonPropertyName("QuarantinedSequences")]
         public List<long> QuarantinedSequences { get; set; } = new();
 

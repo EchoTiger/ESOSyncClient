@@ -446,7 +446,7 @@ function FR:CreateHUD()
         local ownedLines = {}
         for i = 1, numGuilds do
             local gId = GetGuildId(i)
-            local gName = GetGuildName(gId)
+            local gName = GetGuildName(gId) or ("Guild " .. tostring(i))
             local hired = GetGuildOwnedKioskInfo and GetGuildOwnedKioskInfo(gId)
             if hired and hired ~= "" then
                 local res = FR.ResolveCanonicalKiosk and FR:ResolveCanonicalKiosk(hired)
@@ -511,6 +511,12 @@ function FR:CreateHUD()
     -- 12. Scene Fragment Setup (Fades during menus / loading screens)
     self.hud = hud
     self.hudFragment = ZO_HUDFadeSceneFragment:New(hud)
+
+    -- Default HUD visibility: auto-show for Redfur officers, stay hidden for regular members unless manually toggled
+    if not self.savedVars.settings.showHudConfigured then
+        local isStaff = (self.IsPlayerRedfurOfficer and self:IsPlayerRedfurOfficer()) or false
+        self.savedVars.settings.showHud = isStaff
+    end
 
     if self.savedVars.settings.showHud then
         SafeAddFragment(HUD_SCENE, self.hudFragment)
@@ -679,6 +685,7 @@ function FR:ToggleHUD(show)
         show = not self.savedVars.settings.showHud
     end
     self.savedVars.settings.showHud = show
+    self.savedVars.settings.showHudConfigured = true
 
     if not self.hud then
         self:CreateHUD()
@@ -1060,7 +1067,7 @@ function FR:CreateBumperUI()
     if TRADING_HOUSE_SCENE then
         TRADING_HOUSE_SCENE:RegisterCallback("StateChange", function(oldState, newState)
             if newState == SCENE_SHOWING then
-                if self.savedVars.settings.showBumper then
+                if self.savedVars.settings.showBumper and TamrielTradeCentre ~= nil then
                     local curPos = self.savedVars.settings.bumperPos
                     if not (curPos and (curPos.x ~= 0 or curPos.y ~= 0)) and ZO_TradingHouse then
                         self.bumperWindow:ClearAnchors()
@@ -1535,7 +1542,8 @@ function FR:CreateSettingsMenu()
             name = "Audit Inactives (Selected Guild, 14d)",
             tooltip = "Scan members inactive > 14 days in the currently selected guild (defaults to Guild 1) and print summary for Discord purge.",
             func = function()
-                FR:AuditInactives(FR.selectedGuildIndex or 1, 14)
+                local idx = (FR.selectedGuildIndex and FR.selectedGuildIndex >= 1) and FR.selectedGuildIndex or (FR.lastSingleGuildIndex or 1)
+                FR:AuditInactives(idx, 14)
             end,
             width = "half",
         })
@@ -1544,7 +1552,8 @@ function FR:CreateSettingsMenu()
             name = "Audit Bank Dues (Selected Guild, 7d)",
             tooltip = "Aggregate weekly gold deposits for raffle tickets and dues in the currently selected guild (defaults to Guild 1).",
             func = function()
-                FR:AuditBankDues(FR.selectedGuildIndex or 1, 7)
+                local idx = (FR.selectedGuildIndex and FR.selectedGuildIndex >= 1) and FR.selectedGuildIndex or (FR.lastSingleGuildIndex or 1)
+                FR:AuditBankDues(idx, 7)
             end,
             width = "half",
         })
@@ -1575,7 +1584,8 @@ function FR:CreateSettingsMenu()
             tooltip = "Preview updated raffle pot, tickets, entrants, and entries in chat without saving for the currently selected guild.",
             func = function()
                 if FR.UpdateGuildMotDRaffle then
-                    FR:UpdateGuildMotDRaffle(FR.selectedGuildIndex or 1, true, 7)
+                    local idx = (FR.selectedGuildIndex and FR.selectedGuildIndex >= 1) and FR.selectedGuildIndex or (FR.lastSingleGuildIndex or 1)
+                    FR:UpdateGuildMotDRaffle(idx, true, 7)
                 end
             end,
             width = "half",
@@ -1586,7 +1596,8 @@ function FR:CreateSettingsMenu()
             tooltip = "Surgically update the in-game Message of the Day with fresh raffle data from bank deposits for the currently selected guild.",
             func = function()
                 if FR.UpdateGuildMotDRaffle then
-                    FR:UpdateGuildMotDRaffle(FR.selectedGuildIndex or 1, false, 7)
+                    local idx = (FR.selectedGuildIndex and FR.selectedGuildIndex >= 1) and FR.selectedGuildIndex or (FR.lastSingleGuildIndex or 1)
+                    FR:UpdateGuildMotDRaffle(idx, false, 7)
                 end
             end,
             width = "half",
@@ -1700,7 +1711,7 @@ function FR:CreateSettingsMenu()
     numGuilds = GetNumGuilds()
     for i = 1, numGuilds do
         local guildId = GetGuildId(i)
-        local guildName = GetGuildName(guildId)
+        local guildName = GetGuildName(guildId) or ("Guild " .. tostring(i))
         local hasPrivilege = DoesGuildHavePrivilege and DoesGuildHavePrivilege(guildId, GUILD_PRIVILEGE_BANK_DEPOSIT)
         local hasPermission = DoesPlayerHaveGuildPermission and GUILD_PERMISSION_BANK_VIEW_GOLD and DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_BANK_VIEW_GOLD)
         local isGM = IsPlayerGuildMaster and IsPlayerGuildMaster(guildId)

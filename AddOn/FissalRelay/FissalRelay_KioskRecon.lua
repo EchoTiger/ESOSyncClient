@@ -1050,7 +1050,7 @@ function FR:ResolveCanonicalKiosk(rawTrader, rawCity, rawZone)
     if #lowerTrader >= 4 and self.KIOSK_DIRECTORY then
         local prefixHit = nil
         local prefixCount = 0
-        for _, entry in ipairs(self.KIOSK_DIRECTORY) do
+        for _, entry in pairs(self.KIOSK_DIRECTORY) do
             local tLower = string.lower(entry.trader)
             if tLower:sub(1, #lowerTrader + 1) == (lowerTrader .. " ")
                 or tLower:sub(1, #lowerTrader + 1) == (lowerTrader .. "-")
@@ -1557,11 +1557,18 @@ function FR:HarvestGuildAttributeKiosk(guildId, sourceTag)
     if (not guildName or guildName == "") and self.savedVars and self.savedVars.knownTradingGuilds then
         guildName = self.savedVars.knownTradingGuilds[guildId]
     end
+    if (not guildName or guildName == "") and type(self.ServerKnownGuilds) == "table" and self.ServerKnownGuilds[guildId] then
+        guildName = self.ServerKnownGuilds[guildId].name
+    end
     if not guildName or guildName == "" then return false end
 
-    -- Always record the guild name in knownTradingGuilds if valid
+    -- Record newly discovered guild names in knownTradingGuilds (skip duplicating static ServerKnownGuilds)
     if self.savedVars and self.savedVars.knownTradingGuilds then
-        self.savedVars.knownTradingGuilds[guildId] = CleanEsoString(guildName)
+        local cleanGName = CleanEsoString(guildName)
+        local srvEntry = type(self.ServerKnownGuilds) == "table" and self.ServerKnownGuilds[guildId]
+        if not (type(srvEntry) == "table" and CleanEsoString(srvEntry.name or "") == cleanGName) then
+            self.savedVars.knownTradingGuilds[guildId] = cleanGName
+        end
     end
 
     local kioskInfo = GetGuildKioskAttribute and GetGuildKioskAttribute(guildId) or nil
@@ -1613,7 +1620,7 @@ function FR:StopKioskSweep(reason)
     end
 
     local totalWeekKiosks = self:GetCurrentWeekKioskCount()
-    if not wasSilent or (st.newOrUpdated or 0) > 0 then
+    if not wasSilent then
         self.PrintChat(string.format("Tamriel Kiosk Sweep %s: %s kiosks harvested (%s new/updated). Current week coverage: %s/291 Tamriel traders.",
             reason or "complete",
             self.ColorText(tostring(st.kiosksHarvested or 0), "00FFCC"),
@@ -1725,7 +1732,27 @@ function FR:GetKioskReconTelemetry()
         end
     end
 
-    local totalKnownGuilds = NonContiguousCount((self.savedVars and self.savedVars.knownTradingGuilds) or {})
+    local mergedKnownCount = 0
+    local seenKnownIds = {}
+    if type(self.ServerKnownGuilds) == "table" then
+        for gId in pairs(self.ServerKnownGuilds) do
+            local nId = tonumber(gId)
+            if nId and nId > 0 then
+                seenKnownIds[nId] = true
+                mergedKnownCount = mergedKnownCount + 1
+            end
+        end
+    end
+    if self.savedVars and self.savedVars.knownTradingGuilds then
+        for gId in pairs(self.savedVars.knownTradingGuilds) do
+            local nId = tonumber(gId)
+            if nId and nId > 0 and not seenKnownIds[nId] then
+                seenKnownIds[nId] = true
+                mergedKnownCount = mergedKnownCount + 1
+            end
+        end
+    end
+    local totalKnownGuilds = mergedKnownCount
     local probedThisWeek = 0
     if self.savedVars and self.savedVars.probedGuildsWeek and self.savedVars.probedGuildsWeek.weekStart == curWeekStart and self.savedVars.probedGuildsWeek.probed then
         probedThisWeek = NonContiguousCount(self.savedVars.probedGuildsWeek.probed)
@@ -1931,16 +1958,48 @@ function FR:StartKnownGuildProbe()
         end
     end
 
-    -- Also elevate guilds known to hold kiosks on the Redfur fleet server (`guildKioskPriority`)
-    local serverPriority = (self.savedVars and self.savedVars.guildKioskPriority) or {}
-    for gId, meta in pairs(serverPriority) do
-        local numId = tonumber(gId)
-        if numId and numId > 0 and type(meta) == "table" and meta.hasTrader then
-            priorKioskHolders[numId] = math.max(priorKioskHolders[numId] or 0, tonumber(meta.lastSeen) or 1)
+    -- Also elevate guilds known to hold kiosks on the Redfur fleet server (`ServerKnownGuilds` / `guildKioskPriority`)
+    local serverPriority = {}
+    if type(self.ServerKnownGuilds) == "table" then
+        for gId, meta in pairs(self.ServerKnownGuilds) do
+            local numId = tonumber(gId)
+            if numId and numId > 0 and type(meta) == "table" then
+                serverPriority[numId] = meta
+                if meta.hasTrader then
+                    priorKioskHolders[numId] = math.max(priorKioskHolders[numId] or 0, tonumber(meta.lastSeen) or 1)
+                end
+            end
+        end
+    end
+    if self.savedVars and self.savedVars.guildKioskPriority then
+        for gId, meta in pairs(self.savedVars.guildKioskPriority) do
+            local numId = tonumber(gId)
+            if numId and numId > 0 and type(meta) == "table" then
+                serverPriority[numId] = serverPriority[numId] or meta
+                if meta.hasTrader then
+                    priorKioskHolders[numId] = math.max(priorKioskHolders[numId] or 0, tonumber(meta.lastSeen) or 1)
+                end
+            end
         end
     end
 
-    local knownMap = (self.savedVars and self.savedVars.knownTradingGuilds) or {}
+    local knownMap = {}
+    if type(self.ServerKnownGuilds) == "table" then
+        for gId, meta in pairs(self.ServerKnownGuilds) do
+            local numId = tonumber(gId)
+            if numId and numId > 0 and type(meta) == "table" and type(meta.name) == "string" and meta.name ~= "" then
+                knownMap[numId] = meta.name
+            end
+        end
+    end
+    if self.savedVars and self.savedVars.knownTradingGuilds then
+        for gId, gName in pairs(self.savedVars.knownTradingGuilds) do
+            local numId = tonumber(gId)
+            if numId and numId > 0 then
+                knownMap[numId] = gName
+            end
+        end
+    end
     local cachedInMemoryList = {}
     local priorityUnprobedList = {}
     local standardUnprobedList = {}
@@ -2253,28 +2312,22 @@ function FR:SyncFromAwesomeGuildStore()
         end
     end
 
-    -- 2. Ingest Server-Indexed Known Trading Guilds (`FR.ServerKnownGuilds` exported in FissalRelay_RaffleData.lua)
-    if type(self.ServerKnownGuilds) == "table" then
-        for gId, meta in pairs(self.ServerKnownGuilds) do
-            local numId = tonumber(gId)
-            if numId and numId > 0 and type(meta) == "table" and type(meta.name) == "string" and meta.name ~= "" then
-                if not self.savedVars.knownTradingGuilds[numId] then
-                    added = added + 1
+    -- 2. Reference Server-Indexed Known Trading Guilds (`FR.ServerKnownGuilds`) in-memory without cloning 700+ entries into SavedVariables
+    if self.savedVars then
+        self.savedVars.guildKioskPriority = nil
+        self.savedVars.spreadsheetKiosks = nil
+        if type(self.ServerKnownGuilds) == "table" and self.savedVars.knownTradingGuilds then
+            for gId, meta in pairs(self.ServerKnownGuilds) do
+                local numId = tonumber(gId)
+                if numId and numId > 0 and type(meta) == "table" and self.savedVars.knownTradingGuilds[numId] == CleanEsoString(meta.name or "") then
+                    self.savedVars.knownTradingGuilds[numId] = nil
                 end
-                self.savedVars.knownTradingGuilds[numId] = CleanEsoString(meta.name)
-                self.savedVars.guildKioskPriority[numId] = {
-                    lastSeen = tonumber(meta.lastSeen) or 0,
-                    hasTrader = meta.hasTrader == true,
-                }
             end
         end
     end
 
-    -- 3. Ingest Fleet-Verified Kiosks (`FR.SpreadsheetKiosks` exported in FissalRelay_RaffleData.lua)
+    -- 3. Hydrate current-week Fleet-Verified Kiosks (`FR.SpreadsheetKiosks`) without duplicating static archive tables
     if type(self.SpreadsheetKiosks) == "table" then
-        if not self.savedVars.spreadsheetKiosks then
-            self.savedVars.spreadsheetKiosks = {}
-        end
         if not self.savedVars.kiosks then
             self.savedVars.kiosks = {}
         end
@@ -2284,16 +2337,7 @@ function FR:SyncFromAwesomeGuildStore()
                 local resolved = self:ResolveCanonicalKiosk(fleetObs.trader or traderKey, fleetObs.city, fleetObs.zone)
                 if resolved and resolved.matchedDirectory and not self:IsBlacklistedTrader(resolved.trader) then
                     local fTs = tonumber(fleetObs.timestamp) or 0
-                    self.savedVars.spreadsheetKiosks[resolved.trader] = {
-                        trader = resolved.trader,
-                        guildId = tonumber(fleetObs.guildId) or 0,
-                        guildName = fleetObs.guildName or "Vacant",
-                        zone = resolved.zone,
-                        city = resolved.city,
-                        timestamp = fTs,
-                        source = fleetObs.source or "Fleet Sync",
-                    }
-                    -- Also hydrate savedVars.kiosks if the fleet observation is from the current trade week
+                    -- Hydrate savedVars.kiosks if the fleet observation is from the current trade week
                     -- and newer than (or missing from) the player's local savedVars.kiosks!
                     if fTs >= curWeekStart then
                         local localObs = self.savedVars.kiosks[resolved.trader]

@@ -27,7 +27,33 @@ namespace RedfurSync
     {
         public bool FileExists(string path) => System.IO.File.Exists(path);
         public void DeleteFile(string path) => System.IO.File.Delete(path);
-        public void MoveFile(string sourcePath, string destinationPath) => System.IO.File.Move(sourcePath, destinationPath, true);
+        public void MoveFile(string sourcePath, string destinationPath)
+        {
+            string fullSrc = Path.GetFullPath(sourcePath);
+            string fullDst = Path.GetFullPath(destinationPath);
+            string? srcRoot = Path.GetPathRoot(fullSrc);
+            string? dstRoot = Path.GetPathRoot(fullDst);
+
+            if (!string.IsNullOrEmpty(srcRoot) && !string.IsNullOrEmpty(dstRoot) &&
+                !string.Equals(srcRoot, dstRoot, StringComparison.OrdinalIgnoreCase))
+            {
+                string sameVolTmp = fullDst + ".xvol.tmp";
+                try
+                {
+                    System.IO.File.Copy(fullSrc, sameVolTmp, overwrite: true);
+                    System.IO.File.Move(sameVolTmp, fullDst, overwrite: true);
+                    try { System.IO.File.Delete(fullSrc); } catch { }
+                    return;
+                }
+                catch
+                {
+                    try { if (System.IO.File.Exists(sameVolTmp)) System.IO.File.Delete(sameVolTmp); } catch { }
+                    throw;
+                }
+            }
+
+            System.IO.File.Move(fullSrc, fullDst, overwrite: true);
+        }
         public string ReadAllText(string path) => System.IO.File.ReadAllText(path);
         public void WriteAllText(string path, string content) => System.IO.File.WriteAllText(path, content);
         public IEnumerable<string> EnumerateFiles(string path, string searchPattern) => System.IO.Directory.EnumerateFiles(path, searchPattern);

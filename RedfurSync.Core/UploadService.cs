@@ -42,7 +42,7 @@ namespace RedfurSync
 
                 var manifestBytes = await response.Content.ReadAsByteArrayAsync();
 
-                // Attempt fetching detached Ed25519 signature (.sig)
+                // Require detached Ed25519 signature (.sig) — unsigned manifests are never trusted
                 byte[]? sigBytes = null;
                 try
                 {
@@ -55,58 +55,135 @@ namespace RedfurSync
                 }
                 catch { }
 
-                if (sigBytes != null && sigBytes.Length == 64)
+                if (sigBytes == null || sigBytes.Length != 64)
                 {
-                    var (ok, manifest, err) = UpdateTrustVerifier.VerifyAndParse(
-                        manifestBytes,
-                        sigBytes,
-                        revokedKeyIds: _config.RevokedKeyIds,
-                        lastVerifiedSequence: _config.LastVerifiedSequence);
-
-                    if (!ok || manifest == null)
-                    {
-                        LastError = $"Manifest verification failed: {err}";
-                        Console.WriteLine($"[Update Error] ✖ {LastError}");
-                        return null;
-                    }
-
-                    _config.LastVerifiedSequence = Math.Max(_config.LastVerifiedSequence, manifest.Sequence);
-
-                    if (RelayVersion.IsServerNewer(manifest.Version, currentVersion))
-                    {
-                        var primaryArtifact = manifest.Files.FirstOrDefault(f => f.Path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-                                           ?? manifest.Files.FirstOrDefault();
-                        if (primaryArtifact != null)
-                        {
-                            var payload = new UpdatePayload
-                            {
-                                Version = manifest.Version,
-                                DownloadUrl = primaryArtifact.Url,
-                                SizeBytes = primaryArtifact.Size,
-                                Sha256 = primaryArtifact.Sha256,
-                                Changelog = !string.IsNullOrWhiteSpace(manifest.Changelog) ? manifest.Changelog : $"Fissal Relay v{manifest.Version} (Sequence {manifest.Sequence})"
-                            };
-                            if (IsValidUpdatePayload(payload))
-                                return payload;
-                        }
-                    }
+                    LastError = "Update manifest signature (.sig) is missing or invalid.";
+                    Console.WriteLine($"[Update Error] ✖ {LastError}");
                     return null;
                 }
 
-                // Fallback for transition/legacy servers lacking detached .sig
-                var json = System.Text.Encoding.UTF8.GetString(manifestBytes);
-                var legacyPayload = JsonSerializer.Deserialize<UpdatePayload>(json, new JsonSerializerOptions 
-                { 
-                    PropertyNameCaseInsensitive = true 
-                });
-                
-                if (legacyPayload != null && !string.IsNullOrWhiteSpace(legacyPayload.Version))
+                var extraTrusted = new System.Collections.Generic.List<byte[]>();
+                if (_config.ExtraTrustedKeysB64 != null)
                 {
-                    if (RelayVersion.IsServerNewer(legacyPayload.Version, currentVersion) && IsValidUpdatePayload(legacyPayload))
+                    foreach (var keyB64 in _config.ExtraTrustedKeysB64)
                     {
-                        return legacyPayload;
+                        if (string.IsNullOrWhiteSpace(keyB64)) continue;
+                        try
+                        {
+                            var decoded = Convert.FromBase64String(keyB64.Trim());
+                            if (decoded.Length == 32) extraTrusted.Add(decoded);
+                        }
+                        catch { }
                     }
                 }
+
+                var (ok, manifest, err) = UpdateTrustVerifier.VerifyAndParse(
+                    manifestBytes,
+                    sigBytes,
+                    extraTrustedKeys: extraTrusted,
+                    revokedKeyIds: _config.RevokedKeyIds,
+                    lastVerifiedSequence: _config.LastVerifiedSequence);
+
+                if (!ok || manifest == null)
+                {
+                    LastError = $"Manifest verification failed: {err}";
+                    Console.WriteLine($"[Update Error] ✖ {LastError}");
+                    return null;
+                }
+
+                bool configDirty = false;
+                if (manifest.Sequence > _config.LastVerifiedSequence)
+                {
+                    _config.LastVerifiedSequence = manifest.Sequence;
+                    configDirty = true;
+                }
+
+                if (manifest.RevokedKeys != null)
+                {
+                    foreach (var revId in manifest.RevokedKeys)
+                    {
+                        if (!string.IsNullOrWhiteSpace(revId) &&
+                            !_config.RevokedKeyIds.Contains(revId.Trim(), StringComparer.OrdinalIgnoreCase))
+                        {
+                            _config.RevokedKeyIds.Add(revId.Trim().ToLowerInvariant());
+                            configDirty = true;
+                        }
+                    }
+                }
+
+                if (manifest.KeyRotation != null)
+                {
+                    _config.ExtraTrustedKeysB64 ??= new();
+                    if (manifest.KeyRotation.Add != null)
+                    {
+                        foreach (var addB64 in manifest.KeyRotation.Add)
+                        {
+                            if (string.IsNullOrWhiteSpace(addB64)) continue;
+                            try
+                            {
+                                var raw = Convert.FromBase64String(addB64.Trim());
+                                string normB64 = Convert.ToBase64String(raw);
+                                if (raw.Length == 32 && !_config.ExtraTrustedKeysB64.Contains(normB64, StringComparer.Ordinal))
+                                {
+                                    _config.ExtraTrustedKeysB64.Add(normB64);
+                                    configDirty = true;
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+                    if (manifest.KeyRotation.Revoke != null)
+                    {
+                        foreach (var revId in manifest.KeyRotation.Revoke)
+                        {
+                            if (!string.IsNullOrWhiteSpace(revId) &&
+                                !_config.RevokedKeyIds.Contains(revId.Trim(), StringComparer.OrdinalIgnoreCase))
+                            {
+                                _config.RevokedKeyIds.Add(revId.Trim().ToLowerInvariant());
+                                configDirty = true;
+                            }
+                        }
+                    }
+                }
+
+                if (configDirty)
+                {
+                    _config.Save();
+                }
+
+                if (_config.QuarantinedSequences != null && _config.QuarantinedSequences.Contains(manifest.Sequence))
+                {
+                    LastError = $"Update sequence {manifest.Sequence} is quarantined on this device.";
+                    return null;
+                }
+
+                if (!string.IsNullOrWhiteSpace(manifest.MinUpdaterVersion) &&
+                    RelayVersion.IsServerNewer(manifest.MinUpdaterVersion, currentVersion))
+                {
+                    LastError = $"Manual update required: release v{manifest.Version} requires updater v{manifest.MinUpdaterVersion} or newer (running v{currentVersion}).";
+                    Console.WriteLine($"[Update Error] ✖ {LastError}");
+                    return null;
+                }
+
+                if (RelayVersion.IsServerNewer(manifest.Version, currentVersion))
+                {
+                    var primaryArtifact = manifest.Files.FirstOrDefault(f => f.Path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                                       ?? manifest.Files.FirstOrDefault();
+                    if (primaryArtifact != null)
+                    {
+                        var payload = new UpdatePayload
+                        {
+                            Version = manifest.Version,
+                            DownloadUrl = primaryArtifact.Url,
+                            SizeBytes = primaryArtifact.Size,
+                            Sha256 = primaryArtifact.Sha256,
+                            Changelog = !string.IsNullOrWhiteSpace(manifest.Changelog) ? manifest.Changelog : $"Fissal Relay v{manifest.Version} (Sequence {manifest.Sequence})"
+                        };
+                        if (IsValidUpdatePayload(payload))
+                            return payload;
+                    }
+                }
+                return null;
             }
             catch (Exception ex) 
             { 
@@ -484,7 +561,25 @@ namespace RedfurSync
             }
         }
 
-        public static string? NormalizeLabel(string raw)
+        private static readonly HashSet<string> ReservedDeviceLabels = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "echo",
+            "echotiger",
+            "echotiger1",
+            "admin",
+            "fissal",
+            "system",
+            "echo workstation"
+        };
+
+        public static bool IsReservedLabel(string? raw)
+        {
+            var v = (raw ?? "").Trim();
+            if (v.StartsWith("@")) v = v.Substring(1).Trim();
+            return !string.IsNullOrEmpty(v) && ReservedDeviceLabels.Contains(v);
+        }
+
+        public static string? NormalizeLabel(string raw, bool allowReserved = true)
         {
             var v = (raw ?? "").Trim();
             if (v.StartsWith("@")) v = v.Substring(1);
@@ -493,6 +588,8 @@ namespace RedfurSync
             foreach (var ch in v)
                 if (!(char.IsLetterOrDigit(ch) || ch == '.' || ch == '-' || ch == '_' || ch == '@' || ch == ' '))
                     return null;
+            if (!allowReserved && ReservedDeviceLabels.Contains(v.Trim()))
+                return null;
             return v;
         }
 

@@ -10,7 +10,7 @@ FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
 FR.name = "FissalRelay"
-FR.version = "1.9.5"
+FR.version = "1.9.6"
 FR.author = "Echo & Fissal"
 
 -- Defaults for SavedVariables
@@ -59,7 +59,8 @@ local DEFAULT_SAVED_VARS = {
         autoRosterSnapshotOnLogin = true,
         autoSweepKiosksOnReset = true,
         announceKioskRecon = true,
-        showHud = true,
+        showHud = false,
+        showHudConfigured = false,
         hudPos = { x = 0, y = 0 },
         bumpGuilds = {},
         bumperPos = { x = 0, y = 0 },
@@ -67,7 +68,7 @@ local DEFAULT_SAVED_VARS = {
         showBumper = true,
         bumperAutoReload = false,
         bumperWaitForLibHistoire = true,
-        bumperBorderlessMode = true,
+        bumperBorderlessMode = false,
         autoTrickleKioskProbes = true,
         bankGuilds = {},
         raffleMail = {
@@ -107,6 +108,43 @@ local function PlayFissalSound()
     end
 end
 FR.PlayFissalSound = PlayFissalSound
+
+-- Shared UTF-8 byte-boundary & ESO |c/|r tag-safe string truncation
+function FR:TruncateUtf8(str, maxBytes)
+    if not str then return "" end
+    maxBytes = tonumber(maxBytes) or 2048
+    if #str <= maxBytes then return str end
+
+    local budget = math.max(1, maxBytes - 2)
+    local cut = budget
+    while cut > 0 do
+        local nextB = string.byte(str, cut + 1)
+        if nextB and nextB >= 0x80 and nextB < 0xC0 then
+            cut = cut - 1
+        else
+            break
+        end
+    end
+    local result = string.sub(str, 1, cut)
+
+    local lastPipeC = string.find(result, "|c[^|]*$")
+    if lastPipeC and (#result - lastPipeC) < 8 then
+        result = string.sub(result, 1, lastPipeC - 1)
+    end
+
+    local trailing = #string.match(result, "|*$")
+    if trailing % 2 == 1 then
+        result = string.sub(result, 1, -2)
+    end
+
+    local unescaped = string.gsub(result, "||", "")
+    local _, colorStarts = string.gsub(unescaped, "|c", "")
+    local _, colorEnds = string.gsub(unescaped, "|r", "")
+    if colorStarts > colorEnds then
+        result = result .. "|r"
+    end
+    return result
+end
 
 -- Known bankers, assistants, test dummies, and non-kiosk NPCs
 local TRADER_BLACKLIST = {
@@ -170,33 +208,57 @@ function FR:GetCount(domain)
     return a.counter or 0, true
 end
 
+-- Helper: Check if the player holds verified staff authority in a canonical Redfur guild (or any Redfur guild when guildId is nil)
+function FR:IsPlayerRedfurOfficer(guildId)
+    if not GetNumGuilds then return false end
+    local function HasStaffAuthority(gId)
+        if not gId or gId == 0 or not self:IsRedfurGuild(gId) then return false end
+        if IsPlayerGuildMaster and IsPlayerGuildMaster(gId) then
+            return true
+        end
+        if DoesPlayerHaveGuildPermission then
+            if (GUILD_PERMISSION_SET_MOTD and DoesPlayerHaveGuildPermission(gId, GUILD_PERMISSION_SET_MOTD))
+                or (GUILD_PERMISSION_PROMOTE and DoesPlayerHaveGuildPermission(gId, GUILD_PERMISSION_PROMOTE))
+                or (GUILD_PERMISSION_REMOVE and DoesPlayerHaveGuildPermission(gId, GUILD_PERMISSION_REMOVE))
+                or (GUILD_PERMISSION_MANAGE_RANKS and DoesPlayerHaveGuildPermission(gId, GUILD_PERMISSION_MANAGE_RANKS))
+            then
+                return true
+            end
+        end
+        return false
+    end
+
+    if guildId ~= nil then
+        return HasStaffAuthority(tonumber(guildId) or 0)
+    end
+
+    local numGuilds = GetNumGuilds()
+    for i = 1, numGuilds do
+        if HasStaffAuthority(GetGuildId(i)) then
+            return true
+        end
+    end
+    return false
+end
+
 -- Helper: Check if the player holds an officer+ rank in any guild
 function FR:IsPlayerOfficerInAnyGuild()
+    if self:IsPlayerRedfurOfficer() then
+        return true
+    end
     local numGuilds = GetNumGuilds()
     for i = 1, numGuilds do
         local guildId = GetGuildId(i)
-        -- Guild Master check
         if IsPlayerGuildMaster and IsPlayerGuildMaster(guildId) then
             return true
         end
-        -- Explicit officer permission check
-        if self:CanTrackGuildBank(guildId)
-            or (DoesPlayerHaveGuildPermission and (
-                DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_SET_MOTD)
-                or DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_MANAGE_RANKS)
-                or DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_NOTE_EDIT)
-            )) then
+        if DoesPlayerHaveGuildPermission and (
+            (GUILD_PERMISSION_SET_MOTD and DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_SET_MOTD))
+            or (GUILD_PERMISSION_PROMOTE and DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_PROMOTE))
+            or (GUILD_PERMISSION_REMOVE and DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_REMOVE))
+            or (GUILD_PERMISSION_MANAGE_RANKS and DoesPlayerHaveGuildPermission(guildId, GUILD_PERMISSION_MANAGE_RANKS))
+        ) then
             return true
-        end
-        -- Officer rank check (rank indices 1-3 in Redfur guilds, 1-2 in general guilds)
-        local memberIndex = GetPlayerGuildMemberIndex(guildId)
-        if memberIndex then
-            local _, _, rankIndex = GetGuildMemberInfo(guildId, memberIndex)
-            local gName = GetGuildName(guildId) or ""
-            local maxOfficerRank = gName:find("Redfur", 1, true) and 3 or 2
-            if rankIndex and rankIndex <= maxOfficerRank then
-                return true
-            end
         end
     end
     return false
@@ -693,7 +755,7 @@ end
      STAFF TOOLS: ROSTER, INACTIVES & RAFFLES / DUES
 ========================================================================= ]]--
 
-function FR:TakeRosterSnapshot(targetGuildId)
+function FR:TakeRosterSnapshot(targetGuildId, onlyRedfur)
     local numGuilds = GetNumGuilds()
     local snapped = 0
 
@@ -702,8 +764,8 @@ function FR:TakeRosterSnapshot(targetGuildId)
 
     for i = 1, numGuilds do
         local guildId = GetGuildId(i)
-        if not targetGuildId or targetGuildId == guildId then
-            local guildName = GetGuildName(guildId)
+        if (not targetGuildId or targetGuildId == guildId) and (not onlyRedfur or self:IsRedfurGuild(guildId)) then
+            local guildName = GetGuildName(guildId) or ("Guild " .. tostring(guildId))
             local memberCount = GetNumGuildMembers(guildId)
             local hiredTrader = GetGuildOwnedKioskInfo(guildId) or "None"
             local members = {}
@@ -1296,6 +1358,10 @@ end
 local function GetTuesdayResetForMidnightUtc(tuesdayMidnightUtc)
     local resetHourUtc = IsUsEasternDstAtAfternoonUtc(tuesdayMidnightUtc) and 19 or 20
     return tuesdayMidnightUtc + (resetHourUtc * 3600)
+end
+
+function FR:IsUsEasternDstAtAfternoonUtc(utcTs)
+    return IsUsEasternDstAtAfternoonUtc(utcTs)
 end
 
 function FR:GetTuesdayTradeWeek(ts)
@@ -1927,7 +1993,7 @@ end
 
 function FR:EnsureBorderlessForBump()
     if not self.savedVars or not self.savedVars.settings then return false end
-    if self.savedVars.settings.bumperBorderlessMode == false then return false end
+    if not self.savedVars.settings.bumperBorderlessMode then return false end
     if not GetSetting or not SetSetting or not SETTING_TYPE_GRAPHICS or not GRAPHICS_SETTING_FULLSCREEN then
         return false
     end
@@ -1938,12 +2004,25 @@ function FR:EnsureBorderlessForBump()
     if okGet and tostring(curMode) == exclusiveVal then
         local okSet = pcall(SetSetting, SETTING_TYPE_GRAPHICS, GRAPHICS_SETTING_FULLSCREEN, borderlessVal)
         if okSet then
+            self._prevFullscreenMode = tostring(curMode)
             if ApplySettings then pcall(ApplySettings) end
-            PrintChat("|c59E08AAlt-Tab Safe Mode:|r Switched display from Exclusive Fullscreen to |c00FFCCBorderless Windowed Fullscreen|r so you can freely Alt-Tab while bumping!")
+            PrintChat("|c59E08AAlt-Tab Safe Mode:|r Switched display from Exclusive Fullscreen to |c00FFCCBorderless Windowed Fullscreen|r while bumping.")
             return true
         end
     end
     return false
+end
+
+function FR:RestoreFullscreenAfterBump()
+    if not self._prevFullscreenMode then return end
+    local prevMode = self._prevFullscreenMode
+    self._prevFullscreenMode = nil
+    if SetSetting and SETTING_TYPE_GRAPHICS and GRAPHICS_SETTING_FULLSCREEN then
+        local okSet = pcall(SetSetting, SETTING_TYPE_GRAPHICS, GRAPHICS_SETTING_FULLSCREEN, prevMode)
+        if okSet and ApplySettings then
+            pcall(ApplySettings)
+        end
+    end
 end
 
 function FR:StopBumperTicker()
@@ -2088,6 +2167,7 @@ function FR:CancelBump(reason)
         self.isBumping = false
         self.isWaitingForLibHistoireReload = false
         self.bumpQueue = {}
+        self:RestoreFullscreenAfterBump()
         local msg = reason and string.format("TTC Bumping halted (%s).", reason) or "TTC Bumping / Auto-reload halted by user."
         PrintChat(msg)
         if self.UpdateBumperUI then self:UpdateBumperUI("Bumping halted.") end
@@ -2237,6 +2317,7 @@ function FR:StepNextBumpGuild()
         if isAutoReload then
             self:TriggerBumperAutoReload()
         else
+            self:RestoreFullscreenAfterBump()
             PrintChat("Hit [ReloadUI] to upload fresh listings to TamrielTradeCentre.")
         end
         return
@@ -2366,17 +2447,23 @@ local function ReplaceRaffleField(text, fieldLabel, newVal)
 end
 
 function FR:ResolveGuildId(guildIndexOrId)
-    local numGuilds = GetNumGuilds()
-    if not guildIndexOrId then return GetGuildId(self.lastSingleGuildIndex or 1) end
+    local numGuilds = GetNumGuilds and GetNumGuilds() or 0
+    if numGuilds <= 0 then return 0 end
+
+    local function FallbackSingleGuildId()
+        local fallbackIdx = self.lastSingleGuildIndex or 1
+        if fallbackIdx < 1 or fallbackIdx > numGuilds then fallbackIdx = 1 end
+        return GetGuildId(fallbackIdx) or 0
+    end
+
+    if guildIndexOrId == nil then return FallbackSingleGuildId() end
 
     local n = tonumber(guildIndexOrId)
     if n == 0 then
-        local fallbackIdx = self.lastSingleGuildIndex or 1
-        if fallbackIdx < 1 or fallbackIdx > numGuilds then fallbackIdx = 1 end
-        return GetGuildId(fallbackIdx)
+        return FallbackSingleGuildId()
     end
     if n and n >= 1 and n <= numGuilds then
-        return GetGuildId(n)
+        return GetGuildId(n) or 0
     end
     if n then
         for i = 1, numGuilds do
@@ -2393,7 +2480,7 @@ function FR:ResolveGuildId(guildIndexOrId)
         end
     end
 
-    return GetGuildId(self.lastSingleGuildIndex or 1)
+    return FallbackSingleGuildId()
 end
 
 function FR:GetGuildKey(guildId)
@@ -2677,15 +2764,22 @@ end
 
 
 function FR:GetMyRaffleTickets(guildIndexOrId)
-    local guildId = self:ResolveGuildId(guildIndexOrId or (self.selectedGuildIndex or 1))
+    local guildId = self:ResolveGuildId(guildIndexOrId ~= nil and guildIndexOrId or (self.selectedGuildIndex or 1))
     if not guildId or guildId == 0 then
-        guildId = GetGuildId(self.selectedGuildIndex or 1)
+        return {
+            hasEntered = false,
+            tickets = 0,
+            gold = 0,
+            totalTickets = 0,
+            odds = 0,
+            isLive = false,
+        }
     end
-    local guildName = GetGuildName(guildId)
+    local guildName = GetGuildName(guildId) or ""
     local isPost = string.find(guildName, "Post") ~= nil
     local isDealers = string.find(guildName, "Dealer") ~= nil
     local isCaravan = string.find(guildName, "Caravan") ~= nil
-    local gKey = isPost and "post" or (isDealers and "dealers" or (isCaravan and "caravan" or nil))
+    local gKey = self:GetGuildKey(guildId) or (isPost and "post" or (isDealers and "dealers" or (isCaravan and "caravan" or nil)))
 
     local myRaw = GetDisplayName() or ""
     local myName = string.lower(string.gsub(myRaw, "^@", ""))
@@ -2995,8 +3089,8 @@ function FR:HandleSlashCommand(arg)
         local foundAny = false
         for g = 1, GetNumGuilds() do
             local gId = GetGuildId(g)
-            local gName = GetGuildName(gId)
-            if string.find(gName, "Redfur") then
+            local gName = GetGuildName(gId) or ""
+            if gName ~= "" and (self:IsRedfurGuild(gId) or string.find(gName, "Redfur")) then
                 foundAny = true
                 local res = self:GetMyRaffleTickets(gId)
                 if res.hasEntered then
@@ -3360,7 +3454,6 @@ local function OnAddOnLoaded(eventCode, addOnName)
     )
     if not FR.savedVars.kiosks then FR.savedVars.kiosks = {} end
     if not FR.savedVars.knownTradingGuilds then FR.savedVars.knownTradingGuilds = {} end
-    if not FR.savedVars.spreadsheetKiosks then FR.savedVars.spreadsheetKiosks = {} end
     if not FR.savedVars.staff then FR.savedVars.staff = {} end
     if not FR.savedVars.staff.bankDeposits then FR.savedVars.staff.bankDeposits = {} end
     if not FR.savedVars.staff.bids then FR.savedVars.staff.bids = {} end
@@ -3506,7 +3599,9 @@ local function OnAddOnLoaded(eventCode, addOnName)
     SLASH_COMMANDS["/fissal"] = function(arg) FR:HandleSlashCommand(arg) end
     SLASH_COMMANDS["/fissalrelay"] = function(arg) FR:HandleSlashCommand(arg) end
     SLASH_COMMANDS["/fr"] = function(arg) FR:HandleSlashCommand(arg) end
-    SLASH_COMMANDS["/ar"] = function(arg) FR:HandleSlashCommand("ranks " .. (arg or "")) end
+    if not SLASH_COMMANDS["/ar"] then
+        SLASH_COMMANDS["/ar"] = function(arg) FR:HandleSlashCommand("ranks " .. (arg or "")) end
+    end
 
     -- Setup LibHistoire integration when ready
     if LibHistoire and LibHistoire.OnReady then
@@ -3522,10 +3617,11 @@ local function OnAddOnLoaded(eventCode, addOnName)
         end, 5000)
     end
 
-    -- Auto roster snapshot and kiosk scan on login
+    -- Auto roster snapshot and kiosk scan on login (non-officers only auto-snapshot canonical Redfur guilds)
     if FR.savedVars.settings.autoRosterSnapshotOnLogin then
         zo_callLater(function()
-            FR:TakeRosterSnapshot()
+            local onlyRedfur = not FR:IsPlayerRedfurOfficer()
+            FR:TakeRosterSnapshot(nil, onlyRedfur)
             FR:ScanOwnedKiosks()
         end, 10000)
     end

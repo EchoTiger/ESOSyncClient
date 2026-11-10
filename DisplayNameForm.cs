@@ -90,6 +90,27 @@ namespace RedfurSync
             // Seed the initial terminal thought 
             _consoleLines.Add(("# [FIS-DBG] Tuning frequency: ", Color.GreenYellow));
 
+            var closeBtn = new Button
+            {
+                Text = "✕",
+                Size = new Size(S(24), S(22)),
+                Location = new Point(Width - S(30), S(6)),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(24, 18, 12),
+                ForeColor = CGoldMid,
+                Font = Body(8.5f, _scale, FontStyle.Bold),
+                Cursor = Cursors.Hand,
+                TabStop = false,
+            };
+            closeBtn.FlatAppearance.BorderColor = CGoldDim;
+            closeBtn.FlatAppearance.BorderSize = 1;
+            closeBtn.MouseEnter += (_, _) => { closeBtn.BackColor = Color.FromArgb(90, 28, 24); closeBtn.ForeColor = Color.White; };
+            closeBtn.MouseLeave += (_, _) => { closeBtn.BackColor = Color.FromArgb(24, 18, 12); closeBtn.ForeColor = CGoldMid; };
+            closeBtn.Click += (_, _) => { DialogResult = DialogResult.Cancel; Close(); };
+            var closeTip = new ToolTip();
+            closeTip.SetToolTip(closeBtn, "Skip for now (configure later in Setup)");
+            Controls.Add(closeBtn);
+
             // Sequential layout calculation
             int curY = _headerH + S(14);
 
@@ -165,6 +186,7 @@ namespace RedfurSync
             _checkNameBtn.Size = new Size(checkBtnW, inputH);
             _checkNameBtn.Click += async (_, _) =>
             {
+                bool allowReserved = !string.IsNullOrWhiteSpace(AppConfig.Instance.ApiKey);
                 if (string.IsNullOrWhiteSpace(_input.Text))
                 {
                     _checkNameBtn.Text = "Empty";
@@ -172,12 +194,26 @@ namespace RedfurSync
                     _checkNameBtn.FlatAppearance.BorderColor = Color.IndianRed;
                     AddConsoleLine("# [FIS-DBG] Name cannot be empty.", Color.IndianRed);
                 }
+                else if (!allowReserved && UploadService.IsReservedLabel(_input.Text))
+                {
+                    _checkNameBtn.Text = "Reserved";
+                    _checkNameBtn.ForeColor = Color.IndianRed;
+                    _checkNameBtn.FlatAppearance.BorderColor = Color.IndianRed;
+                    AddConsoleLine("# [FIS-DBG] That label is reserved for staff systems.", Color.IndianRed);
+                }
+                else if (UploadService.NormalizeLabel(_input.Text, allowReserved) is not string normalizedName)
+                {
+                    _checkNameBtn.Text = "Invalid";
+                    _checkNameBtn.ForeColor = Color.IndianRed;
+                    _checkNameBtn.FlatAppearance.BorderColor = Color.IndianRed;
+                    AddConsoleLine("# [FIS-DBG] Use letters, numbers, spaces, @, ., _, or -.", Color.IndianRed);
+                }
                 else
                 {
                     _checkNameBtn.Text = "Format OK";
                     _checkNameBtn.ForeColor = CGreen;
                     _checkNameBtn.FlatAppearance.BorderColor = CGreen;
-                    AddConsoleLine($"# [FIS-DBG] Name format looks valid locally: {_input.Text.Trim()}", CGreen);
+                    AddConsoleLine($"# [FIS-DBG] Name format valid: {normalizedName}", CGreen);
                 }
 
                 await System.Threading.Tasks.Task.Delay(2000);
@@ -486,9 +522,19 @@ namespace RedfurSync
         {
             if (!_saveBtn.Enabled) return;
 
-            var name = _input.Text.Trim();
+            var rawName = _input.Text.Trim();
+            bool allowReserved = !string.IsNullOrWhiteSpace(AppConfig.Instance.ApiKey);
+            var name = UploadService.NormalizeLabel(rawName, allowReserved);
             if (string.IsNullOrWhiteSpace(name))
             {
+                if (!string.IsNullOrWhiteSpace(rawName))
+                {
+                    string errReason = !allowReserved && UploadService.IsReservedLabel(rawName)
+                        ? "That display name is reserved. Please enter your own ESO or Discord @Tag."
+                        : "Display name may only contain letters, numbers, spaces, @, ., _, or -.";
+                    AddConsoleLine("# [FIS-DBG] " + errReason, Color.IndianRed);
+                    FissalBox.Show(errReason, "Invalid Display Name");
+                }
                 _input.BackColor = Color.FromArgb(55, 18, 12);
                 var t = new System.Windows.Forms.Timer { Interval = 500 };
                 t.Tick += (_, _) => { if (!_input.IsDisposed) _input.BackColor = Color.FromArgb(14, 10, 8); t.Stop(); t.Dispose(); }; 
@@ -635,7 +681,7 @@ namespace RedfurSync
             // ── The Digital Screen Cutout ──
             int screenX = _pad + rimSize + S(8);
             int screenY = S(8);
-            int screenW = Width - screenX - S(12);
+            int screenW = Width - screenX - S(38);
             int screenH = _headerH - S(16);
 
             using var screenBg = new SolidBrush(Color.FromArgb(6, 6, 8));

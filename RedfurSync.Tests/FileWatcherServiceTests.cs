@@ -202,6 +202,54 @@ public sealed class FileWatcherServiceTests
         await WaitForJobsAsync(watcher, jobs => jobs.Count == 2 && jobs.All(j => j.Status == UploadStatus.Done));
     }
 
+    [Fact]
+    public void IsFileLocked_DetectsWriterHoldingFileWithReadShareOnly()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var filePath = temporaryDirectory.WriteFile("SavedVariables/FissalRelay.lua", "-- initial");
+
+        Assert.False(FileWatcherService.IsFileLocked(filePath));
+
+        if (OperatingSystem.IsWindows())
+        {
+            using (var writer = new FileStream(filePath, FileMode.Open, FileAccess.Write, FileShare.Read))
+            {
+                Assert.True(FileWatcherService.IsFileLocked(filePath));
+            }
+            Assert.False(FileWatcherService.IsFileLocked(filePath));
+        }
+    }
+
+    [Fact]
+    public async Task StartAsync_CreatesSavedVariablesOnFreshEsoInstall_AndDoesNotSilentlyEnrollAnon()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var freshLive = temporaryDirectory.CreateDirectory("live"); // No SavedVariables folder yet
+        var spoolPath = temporaryDirectory.CreateDirectory("spool");
+
+        var handler = new FakeHttpMessageHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)));
+        var config = new AppConfig
+        {
+            ServerUrl = "https://relay.invalid/upload",
+            UpdateUrl = string.Empty,
+            DeviceToken = string.Empty,
+            ApiKey = string.Empty,
+            PairingCode = string.Empty
+        };
+        using var uploader = new UploadService(config, handler, FakeHttpMessageHandler.Returning(HttpStatusCode.OK));
+        using var watcher = new FileWatcherService(_ => { }, config, uploader, spoolPath, _ => { })
+        {
+            WatchRootProvider = () => freshLive
+        };
+
+        await watcher.StartAsync();
+
+        Assert.True(Directory.Exists(Path.Combine(freshLive, "SavedVariables")));
+        Assert.Equal(1, watcher.ActiveWatcherCount);
+        Assert.Empty(config.DeviceToken);
+        Assert.Empty(handler.Requests);
+    }
+
     private static async Task WaitForJobsAsync(FileWatcherService watcher, Func<IReadOnlyList<UploadJob>, bool> predicate)
     {
         if (predicate(watcher.Jobs.ToArray())) return;

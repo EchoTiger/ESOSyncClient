@@ -78,6 +78,8 @@ namespace RedfurSync
                 case "runonstartup":
                     var previousStartup = _config.RunOnStartup;
                     _config.RunOnStartup = ParseBool(value);
+                    if (OperatingSystem.IsWindows())
+                        StartupHelper.SetStartup(_config.RunOnStartup);
                     return previousStartup.ToString();
                 case "silentsync":
                     var previousSilent = _config.SilentSync;

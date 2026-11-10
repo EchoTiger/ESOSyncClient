@@ -165,14 +165,15 @@ function FR:GetRaffleDateInfo(guildId)
     local prevStart = curStart - 604800
 
     local function SafeDate(fmt, ts)
+        local etOffset = (self.IsUsEasternDstAtAfternoonUtc and self:IsUsEasternDstAtAfternoonUtc(ts)) and 14400 or 18000
         if os and os.date then
-            -- Align to Eastern Time (EDT = UTC-4 = 14400s)
-            local ok, str = pcall(os.date, "!" .. fmt, ts - 14400)
+            -- Align to US Eastern Time (EDT = UTC-4 = 14400s, EST = UTC-5 = 18000s)
+            local ok, str = pcall(os.date, "!" .. fmt, ts - etOffset)
             if ok and str and str ~= "" then return str end
             local ok2, str2 = pcall(os.date, fmt, ts)
             if ok2 and str2 and str2 ~= "" then return str2 end
         end
-        local fMonth, fDay, fWeekday = FallbackDate(ts - 14400)
+        local fMonth, fDay, fWeekday = FallbackDate(ts - etOffset)
         if fmt == "%b" then return fMonth
         elseif fmt == "%d" then return tostring(fDay)
         elseif fmt == "%A" then return fWeekday
@@ -394,8 +395,8 @@ end
 
 function FR:ResolveMotDTokens(rawText, guildId)
     if not rawText or rawText == "" then return "" end
-    guildId = guildId or GetGuildId(self.selectedGuildIndex or 1)
-    local guildName = GetGuildName(guildId)
+    guildId = guildId or self:ResolveGuildId(self.selectedGuildIndex)
+    local guildName = GetGuildName(guildId) or ""
 
     local isPost = string.find(guildName, "Post") ~= nil
     local isDealers = string.find(guildName, "Dealer") ~= nil
@@ -980,8 +981,8 @@ end
 
 function FR:UpdateMotDTelemetryBar(guildId)
     if not self.motdTelemetryBar and not self.motdSourceBadge then return end
-    guildId = guildId or GetGuildId(self.selectedGuildIndex or 1)
-    local guildName = GetGuildName(guildId)
+    guildId = guildId or self:ResolveGuildId(self.selectedGuildIndex)
+    local guildName = GetGuildName(guildId) or ""
     local isPost = string.find(guildName, "Post") ~= nil
     local isDealers = string.find(guildName, "Dealer") ~= nil
     local isCaravan = string.find(guildName, "Caravan") ~= nil
@@ -1056,8 +1057,7 @@ function FR:UpdateMotDStudioGauge()
     local byteCount = #text
     local hasTokens = string.find(text, "{") ~= nil
 
-    local gIdx = self.selectedGuildIndex or 1
-    local guildId = GetGuildId(gIdx)
+    local guildId = self:ResolveGuildId(self.selectedGuildIndex)
     local resChars = charCount
     local resBytes = byteCount
     if hasTokens then
@@ -1127,8 +1127,7 @@ end
 function FR:ApplyTokensToMotDEditor()
     if not self.motdStudioEditBox then return end
     local raw = self.motdStudioEditBox:GetText() or ""
-    local gIdx = self.selectedGuildIndex or 1
-    local guildId = GetGuildId(gIdx)
+    local guildId = self:ResolveGuildId(self.selectedGuildIndex)
 
     self:PushMotDUndoState(raw)
     local resolved = self:ResolveMotDTokens(raw, guildId)
@@ -1140,9 +1139,8 @@ end
 function FR:PreviewMotDInChat()
     if not self.motdStudioEditBox then return end
     local raw = self.motdStudioEditBox:GetText() or ""
-    local gIdx = self.selectedGuildIndex or 1
-    local guildId = GetGuildId(gIdx)
-    local guildName = GetGuildName(guildId)
+    local guildId = self:ResolveGuildId(self.selectedGuildIndex)
+    local guildName = GetGuildName(guildId) or "Guild"
 
     local resolved = self:ResolveMotDTokens(raw, guildId)
     self.PrintChat(string.format("=== MotD Preview for %s ===", guildName))

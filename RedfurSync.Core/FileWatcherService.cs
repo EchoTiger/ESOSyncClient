@@ -375,7 +375,7 @@ namespace RedfurSync
 
                 _onStatus("Establishing connection...");
                 var (paired, pairingMessage) = await _uploader.PairAsync().ConfigureAwait(false);
-                if (!paired && string.IsNullOrWhiteSpace(_config.DeviceToken) && string.IsNullOrWhiteSpace(_config.ApiKey))
+                if (!paired && AutoEnrollAnonymousOnStart && string.IsNullOrWhiteSpace(_config.DeviceToken) && string.IsNullOrWhiteSpace(_config.ApiKey))
                 {
                     var (anonOk, anonMsg) = await _uploader.EnrollAnonymousAsync().ConfigureAwait(false);
                     if (anonOk)
@@ -387,7 +387,10 @@ namespace RedfurSync
                 if (!paired)
                 {
                     _onStatus(pairingMessage);
-                    ConnectionChecked?.Invoke(false, pairingMessage);
+                    if (!string.IsNullOrWhiteSpace(_config.PairingCode) || !string.IsNullOrWhiteSpace(_config.DeviceToken) || !string.IsNullOrWhiteSpace(_config.ApiKey))
+                    {
+                        ConnectionChecked?.Invoke(false, pairingMessage);
+                    }
                     return;
                 }
                 var (ok, msg) = await _uploader.PingAsync().ConfigureAwait(false);
@@ -415,6 +418,8 @@ namespace RedfurSync
             }
         }
 
+        public bool AutoEnrollAnonymousOnStart { get; set; } = false;
+
         private void SetupWatchers()
         {
             foreach (var watcher in _watchers) watcher.Dispose();
@@ -423,9 +428,19 @@ namespace RedfurSync
             int count   = 0;
             var esoBase = WatchRootProvider();
 
-            void TryWatch(string p) { if (Directory.Exists(p)) { AddWatcher(p); count++; } }
-
-            TryWatch(Path.Combine(esoBase, "SavedVariables"));
+            if (!string.IsNullOrWhiteSpace(esoBase) && Directory.Exists(esoBase))
+            {
+                var savedVarsDir = Path.Combine(esoBase, "SavedVariables");
+                if (!Directory.Exists(savedVarsDir))
+                {
+                    try { Directory.CreateDirectory(savedVarsDir); } catch { }
+                }
+                if (Directory.Exists(savedVarsDir))
+                {
+                    AddWatcher(savedVarsDir);
+                    count++;
+                }
+            }
 
             _onStatus(count == 0 ? "Cannot find target directories!" : $"Monitoring {count} folder(s)");
         }
@@ -474,7 +489,19 @@ namespace RedfurSync
             w.Changed += OnFileChanged;
             w.Created += OnFileChanged;
             w.Renamed += (sender, e) => OnFileChanged(sender, new FileSystemEventArgs(WatcherChangeTypes.Changed, Path.GetDirectoryName(e.FullPath)!, e.Name!));
-            w.Error += (sender, e) => Console.WriteLine($"[RedfurSync] ⚠ Watcher lost the scent (Buffer Overflow): {e.GetException().Message}");
+            w.Error += (sender, e) =>
+            {
+                Console.WriteLine($"[RedfurSync] ⚠ Watcher lost the scent (Buffer Overflow): {e.GetException().Message}");
+                _ = Task.Run(async () =>
+                {
+                    try
+                    {
+                        await Task.Delay(2000).ConfigureAwait(false);
+                        if (!_disposed) await ReconcileExistingFilesAsync().ConfigureAwait(false);
+                    }
+                    catch { }
+                });
+            };
             _watchers.Add(w);
         }
 
@@ -525,7 +552,9 @@ namespace RedfurSync
                     }
                 }
 
+                var prevCts = original.Cts;
                 original.Cts = new CancellationTokenSource();
+                try { prevCts.Dispose(); } catch { }
                 original.Status = UploadStatus.Queued;
                 original.Progress = 0f;
                 original.ErrorMessage = string.Empty;
@@ -878,14 +907,17 @@ namespace RedfurSync
             await EnqueuePendingSourceAsync(job).ConfigureAwait(false);
         }
         
-        private bool IsFileLocked(string filePath)
+        internal static bool IsFileLocked(string filePath)
         {
             try
             {
-                using FileStream stream = new FileInfo(filePath).Open(FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-                stream.Close();
+                if (!File.Exists(filePath)) return false;
+                using FileStream stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.None);
             }
+            catch (FileNotFoundException) { return false; }
+            catch (DirectoryNotFoundException) { return false; }
             catch (IOException) { return true; }
+            catch (UnauthorizedAccessException) { return true; }
             catch (Exception) { return false; }
             return false;
         }

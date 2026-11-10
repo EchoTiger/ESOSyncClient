@@ -8,12 +8,12 @@ namespace RedfurSync.Tests;
 public sealed class AddonInstallerServiceTests
 {
     [Fact]
-    public void GetTargetExePath_BuildsCanonicalAddonPath()
+    public void GetTargetExePath_BuildsLocalAppDataProgramsPath()
     {
-        var esoLive = @"C:\Games\Elder Scrolls Online\live";
-        var target = AddonInstallerService.GetTargetExePath(esoLive);
+        var fakeLocalAppData = Path.Combine(Path.GetTempPath(), "FakeLocalAppData");
+        var target = AddonInstallerService.GetTargetExePath(@"C:\Games\Elder Scrolls Online\live", fakeLocalAppData);
 
-        Assert.Equal(Path.Combine(esoLive, "AddOns", "FissalRelay", "Client", "RedfurSync.exe"), target);
+        Assert.Equal(Path.Combine(fakeLocalAppData, "Programs", "FissalRelay", "RedfurSync.exe"), target);
     }
 
     [Fact]
@@ -29,17 +29,19 @@ public sealed class AddonInstallerServiceTests
     }
 
     [Fact]
-    public void ShouldRelocate_ReturnsTrueWhenOutsideAddonDir()
+    public void ShouldRelocate_ReturnsTrueWhenOutsideTargetDir_EvenWithoutEsoInstalled()
     {
         using var tempDir = new TemporaryDirectory();
-        var liveDir = Path.Combine(tempDir.Path, "live");
-        Directory.CreateDirectory(Path.Combine(liveDir, "AddOns"));
+        var fakeLocalAppData = Path.Combine(tempDir.Path, "LocalAppData");
 
-        var shouldRelocate = AddonInstallerService.ShouldRelocate(out var targetPath, out var foundLive, () => liveDir);
+        var shouldRelocate = AddonInstallerService.ShouldRelocate(
+            out var targetPath,
+            out var foundLive,
+            () => Path.Combine(tempDir.Path, "missing_live"),
+            fakeLocalAppData);
 
         Assert.True(shouldRelocate);
-        Assert.Equal(liveDir, foundLive);
-        Assert.Equal(Path.Combine(liveDir, "AddOns", "FissalRelay", "Client", "RedfurSync.exe"), targetPath);
+        Assert.Equal(Path.Combine(fakeLocalAppData, "Programs", "FissalRelay", "RedfurSync.exe"), targetPath);
     }
 
     [Fact]
@@ -143,16 +145,85 @@ public sealed class AddonInstallerServiceTests
     }
 
     [Fact]
-    public void CheckAddonInstallStatus_DetectsDependencies()
+    public void CheckAddonInstallStatus_DetectsDependencies_OnlyWithCompiledManifests()
     {
         using var temp = new TemporaryDirectory();
         var liveDir = Path.Combine(temp.Path, "live");
         var addonsRoot = Path.Combine(liveDir, "AddOns");
-        Directory.CreateDirectory(Path.Combine(addonsRoot, "LibHistoire"));
-        Directory.CreateDirectory(Path.Combine(addonsRoot, "LibAddonMenu-2.0"));
+
+        foreach (var dep in new[] { "LibHistoire", "LibAsync", "LibDebugLogger", "LibCustomMenu", "LibAddonMenu-2.0" })
+        {
+            var dir = Path.Combine(addonsRoot, dep);
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, dep + ".addon"), $"## Title: {dep}\n## APIVersion: 101051\n");
+        }
 
         var status = AddonInstallerService.CheckAddonInstallStatus(liveDir);
 
+        Assert.True(status.LibHistoireInstalled);
+        Assert.True(status.LibAddonMenuInstalled);
+    }
+
+    [Fact]
+    public void CheckAddonInstallStatus_RejectsUnbuiltDependencyWithPlaceholders()
+    {
+        using var temp = new TemporaryDirectory();
+        var liveDir = Path.Combine(temp.Path, "live");
+        var addonsRoot = Path.Combine(liveDir, "AddOns");
+
+        var lamDir = Path.Combine(addonsRoot, "LibAddonMenu-2.0");
+        Directory.CreateDirectory(lamDir);
+        File.WriteAllText(Path.Combine(lamDir, "LibAddonMenu-2.0.txt"), "## Title: LibAddonMenu-2.0\n## APIVersion: @API_VERSION@\n## AddOnVersion: @BUILD_NUMBER@\n");
+
+        var lhDir = Path.Combine(addonsRoot, "LibHistoire");
+        Directory.CreateDirectory(lhDir); // empty folder without manifest
+
+        var status = AddonInstallerService.CheckAddonInstallStatus(liveDir);
+
+        Assert.False(status.LibAddonMenuInstalled);
+        Assert.False(status.LibHistoireInstalled);
+    }
+
+    [Fact]
+    public async Task DownloadAndInstallDependencyAsync_ExtractsMultiFolderBundleAndStripsBinaries()
+    {
+        using var temp = new TemporaryDirectory();
+        var liveDir = Path.Combine(temp.Path, "live");
+        Directory.CreateDirectory(liveDir);
+
+        byte[] zipBytes;
+        using (var ms = new MemoryStream())
+        {
+            using (var zip = new System.IO.Compression.ZipArchive(ms, System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+            {
+                foreach (var dep in new[] { "LibHistoire", "LibAsync", "LibDebugLogger", "LibCustomMenu", "LibAddonMenu-2.0" })
+                {
+                    var entry = zip.CreateEntry($"{dep}/{dep}.addon");
+                    await using var writer = new StreamWriter(entry.Open());
+                    await writer.WriteAsync($"## Title: {dep}\n## APIVersion: 101051\n");
+                }
+                var blockedExe = zip.CreateEntry("LibHistoire/bad.exe");
+                using (var s = blockedExe.Open()) { s.Write(new byte[] { 1, 2, 3 }); }
+            }
+            zipBytes = ms.ToArray();
+        }
+
+        var handler = new FakeHttpMessageHandler((_, _) => Task.FromResult(new System.Net.Http.HttpResponseMessage(System.Net.HttpStatusCode.OK)
+        {
+            Content = new System.Net.Http.ByteArrayContent(zipBytes)
+        }));
+        using var http = new System.Net.Http.HttpClient(handler);
+
+        bool ok = await AddonInstallerService.DownloadAndInstallDependencyAsync(
+            liveDir,
+            "LibHistoire",
+            AddonInstallerService.LibHistoireDownloadUrl,
+            http,
+            TestContext.Current.CancellationToken);
+
+        Assert.True(ok);
+        Assert.False(File.Exists(Path.Combine(liveDir, "AddOns", "LibHistoire", "bad.exe")));
+        var status = AddonInstallerService.CheckAddonInstallStatus(liveDir);
         Assert.True(status.LibHistoireInstalled);
         Assert.True(status.LibAddonMenuInstalled);
     }
@@ -196,7 +267,7 @@ public sealed class AddonInstallerServiceTests
     {
         try
         {
-            var jsonResponse = "{\"addonVersion\":\"1.9.5\",\"addonUrl\":\"https://redfur.ech-o.net/api/relay/v1/download-addon\"}";
+            var jsonResponse = "{\"addonVersion\":\"1.9.6\",\"addonUrl\":\"https://redfur.ech-o.net/api/relay/v1/download-addon\"}";
             var handler = new FakeHttpMessageHandler((req, _) =>
             {
                 Assert.Equal("https://redfur.ech-o.net/api/relay/v1/download", req.RequestUri?.ToString());
@@ -210,7 +281,7 @@ public sealed class AddonInstallerServiceTests
             var ok = await AddonInstallerService.CheckRemoteAddonVersionAsync("https://redfur.ech-o.net/upload", client);
 
             Assert.True(ok);
-            Assert.Equal("1.9.5", AddonInstallerService.ActiveLatestAddonVersion);
+            Assert.Equal("1.9.6", AddonInstallerService.ActiveLatestAddonVersion);
             Assert.Equal("https://redfur.ech-o.net/api/relay/v1/download-addon", AddonInstallerService.RemoteAddonDownloadUrl);
         }
         finally

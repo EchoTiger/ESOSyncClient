@@ -91,17 +91,12 @@ function FR:EnsureRaffleState()
     if not self.savedVars.rafflePayouts.caravan then
         self.savedVars.rafflePayouts.caravan = {}
     end
-    -- Migrate stale raffle data if older than official verified ledger
+    -- Prune legacy cloned OfficialRaffleLedger bloat from SavedVariables (GetRaffleWeeks reads OfficialRaffleLedger directly in-memory)
     local officialStart = (FR.OfficialRaffleLedger and FR.OfficialRaffleLedger.weekStart) or 1789945200
-    if not self.savedVars.raffleData or (self.savedVars.raffleData.post and (self.savedVars.raffleData.post.weekStart or 0) < officialStart) then
-        if FR.OfficialRaffleLedger and (FR.OfficialRaffleLedger.post or FR.OfficialRaffleLedger.dealers or FR.OfficialRaffleLedger.caravan) then
-            self.savedVars.raffleData = {
-                post = FR.OfficialRaffleLedger.post,
-                dealers = FR.OfficialRaffleLedger.dealers,
-                caravan = FR.OfficialRaffleLedger.caravan,
-            }
-        else
-            self.savedVars.raffleData = DEFAULT_RAFFLE_CACHE
+    if self.savedVars.raffleData then
+        local svPostStart = self.savedVars.raffleData.post and tonumber(self.savedVars.raffleData.post.weekStart) or 0
+        if svPostStart <= officialStart then
+            self.savedVars.raffleData = nil
         end
     end
     if not self.savedVars.settings.raffleMail then
@@ -570,7 +565,7 @@ function FR:BuildMailBody(winner, guildLabel, placeIndex)
     )
 
     if #body > ESO_MAIL_BODY_LIMIT then
-        body = string.sub(body, 1, ESO_MAIL_BODY_LIMIT)
+        body = self.TruncateUtf8 and self:TruncateUtf8(body, ESO_MAIL_BODY_LIMIT) or string.sub(body, 1, ESO_MAIL_BODY_LIMIT)
     end
     return body
 end
@@ -581,14 +576,24 @@ end
 
 function FR:AutoFillRaffleMail(guildKey, winner)
     if not winner or not winner.name or not winner.prize then return end
+    if IsInGamepadPreferredMode and IsInGamepadPreferredMode() then
+        self.PrintChat("|cFFCC00[Mail Notice]|r Switch out of Gamepad UI mode before auto-filling raffle payouts.")
+        return
+    end
 
     local gData = self:GetRaffleData(guildKey)
     local guildLabel = gData.guildLabel or "Redfur Trading"
     local weekKey = gData.weekStart or gData.weekLabel or "latest"
 
-    -- 1. Collision guard: ALWAYS clear existing money attachment first
+    -- 1. Collision guard: ALWAYS clear existing item & money attachments first
+    if ClearQueuedMail then
+        pcall(ClearQueuedMail)
+    end
     if QueueMoneyAttachment then
         QueueMoneyAttachment(0)
+    end
+    if MAIL_SEND and MAIL_SEND.ClearFields then
+        pcall(function() MAIL_SEND:ClearFields() end)
     end
 
     -- 2. Inventory check: ensure Echo has enough carried gold
@@ -624,16 +629,17 @@ function FR:AutoFillRaffleMail(guildKey, winner)
         pcall(function() ZO_MailSendSendCurrency:OnEndInput() end)
     end
 
+    local attachedViaMailSend = false
     if MAIL_SEND then
         if MAIL_SEND.SetMoneyAttachmentMode then
             pcall(function() MAIL_SEND:SetMoneyAttachmentMode() end)
         end
         if MAIL_SEND.AttachMoney then
-            pcall(function() MAIL_SEND:AttachMoney(0, winner.prize) end)
+            attachedViaMailSend = pcall(function() MAIL_SEND:AttachMoney(0, winner.prize) end)
         end
     end
 
-    if QueueMoneyAttachment then
+    if not attachedViaMailSend and QueueMoneyAttachment then
         QueueMoneyAttachment(winner.prize)
     end
 
@@ -1344,7 +1350,8 @@ function FR:CreateRaffleMailUI()
         mailScene:RegisterCallback("StateChange", function(oldState, newState)
             if newState == SCENE_SHOWN then
                 local shouldShow = true
-                if not self:IsPlayerOfficerInAnyGuild() then
+                local isRedfurOfficer = (self.IsPlayerRedfurOfficer and self:IsPlayerRedfurOfficer()) or false
+                if not isRedfurOfficer then
                     shouldShow = false
                 end
                 local rmSettings = self.savedVars and self.savedVars.settings and self.savedVars.settings.raffleMail

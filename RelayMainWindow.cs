@@ -3913,14 +3913,57 @@ namespace RedfurSync
 
             _btnSaveSetup = MakeStyledButton("Save Settings", CGoldBrt);
             _btnSaveSetup.Margin = new Padding(0, 0, (int)(8 * _scale), (int)(4 * _scale));
-            _btnSaveSetup.Click += (_, _) =>
+            _btnSaveSetup.Click += async (_, _) =>
             {
                 var cfg = AppConfig.Instance;
-                cfg.DisplayName = _txtDisplayName.Text.Trim();
+                var candidateUrl = _txtServerUrl.Text.Trim();
+                if (!string.IsNullOrWhiteSpace(candidateUrl) && candidateUrl.StartsWith("http://redfur.ech-o.net", StringComparison.OrdinalIgnoreCase))
+                {
+                    candidateUrl = "https://" + candidateUrl.Substring("http://".Length);
+                    _txtServerUrl.Text = candidateUrl;
+                }
+                if (string.IsNullOrWhiteSpace(candidateUrl) || !AppConfig.IsSecureEndpoint(candidateUrl))
+                {
+                    FissalBox.Show("Server URL must use HTTPS (or localhost for local development).", "Insecure Server URL");
+                    return;
+                }
+
+                var rawName = _txtDisplayName.Text.Trim();
+                bool allowReserved = !string.IsNullOrWhiteSpace(cfg.ApiKey);
+                string finalName = cfg.DisplayName;
+                if (!string.IsNullOrWhiteSpace(rawName))
+                {
+                    var normalized = UploadService.NormalizeLabel(rawName, allowReserved);
+                    if (normalized == null)
+                    {
+                        FissalBox.Show(
+                            !allowReserved && UploadService.IsReservedLabel(rawName)
+                                ? "That display name is reserved. Please use your own ESO or Discord @Tag."
+                                : "Display name may only contain letters, numbers, spaces, @, ., _, or -.",
+                            "Invalid Display Name");
+                        return;
+                    }
+                    finalName = normalized;
+                }
+
+                bool nameChanged = !string.Equals(cfg.DisplayName, finalName, StringComparison.Ordinal);
+                cfg.DisplayName = finalName;
                 cfg.PairingCode = _txtPairingCode.Text.Trim();
-                cfg.ServerUrl = _txtServerUrl.Text.Trim();
+                cfg.ServerUrl = candidateUrl;
                 cfg.Save();
                 RefreshSetupView();
+
+                if (nameChanged && !string.IsNullOrWhiteSpace(cfg.DeviceToken))
+                {
+                    try
+                    {
+                        using var svc = new UploadService(cfg);
+                        var labelTask = svc.UpdateDeviceLabelAsync(cfg.DisplayName);
+                        await System.Threading.Tasks.Task.WhenAny(labelTask, System.Threading.Tasks.Task.Delay(3000));
+                    }
+                    catch { }
+                }
+
                 FissalBox.Show("Relay settings saved successfully!", "Settings Saved");
             };
             btnRow.Controls.Add(_btnSaveSetup);
@@ -3949,15 +3992,31 @@ namespace RedfurSync
         {
             string code = _txtPairingCode.Text.Replace(" ", "").Replace("-", "").Trim();
             var cfg = AppConfig.Instance;
+            bool usingApiKey = false;
             if (string.IsNullOrWhiteSpace(code))
             {
                 if (!string.IsNullOrWhiteSpace(cfg.ApiKey))
                 {
-                    code = cfg.ApiKey.Trim();
+                    usingApiKey = true;
                 }
                 else
                 {
                     FissalBox.Show("Please enter a pairing code from the Redfur web interface, or configure an API key.", "Pairing Code Missing");
+                    return;
+                }
+            }
+
+            var candidateUrl = _txtServerUrl.Text.Trim();
+            if (!string.IsNullOrWhiteSpace(candidateUrl))
+            {
+                if (candidateUrl.StartsWith("http://redfur.ech-o.net", StringComparison.OrdinalIgnoreCase))
+                {
+                    candidateUrl = "https://" + candidateUrl.Substring("http://".Length);
+                    _txtServerUrl.Text = candidateUrl;
+                }
+                if (!AppConfig.IsSecureEndpoint(candidateUrl))
+                {
+                    FissalBox.Show("Server URL must use HTTPS (or localhost for local development).", "Insecure Server URL");
                     return;
                 }
             }
@@ -3967,10 +4026,15 @@ namespace RedfurSync
 
             try
             {
-                cfg.PairingCode = code;
-                cfg.DisplayName = _txtDisplayName.Text.Trim();
-                if (!string.IsNullOrWhiteSpace(_txtServerUrl.Text))
-                    cfg.ServerUrl = _txtServerUrl.Text.Trim();
+                cfg.PairingCode = usingApiKey ? string.Empty : code;
+                var rawName = _txtDisplayName.Text.Trim();
+                if (!string.IsNullOrWhiteSpace(rawName))
+                {
+                    var normalized = UploadService.NormalizeLabel(rawName, allowReserved: !string.IsNullOrWhiteSpace(cfg.ApiKey));
+                    if (normalized != null) cfg.DisplayName = normalized;
+                }
+                if (!string.IsNullOrWhiteSpace(candidateUrl))
+                    cfg.ServerUrl = candidateUrl;
                 cfg.Save();
 
                 var (paired, message) = await _watcher.PairDeviceAsync();

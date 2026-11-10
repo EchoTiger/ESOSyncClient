@@ -178,7 +178,7 @@ function FR:CollectReconData()
     end
 
     -- 1. Ingest synced spreadsheet kiosks from Fissal Relay
-    local sheetKiosks = (self.savedVars and self.savedVars.spreadsheetKiosks) or self.SpreadsheetKiosks or {}
+    local sheetKiosks = self.SpreadsheetKiosks or (self.savedVars and self.savedVars.spreadsheetKiosks) or {}
     for key, sk in pairs(sheetKiosks) do
         local rawName = sk.trader or key
         local resolved = self.ResolveCanonicalKiosk and self:ResolveCanonicalKiosk(rawName, sk.city, sk.zone) or nil
@@ -522,7 +522,7 @@ function FR:BuildBidsReconUI(parent)
     local numGuilds = GetNumGuilds()
     for g = 1, math.min(numGuilds, 5) do
         local gId = GetGuildId(g)
-        local gName = GetGuildName(gId)
+        local gName = GetGuildName(gId) or ("Guild " .. tostring(g))
         local shortName = gName
         if string.find(string.lower(gName), "post") then shortName = "Post"
         elseif string.find(string.lower(gName), "caravan") then shortName = "Caravan"
@@ -868,8 +868,8 @@ function FR:BuildBidsReconUI(parent)
                     local refAgo = ZO_FormatDurationAgo(GetTimeStamp() - b.refundTime)
                     InformationTooltip:AddLine(string.format("• Refunded: |c888888%s ago|r", refAgo), "ZoFontGameSmall")
                 end
-                local dateStr = os.date("%A, %b %d at %H:%M UTC", b.timestamp)
-                InformationTooltip:AddLine(string.format("• Timestamp: |c888888%s|r", dateStr), "ZoFontGameSmall")
+                local okD, dateStr = pcall(os.date, "!%A, %b %d at %H:%M UTC", b.timestamp or 0)
+                InformationTooltip:AddLine(string.format("• Timestamp: |c888888%s|r", (okD and dateStr) or "Recorded"), "ZoFontGameSmall")
             elseif control.reconData then
                 local rData = control.reconData
                 InitializeTooltip(InformationTooltip, control, RIGHT, 5, 0)
@@ -881,8 +881,8 @@ function FR:BuildBidsReconUI(parent)
                     InformationTooltip:AddLine(string.format("• Notes: |cCCCCCC%s|r", rData.notes), "ZoFontGameSmall")
                 end
                 if rData.timestamp and rData.timestamp > 0 then
-                    local dateStr = os.date("%A, %b %d at %H:%M UTC", rData.timestamp)
-                    InformationTooltip:AddLine(string.format("• Scouted: |c888888%s|r", dateStr), "ZoFontGameSmall")
+                    local okR, dateStr = pcall(os.date, "!%A, %b %d at %H:%M UTC", rData.timestamp)
+                    InformationTooltip:AddLine(string.format("• Scouted: |c888888%s|r", (okR and dateStr) or "Recorded"), "ZoFontGameSmall")
                 else
                     InformationTooltip:AddLine("• Scouted: |c888888Unverified this week|r", "ZoFontGameSmall")
                 end

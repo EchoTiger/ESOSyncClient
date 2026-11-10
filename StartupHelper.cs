@@ -10,16 +10,19 @@ namespace RedfurSync
 
         public static void SetStartup(bool enable)
         {
+            var exePath = Environment.ProcessPath ?? AppContext.BaseDirectory;
+            SetStartupForPath(exePath, enable);
+        }
+
+        public static void SetStartupForPath(string exePath, bool enable)
+        {
             try
             {
                 using var key = Registry.CurrentUser.OpenSubKey(RegistryPath, writable: true);
                 if (key == null) return;
 
-                if (enable)
+                if (enable && !string.IsNullOrWhiteSpace(exePath))
                 {
-                    // Environment.ProcessPath is the correct way to get the exe path
-                    // in a single-file published app — Assembly.Location returns empty string
-                    var exePath = Environment.ProcessPath ?? AppContext.BaseDirectory;
                     key.SetValue(AppName, $"\"{exePath}\" --startup");
                 }
                 else
@@ -41,10 +44,10 @@ namespace RedfurSync
         {
             try
             {
-                using var key = Registry.CurrentUser.OpenSubKey(RegistryPath, writable: true);
-                if (key == null) return false;
+                using var readKey = Registry.CurrentUser.OpenSubKey(RegistryPath, writable: false);
+                if (readKey == null) return false;
 
-                var val = key.GetValue(AppName) as string;
+                var val = readKey.GetValue(AppName) as string;
                 if (string.IsNullOrWhiteSpace(val)) return false;
 
                 var currentExe = Environment.ProcessPath ?? AppContext.BaseDirectory;
@@ -52,8 +55,12 @@ namespace RedfurSync
                 if (!string.Equals(val, expected, StringComparison.OrdinalIgnoreCase) &&
                     !string.Equals(val, $"\"{currentExe}\"", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Self-heal stale path from previous relocation or drive
-                    key.SetValue(AppName, expected);
+                    try
+                    {
+                        using var writeKey = Registry.CurrentUser.OpenSubKey(RegistryPath, writable: true);
+                        writeKey?.SetValue(AppName, expected);
+                    }
+                    catch { }
                 }
 
                 return true;

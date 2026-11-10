@@ -1,4 +1,7 @@
 using System.Net;
+using System.Text;
+using System.Text.Json;
+using NSec.Cryptography;
 using RedfurSync;
 using Xunit;
 
@@ -22,12 +25,16 @@ public sealed class StartAsyncIdempotencyTests
         temporaryDirectory.CreateDirectory("live/AddOns/TamrielTradeCentre");
         temporaryDirectory.CreateDirectory("live/AddOns/LibEsoHubPrices");
 
-        var updateHandler = new ManifestCountingHandler(ManifestPath);
+        using var ephemeralKey = Key.Create(SignatureAlgorithm.Ed25519);
+        var pubKeyB64 = Convert.ToBase64String(ephemeralKey.PublicKey.Export(KeyBlobFormat.RawPublicKey));
+
+        var updateHandler = new ManifestCountingHandler(ManifestPath, ephemeralKey);
         var config = new AppConfig
         {
             ServerUrl = "https://relay.invalid/upload",
             ApiKey = "fixture-key",
             UpdateUrl = $"https://relay.invalid{ManifestPath}",
+            ExtraTrustedKeysB64 = new List<string> { pubKeyB64 }
         };
         using var uploader = new UploadService(config, FakeHttpMessageHandler.Returning(HttpStatusCode.OK), updateHandler);
         using var watcher = new FileWatcherService(_ => { }, config, uploader, spoolPath, _ => { })
@@ -59,29 +66,58 @@ public sealed class StartAsyncIdempotencyTests
     private sealed class ManifestCountingHandler : HttpMessageHandler
     {
         private readonly string _manifestPath;
+        private readonly byte[] _manifestBytes;
+        private readonly byte[] _sigBytes;
         private int _manifestRequests;
 
-        public ManifestCountingHandler(string manifestPath) => _manifestPath = manifestPath;
+        public ManifestCountingHandler(string manifestPath, Key signingKey)
+        {
+            _manifestPath = manifestPath;
+            var manifest = new UpdateManifest
+            {
+                Schema = 1,
+                Product = "fissal-relay",
+                Channel = "stable",
+                Sequence = 100,
+                Version = "9.0.0",
+                IssuedAt = DateTimeOffset.UtcNow,
+                ExpiresAt = DateTimeOffset.UtcNow.AddDays(30),
+                MinUpdaterVersion = "1.4.0",
+                Changelog = "test",
+                Files = new List<UpdateFileArtifact>
+                {
+                    new()
+                    {
+                        Path = "RedfurSync.exe",
+                        Sha256 = new string('a', 64),
+                        Size = 1024,
+                        Url = "https://relay.invalid/update/download"
+                    }
+                }
+            };
+            _manifestBytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(manifest));
+            _sigBytes = SignatureAlgorithm.Ed25519.Sign(signingKey, _manifestBytes);
+        }
 
         public int ManifestRequests => Volatile.Read(ref _manifestRequests);
 
-        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
             if (request.RequestUri?.AbsolutePath == _manifestPath)
             {
                 Interlocked.Increment(ref _manifestRequests);
-                var manifest = System.Text.Json.JsonSerializer.Serialize(new
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    version = "9.0.0",
-                    downloadUrl = "https://relay.invalid/update/download",
-                    changelog = "test",
-                    sizeBytes = 1024,
-                    sha256 = new string('a', 64)
+                    Content = new ByteArrayContent(_manifestBytes)
                 });
-                return new HttpResponseMessage(HttpStatusCode.OK)
+            }
+
+            if (request.RequestUri?.AbsolutePath == _manifestPath + ".sig")
+            {
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    Content = new StringContent(manifest, System.Text.Encoding.UTF8, "application/json")
-                };
+                    Content = new ByteArrayContent(_sigBytes)
+                });
             }
 
             // Download endpoint: report a Content-Length that contradicts the manifest (512 != 1024)
@@ -91,7 +127,7 @@ public sealed class StartAsyncIdempotencyTests
                 Content = new ByteArrayContent(new byte[512])
             };
             download.Content.Headers.ContentLength = 512;
-            return download;
+            return Task.FromResult(download);
         }
     }
 }

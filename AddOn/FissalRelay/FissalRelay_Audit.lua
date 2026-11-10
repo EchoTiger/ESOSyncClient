@@ -153,12 +153,16 @@ function FR:GetMemberDeposits(guildId, scanWindowDays)
 end
 
 function FR:RunRosterAudit()
-    local gIdx = self.selectedGuildIndex or 1
-    local numGuilds = GetNumGuilds()
-    if gIdx < 1 or gIdx > numGuilds then return end
-
-    local guildId = GetGuildId(gIdx)
-    local guildName = GetGuildName(guildId)
+    local guildId = self:ResolveGuildId(self.selectedGuildIndex)
+    if not guildId or guildId == 0 then
+        self.auditFilteredMembers = {}
+        self.auditTotalMembers = 0
+        self.auditExcusedCount = 0
+        self.auditOfficerCount = 0
+        self.auditShieldedCount = 0
+        return
+    end
+    local guildName = GetGuildName(guildId) or ("Guild " .. tostring(guildId))
     local memberCount = GetNumGuildMembers(guildId)
     local cutoffSecs = (self.auditFilterDays or 14) * 86400
 
@@ -292,8 +296,9 @@ function FR:RunRosterAudit()
     self.auditOfficerCount = officerCount
     self.auditShieldedCount = shieldedSellerCount
 
-    -- Save structured audit snapshot
-    if self.savedVars and self.savedVars.staff then
+    -- Save structured audit snapshot only when unfiltered so search/rank UI filters never clobber full exports
+    local isUnfiltered = ((self.auditSearchQuery or "") == "") and ((self.auditRankFilter or "all") == "all")
+    if isUnfiltered and self.savedVars and self.savedVars.staff then
         if not self.savedVars.staff.inactivityAudits then
             self.savedVars.staff.inactivityAudits = {}
         end
@@ -824,8 +829,8 @@ function FR:BuildAuditorUI(parent)
 end
 
 function FR:CycleAuditRankFilter()
-    local gIdx = self.selectedGuildIndex or 1
-    local guildId = GetGuildId(gIdx)
+    local guildId = self:ResolveGuildId(self.selectedGuildIndex)
+    if not guildId or guildId == 0 then return end
     local numRanks = GetNumGuildRanks(guildId)
 
     if self.auditRankFilter == "all" then
@@ -909,8 +914,7 @@ function FR:UpdateAuditorUI(sortOnly)
         self:RunRosterAudit()
     end
 
-    local gIdx = self.selectedGuildIndex or 1
-    local guildId = GetGuildId(gIdx)
+    local guildId = self:ResolveGuildId(self.selectedGuildIndex)
 
     -- Dynamic ASCII sort indicators
     local nameSort = (self.auditSortBy == "name") and (self.auditSortAsc and " ^" or " v") or ""
@@ -1120,9 +1124,9 @@ end
 
 function FR:ApplyAuditAction(m, action, isBatch)
     if not m or not m.name then return end
-    local gIdx = self.selectedGuildIndex or 1
-    local guildId = GetGuildId(gIdx)
-    local guildName = GetGuildName(guildId)
+    local guildId = self:ResolveGuildId(self.selectedGuildIndex)
+    if not guildId or guildId == 0 then return end
+    local guildName = GetGuildName(guildId) or "Guild"
     action = action or "Warn Mail"
 
     local allowed, errMsg, mIdx = self:CheckAuditActionPermission(guildId, m.name, action)
@@ -1141,13 +1145,29 @@ function FR:ApplyAuditAction(m, action, isBatch)
 
     elseif action == "Kick & Mail" then
         local function DoKickAndMail()
+            if IsInGamepadPreferredMode and IsInGamepadPreferredMode() then
+                FR.PrintChat("|cFFCC00[Mail Notice]|r Switch out of Gamepad UI mode before staging courtesy mail.")
+                return
+            end
             SCENE_MANAGER:Show("mailSend")
             zo_callLater(function()
-                ZO_MailSendToField:SetText(m.name)
-                ZO_MailSendSubjectField:SetText(string.format("[%s] Roster Space Update", guildName))
-                ZO_MailSendBodyField:SetText(string.format("Greetings %s,\n\nThank you for being part of %s! As our trading roster is currently full, we had to open up your space to keep trades flowing while you take a break. You are always warmly welcome back whenever you return to Tamriel—simply message any officer or re-apply!\n\nWarm regards,\n%s Staff",
-                    m.name, guildName, guildName))
-                ZO_MailSendBodyField:TakeFocus()
+                -- CRITICAL GOLD/ITEM SAFETY: Clear any queued gold or item attachments before staging courtesy mail!
+                if ClearQueuedMail then pcall(ClearQueuedMail) end
+                if QueueMoneyAttachment then pcall(QueueMoneyAttachment, 0) end
+                if MAIL_SEND and MAIL_SEND.ClearFields then pcall(function() MAIL_SEND:ClearFields() end) end
+                local subj = string.format("[%s] Roster Space Update", guildName)
+                local body = string.format("Greetings %s,\n\nThank you for being part of %s! As our trading roster is currently full, we had to open up your space to keep trades flowing while you take a break. You are always warmly welcome back whenever you return to Tamriel—simply message any officer or re-apply!\n\nWarm regards,\n%s Staff",
+                    m.name, guildName, guildName)
+                if FR.TruncateUtf8 then
+                    subj = FR:TruncateUtf8(subj, 50)
+                    body = FR:TruncateUtf8(body, 700)
+                end
+                if ZO_MailSendToField then ZO_MailSendToField:SetText(m.name) end
+                if ZO_MailSendSubjectField then ZO_MailSendSubjectField:SetText(subj) end
+                if ZO_MailSendBodyField then
+                    ZO_MailSendBodyField:SetText(body)
+                    ZO_MailSendBodyField:TakeFocus()
+                end
             end, 200)
 
             FR:RecordMemberMailSent(m.name, "kick_mail")
@@ -1533,8 +1553,7 @@ end
 
 function FR:RefreshAuditExclusionsDrawer()
     if not self.auditExclusionsDrawer then return end
-    local gIdx = self.selectedGuildIndex or 1
-    local guildId = GetGuildId(gIdx)
+    local guildId = self:ResolveGuildId(self.selectedGuildIndex)
 
     local excls = {}
     if self.savedVars and self.savedVars.auditExclusions and self.savedVars.auditExclusions[guildId] then
@@ -1660,8 +1679,7 @@ function FR:StartAuditBatch()
         return
     end
 
-    local gIdx = self.selectedGuildIndex or 1
-    local guildId = GetGuildId(gIdx)
+    local guildId = self:ResolveGuildId(self.selectedGuildIndex)
     local guildName = GetGuildName(guildId)
 
     local queue = {}
@@ -1804,8 +1822,7 @@ function FR:RenderAuditorRows()
     if self.auditCurrentPage < 1 then self.auditCurrentPage = 1 end
 
     local startIndex = (self.auditCurrentPage - 1) * ROWS_PER_PAGE
-    local gIdx = self.selectedGuildIndex or 1
-    local guildId = GetGuildId(gIdx)
+    local guildId = self:ResolveGuildId(self.selectedGuildIndex)
 
     for r = 1, ROWS_PER_PAGE do
         local row = self.auditRows and self.auditRows[r]
@@ -1975,21 +1992,34 @@ function FR:RenderAuditorRows()
 end
 
 function FR:TriggerInactivityMailHandoff(memberName, daysOffline)
-    local gIdx = self.selectedGuildIndex or 1
-    local guildId = GetGuildId(gIdx)
-    local guildName = GetGuildName(guildId)
+    local guildId = self:ResolveGuildId(self.selectedGuildIndex)
+    local guildName = GetGuildName(guildId) or "Guild"
 
     if self.StageInactivityWarning then
         self:StageInactivityWarning(memberName, guildName, daysOffline)
     else
-        -- Fallback: open mail send and fill fields directly
+        if IsInGamepadPreferredMode and IsInGamepadPreferredMode() then
+            self.PrintChat("|cFFCC00[Mail Notice]|r Switch out of Gamepad UI mode before staging warning mail.")
+            return
+        end
         SCENE_MANAGER:Show("mailSend")
         zo_callLater(function()
-            ZO_MailSendToField:SetText(memberName)
-            ZO_MailSendSubjectField:SetText(string.format("[%s] Roster Check-in", guildName))
-            ZO_MailSendBodyField:SetText(string.format("Greetings %s,\n\nThis is a friendly check-in from %s! We noticed you haven't logged in for %d days. If you are taking a break, please let an officer know so we can safeguard your roster spot!\n\nWarm regards,\n%s Staff",
-                memberName, guildName, daysOffline, guildName))
-            ZO_MailSendBodyField:TakeFocus()
+            if ClearQueuedMail then pcall(ClearQueuedMail) end
+            if QueueMoneyAttachment then pcall(QueueMoneyAttachment, 0) end
+            if MAIL_SEND and MAIL_SEND.ClearFields then pcall(function() MAIL_SEND:ClearFields() end) end
+            local subj = string.format("[%s] Roster Check-in", guildName)
+            local body = string.format("Greetings %s,\n\nThis is a friendly check-in from %s! We noticed you haven't logged in for %d days. If you are taking a break, please let an officer know so we can safeguard your roster spot!\n\nWarm regards,\n%s Staff",
+                memberName, guildName, daysOffline, guildName)
+            if self.TruncateUtf8 then
+                subj = self:TruncateUtf8(subj, 50)
+                body = self:TruncateUtf8(body, 700)
+            end
+            if ZO_MailSendToField then ZO_MailSendToField:SetText(memberName) end
+            if ZO_MailSendSubjectField then ZO_MailSendSubjectField:SetText(subj) end
+            if ZO_MailSendBodyField then
+                ZO_MailSendBodyField:SetText(body)
+                ZO_MailSendBodyField:TakeFocus()
+            end
         end, 200)
     end
 
@@ -1998,9 +2028,8 @@ function FR:TriggerInactivityMailHandoff(memberName, daysOffline)
 end
 
 function FR:ExportAuditToChat()
-    local gIdx = self.selectedGuildIndex or 1
-    local guildId = GetGuildId(gIdx)
-    local guildName = GetGuildName(guildId)
+    local guildId = self:ResolveGuildId(self.selectedGuildIndex)
+    local guildName = GetGuildName(guildId) or "Guild"
     local members = self.auditFilteredMembers or {}
 
     self.PrintChat(string.format("=== Inactivity Purge Audit: %s (%d+ Days Offline) ===", guildName, self.auditFilterDays or 14))
