@@ -177,10 +177,15 @@ namespace RedfurSync
         private readonly float _scale;
         private int FormW, HeaderH, RowH, ExpandH, BarH, Pad, BtnW, BtnH, DiagH, EmptyH;
 
-        private readonly ObservableCollection<UploadJob> _jobs;
+        private readonly FileWatcherService? _watcher;
+        private readonly List<UploadJob> _jobs = new();
+        private long _lastSyncedJobVersion = -1;
         private readonly Action<UploadJob> _onRetry;
         private readonly Action<UploadJob> _onCancel;
+        private readonly Action? _onExpandToFull;
         private readonly System.Windows.Forms.Timer _anim;
+        private readonly ToolTip _headerToolTip = new() { InitialDelay = 250, ReshowDelay = 100 };
+        private string _activeTooltipText = "";
 
         private readonly HashSet<string> _expandedLogs = new();
         private readonly Dictionary<int, float> _diagScrolls = new(); 
@@ -197,6 +202,7 @@ namespace RedfurSync
         private int   _hoverLayoutIdx      = -1;   
         private int   _hoverDeleteGroupIdx = -1;   
         private bool  _hoverClose;
+        private bool  _hoverExpand;
         private int   _hoverCopyJobIdx     = -1;
         private int   _hoverDiagJobIdx     = -1;
         private int   _hoverTrashJobIdx    = -1;
@@ -256,30 +262,130 @@ namespace RedfurSync
         private Color _coreColor = CGreen, _auraColor = Color.FromArgb(240, 150, 40);
         private readonly Action<UploadJob> _onApply;
         
-        private Rectangle CloseBtnRect => new Rectangle(Width - Pad - S(20), (HeaderH - S(20)) / 2, S(25), S(25));
+        private Rectangle CloseBtnRect => new Rectangle(Width - S(31), (HeaderH - S(25)) / 2, S(25), S(25));
+        private Rectangle ExpandBtnRect => new Rectangle(CloseBtnRect.Left - S(28), (HeaderH - S(25)) / 2, S(25), S(25));
         
         private int RightGutterW => S(3);
         private int WorkingAreaW => Width - RightGutterW;
         private int RightBtnX => WorkingAreaW - Pad - BtnW;
 
         public UploadProgressForm(
-            ObservableCollection<UploadJob> jobs, Action<UploadJob> onRetry, Action<UploadJob> onCancel, Action<UploadJob> onApply)
+            FileWatcherService watcher,
+            Action<UploadJob> onApply,
+            Action? onExpandToFull = null)
+            : this(watcher.Jobs, watcher.RetryJob, watcher.CancelJob, onApply, onExpandToFull, watcher)
         {
-            _jobs = jobs; _onRetry = onRetry; _onCancel = onCancel; _onApply = onApply;
-            _jobs.CollectionChanged += (s, e) => { _layoutNeedsUpdate = true; };
+        }
+
+        public UploadProgressForm(
+            ObservableCollection<UploadJob> jobs,
+            Action<UploadJob> onRetry,
+            Action<UploadJob> onCancel,
+            Action<UploadJob> onApply,
+            Action? onExpandToFull = null,
+            FileWatcherService? watcher = null)
+        {
+            _watcher = watcher;
+            _onRetry = onRetry;
+            _onCancel = onCancel;
+            _onApply = onApply;
+            _onExpandToFull = onExpandToFull;
+
+            if (_watcher != null)
+            {
+                SyncJobsFromWatcher(force: true);
+                _watcher.JobsChanged += OnWatcherJobsChanged;
+            }
+            else
+            {
+                _jobs.AddRange(jobs);
+                jobs.CollectionChanged += (s, e) =>
+                {
+                    if (IsDisposed) return;
+                    if (InvokeRequired)
+                    {
+                        try { BeginInvoke(() => { _jobs.Clear(); _jobs.AddRange(jobs); _layoutNeedsUpdate = true; WakeAnimationTimer(); Invalidate(); }); } catch { }
+                    }
+                    else
+                    {
+                        _jobs.Clear();
+                        _jobs.AddRange(jobs);
+                        _layoutNeedsUpdate = true;
+                        WakeAnimationTimer();
+                        Invalidate();
+                    }
+                };
+            }
 
             AutoScaleMode = AutoScaleMode.None; FormBorderStyle = FormBorderStyle.None;
-            ShowInTaskbar = false; TopMost = true; BackColor = CBg; DoubleBuffered = true;
+            ShowInTaskbar = true; TopMost = true; BackColor = CBg; DoubleBuffered = true;
             StartPosition = FormStartPosition.Manual;
+            Text = "Fissal Relay // Mini Status";
 
             _scale = GetScale(Handle); ApplyScale(); InitializeGdiCache();
             Width = FormW;
 
             _anim = new System.Windows.Forms.Timer { Interval = AppConfig.AnimIntervalMs };
-            _anim.Tick += OnAnimationTick; _anim.Start();
+            _anim.Tick += OnAnimationTick;
+
+            FormClosing += (s, e) =>
+            {
+                if (e.CloseReason == CloseReason.UserClosing)
+                {
+                    e.Cancel = true;
+                    Hide(); // Hide compact window cleanly to system tray
+                }
+            };
 
             MouseDown += OnMouseDown; MouseClick += OnClick;
             MouseMove += OnMove; MouseLeave += (_, _) => ResetHoverStates();
+        }
+
+        private void OnWatcherJobsChanged()
+        {
+            if (IsDisposed) return;
+            if (InvokeRequired)
+            {
+                if (!IsHandleCreated) return;
+                try { BeginInvoke(OnWatcherJobsChanged); } catch { }
+                return;
+            }
+            SyncJobsFromWatcher(force: true);
+            _layoutNeedsUpdate = true;
+            if (Visible && WindowState != FormWindowState.Minimized)
+            {
+                EnsureLayoutUpdated();
+                WakeAnimationTimer();
+                Invalidate();
+            }
+        }
+
+        private void SyncJobsFromWatcher(bool force = false)
+        {
+            if (_watcher == null) return;
+            long ver = _watcher.CurrentJobVersion;
+            if (!force && ver == _lastSyncedJobVersion) return;
+            _lastSyncedJobVersion = ver;
+
+            var snap = _watcher.GetJobsSnapshot();
+            _jobs.Clear();
+            for (int i = 0; i < snap.Length; i++)
+                _jobs.Add(snap[i]);
+
+            // Auto-expand today's group when a fresh batch arrives so upload progress is immediately visible
+            if (_jobs.Count > 0 && _expandedLogs.Count == 0)
+            {
+                var newest = _jobs.OrderByDescending(j => j.QueuedAt).First();
+                _expandedLogs.Add(newest.QueuedAt.ToString("MMM dd, yyyy").ToUpper());
+            }
+        }
+
+        private void WakeAnimationTimer()
+        {
+            if (IsDisposed || !Visible || WindowState == FormWindowState.Minimized) return;
+            int fastInterval = AppConfig.AnimIntervalMs;
+            if (_anim.Interval != fastInterval) _anim.Interval = fastInterval;
+            if (!_anim.Enabled) _anim.Start();
         }
 
         protected override void WndProc(ref Message m)
@@ -351,8 +457,10 @@ namespace RedfurSync
 
         private void ResetHoverStates()
         {
-            _hoverLayoutIdx = -1; _hoverDeleteGroupIdx = -1; _hoverClose = false;
-            _hoverCopyJobIdx = -1; _hoverDiagJobIdx = -1; _hoverTrashJobIdx = -1; Invalidate();
+            _hoverLayoutIdx = -1; _hoverDeleteGroupIdx = -1; _hoverClose = false; _hoverExpand = false;
+            _hoverCopyJobIdx = -1; _hoverDiagJobIdx = -1; _hoverTrashJobIdx = -1;
+            if (_activeTooltipText.Length > 0) { _headerToolTip.SetToolTip(this, ""); _activeTooltipText = ""; }
+            Invalidate();
         }
 
         private int S(int v) => (int)Math.Round(v * _scale);
@@ -411,7 +519,15 @@ namespace RedfurSync
                 lastWasUpdate = job.IsUpdate;
             }
 
-            _jobs.Remove(jobToRemove);
+            if (_watcher != null)
+            {
+                _watcher.RemoveJob(jobToRemove);
+                SyncJobsFromWatcher(force: true);
+            }
+            else
+            {
+                _jobs.Remove(jobToRemove);
+            }
 
             if (wasExpanded && peerJobs.Count > 0) {
                 currentGroupAnchor = null;
@@ -439,19 +555,36 @@ namespace RedfurSync
 
         private void OnAnimationTick(object? sender, EventArgs e)
         {
-            // PERF Track C P0: adaptive tick — if Jobs.Count==0 or all Done/terminal and no visual delta, skip Invalidate (keep FidelityMode: High always animates)
+            if (IsDisposed || !Visible || WindowState == FormWindowState.Minimized)
+            {
+                _anim.Stop();
+                return;
+            }
+
+            SyncJobsFromWatcher();
+
+            // Adaptive idle tick — drop timer frequency to 500ms (or 1000ms in Low FX) when idle so CPU stays ~0.00%
             bool isIdleForTick = _jobs.Count == 0 || _jobs.All(j => j.Status is UploadStatus.Done or UploadStatus.Failed or UploadStatus.Cancelled or UploadStatus.UpdateReady);
             if (isIdleForTick && _copyBubbles.Count == 0 && _purgeAnimFrames == 0 && _slideOffset == 0 && AppConfig.CurrentMode != FidelityMode.High)
             {
-                // Allow emptyStateAlpha to settle once, otherwise skip entire tick to save CPU
                 bool emptySettled = (_jobs.Count == 0 && _emptyStateAlpha >= 255f) || (_jobs.Count > 0 && _emptyStateAlpha <= 0f);
                 if (emptySettled)
                 {
-                    // Still run cheap color pulse check but skip Invalidate if nothing changed
                     bool sc = ProcessScrollPhysics();
-                    if (!sc) return;
+                    if (!sc)
+                    {
+                        int idleInterval = AppConfig.CurrentMode == FidelityMode.Low ? 1000 : 500;
+                        if (_anim.Interval != idleInterval) _anim.Interval = idleInterval;
+                        if (ProcessColorPulse() || AppConfig.FX.MarqueeTextAnim)
+                            Invalidate(new Rectangle(0, 0, Width, HeaderH));
+                        return;
+                    }
                 }
             }
+
+            if (_anim.Interval != AppConfig.AnimIntervalMs)
+                _anim.Interval = AppConfig.AnimIntervalMs;
+
             bool visualChanged = ProcessVisualMath();
             bool scrollChanged = ProcessScrollPhysics();
             bool colorChanged = ProcessColorPulse();
@@ -482,12 +615,20 @@ namespace RedfurSync
                         }
                         _slideStartY = startY; _slideOffset = purgedHeight;
                         
-                        // Purge the entire sync batch, not just the anchor file
+                        // Purge the entire sync batch thread-safely
                         var batchJobs = _jobs.Where(j => Math.Abs((j.QueuedAt - job.QueuedAt).TotalSeconds) <= 60 && j.IsUpdate == job.IsUpdate).ToList();
-                        foreach(var j in batchJobs) {
-                            if (j.CanCancel && (j.Status == UploadStatus.Uploading || j.Status == UploadStatus.Queued)) 
-                                _onCancel(j);
-                            _jobs.Remove(j);
+                        if (_watcher != null)
+                        {
+                            _watcher.RemoveJobs(batchJobs);
+                            SyncJobsFromWatcher(force: true);
+                        }
+                        else
+                        {
+                            foreach(var j in batchJobs) {
+                                if (j.CanCancel && (j.Status == UploadStatus.Uploading || j.Status == UploadStatus.Queued)) 
+                                    _onCancel(j);
+                                _jobs.Remove(j);
+                            }
                         }
                         
                         _purgingJobRef = null;
@@ -542,13 +683,21 @@ namespace RedfurSync
                 lastWasUpdate = thisJob.IsUpdate;
             }
             
-            foreach(var j in jobsToDelete) 
+            if (_watcher != null)
             {
-                if (j.Status == UploadStatus.Uploading || j.Status == UploadStatus.Queued)
+                _watcher.RemoveJobs(jobsToDelete);
+                SyncJobsFromWatcher(force: true);
+            }
+            else
+            {
+                foreach(var j in jobsToDelete) 
                 {
-                    if (j.CanCancel) _onCancel(j);
+                    if (j.Status == UploadStatus.Uploading || j.Status == UploadStatus.Queued)
+                    {
+                        if (j.CanCancel) _onCancel(j);
+                    }
+                    _jobs.Remove(j);
                 }
-                _jobs.Remove(j);
             }
 
             _expandedLogs.Remove(groupText);
@@ -664,7 +813,7 @@ namespace RedfurSync
                     UploadStatus.Done => "[ OK ] Signal verified. No anomalies in the transmission log.", 
                     UploadStatus.Uploading => $"[ >> ] Active transmission in progress -- {job.Progress * 100:0}% complete.",
                     UploadStatus.Queued => "[ -- ] Awaiting open transmission slot. Standing by.", 
-                    UploadStatus.UpdateReady => $"[ OK ] Matrix downloaded; its hash matches the update manifest. Publisher signing is not configured.\n • Current Build : v{job.CurrentVersion}\n • Target Build  : v{job.UpdateVersion}\n • Payload Size  : {job.FileSizeDisplay}\n\n[ CHANGELOG ] :\n{job.Changelog}\n\n[ OK ] Ready for integration!",
+                    UploadStatus.UpdateReady => $"[ OK ] Matrix downloaded; Ed25519 signature & SHA-256 hash verified against update manifest.\n • Current Build : v{job.CurrentVersion}\n • Target Build  : v{job.UpdateVersion}\n • Payload Size  : {job.FileSizeDisplay}\n\n[ CHANGELOG ] :\n{job.Changelog}\n\n[ OK ] Ready for integration!",
                     _ => "[ ?? ] Signal state unknown."
                 };
             }
@@ -896,15 +1045,25 @@ private void EnsureLayoutUpdated()
         protected override void OnVisibleChanged(EventArgs e)
         {
             base.OnVisibleChanged(e);
-            if (Visible) {
+            if (Visible && WindowState != FormWindowState.Minimized)
+            {
+                SyncJobsFromWatcher(force: true);
                 _layoutNeedsUpdate = true;
                 EnsureLayoutUpdated();
+                WakeAnimationTimer();
+                Invalidate();
+            }
+            else
+            {
+                _anim.Stop();
             }
         }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
+#if DEBUG
             if (keyData == (Keys.Control | Keys.Shift | Keys.P)) { InjectPhantomData(); return true; }
+#endif
             return base.ProcessCmdKey(ref msg, keyData);
         }
 
@@ -1067,10 +1226,8 @@ private void EnsureLayoutUpdated()
 
             g.FillRectangle(_bgBrush, 0, 0, Width, Height);
             
-            // [Req 6] Subtle retro terminal mesh texture
-            using var meshPen = new Pen(Color.FromArgb(8, 255, 255, 255), 1f);
-            for (int i = 0; i < Width; i += S(3)) g.DrawLine(meshPen, i, 0, i, Height);
-            for (int j = 0; j < Height; j += S(3)) g.DrawLine(meshPen, 0, j, Width, j);
+            // [Req 6] Cached TextureBrush terminal mesh (zero per-frame DrawLine loops)
+            FissalTheme.DrawTerminalMesh(g, ClientRectangle, _scale, 8);
 
             // Screen scratches and smudges based on Fidelity ---
             if (AppConfig.CurrentMode != FidelityMode.Low)
@@ -2078,7 +2235,7 @@ private void EnsureLayoutUpdated()
             using var bezelEdgePen = new Pen(Color.FromArgb(50, 255, 255, 255), 8); g.DrawLine(bezelEdgePen, 0, HeaderH - 2, Width, HeaderH - 2);
             using var bezelInnerPen = new Pen(Color.FromArgb(250, 0, 0, 0), 4); g.DrawLine(bezelInnerPen, 0, HeaderH - 1, Width, HeaderH - 1);
 
-            int plateH = S(45), plateW = S(165), plateX = Pad-10, plateY = (HeaderH - plateH) / 2;
+            int plateH = S(45), plateW = _onExpandToFull != null ? S(156) : S(165), plateX = _onExpandToFull != null ? Math.Max(S(4), Pad - S(6)) : Pad - 10, plateY = (HeaderH - plateH) / 2;
             using var platePath = RoundRect(plateX, plateY, plateW, plateH, S(4));
             using var plateBg = new LinearGradientBrush(new Rectangle(plateX, plateY, plateW, plateH), Color.FromArgb(12, 14, 16), Color.FromArgb(35, 40, 45), LinearGradientMode.Vertical); g.FillPath(plateBg, platePath);
             using var plateShadow = new Pen(Color.FromArgb(200, 0, 0, 0), S(2)); g.DrawPath(plateShadow, platePath);
@@ -2204,7 +2361,9 @@ private void EnsureLayoutUpdated()
             using var subCore = new SolidBrush(Color.FromArgb(100, CGoldMid.R, CGoldMid.G, CGoldMid.B)); g.DrawString(subText, _fBody95Italic, subCore, new PointF(subX, subY));
             g.ResetTransform(); 
 
-            int mcW = S(115), mcH = S(25), mcX = CloseBtnRect.Left - mcW - S(8);
+            int mcW = _onExpandToFull != null ? S(104) : S(115);
+            int rightAnchorLeft = _onExpandToFull != null ? ExpandBtnRect.Left : CloseBtnRect.Left;
+            int mcH = S(25), mcX = rightAnchorLeft - mcW - S(6);
             int mcY = plateY + plateH - mcH; 
             using var mcPath = RoundRect(mcX, mcY, mcW, mcH, S(4));
             using var mcBg = new SolidBrush(Color.FromArgb(255, 4, 12, 6)); g.FillPath(mcBg, mcPath);
@@ -2276,7 +2435,7 @@ private void EnsureLayoutUpdated()
             var currentStatus = statuses[_dispStatusIdx];
             string displayBadge = currentStatus.text; Color badgeColor = currentStatus.color;
 
-            int lightDia = S(9), lightSpacing = S(20), lightsY = (mcY - lightDia+15) / 2, leftLightsStartX = mcX + S(25); 
+            int lightDia = S(9), lightSpacing = _onExpandToFull != null ? S(19) : S(20), lightsY = (mcY - lightDia+15) / 2, leftLightsStartX = mcX + (_onExpandToFull != null ? S(14) : S(25)); 
             Color[] lightColors = { Color.FromArgb(60, 20, 220, 20), Color.FromArgb(50, 250, 190, 0), Color.FromArgb(60, 255, 30, 30), Color.FromArgb(60, 190, 50, 240) };
 
             for (int i = 0; i < 4; i++)
@@ -2284,7 +2443,7 @@ private void EnsureLayoutUpdated()
                 bool isActive = statuses.Exists(s => s.type == i) && !(_dispState == DisplayState.Fading && _dispWait < 4);
                 bool isCurrent = currentStatus.type == i;
                 int cx = leftLightsStartX + (i * lightSpacing);
-                if (i == 3) cx += S(18); 
+                if (i == 3) cx += _onExpandToFull != null ? S(12) : S(18); 
                 
                 using var offBrush = new LinearGradientBrush(new Rectangle(cx, lightsY, lightDia, lightDia), 
                     Color.FromArgb(255, lightColors[i].R/3, lightColors[i].G/100, lightColors[i].B/45), 
@@ -2390,6 +2549,11 @@ private void EnsureLayoutUpdated()
                 using var mcScratchPen = new Pen(Color.FromArgb(scratchAlpha, 255, 255, 255), 1f);
                 g.DrawLine(mcScratchPen, mcX + S(15), mcY + S(8), mcX + S(22), mcY + S(14));
                 g.DrawLine(mcScratchPen, mcX + mcW - S(10), mcY + S(18), mcX + mcW - S(5), mcY + S(12));
+            }
+
+            if (_onExpandToFull != null)
+            {
+                FissalTheme.DrawDwemerCircularButton(g, ExpandBtnRect, "◰", Color.FromArgb(68, 56, 40), _hoverExpand, false, _scale);
             }
 
             var cxRect = CloseBtnRect;
@@ -2513,7 +2677,7 @@ private bool GetHitRow(float contentY, out int layoutIdx, out RowLayout hitRow)
 
         private void OnMouseDown(object? sender, MouseEventArgs e)
         {
-            if (e.Button != MouseButtons.Left || CloseBtnRect.Contains(e.Location)) return;
+            if (e.Button != MouseButtons.Left || CloseBtnRect.Contains(e.Location) || (_onExpandToFull != null && ExpandBtnRect.Contains(e.Location))) return;
 
             int viewHeight = Height - HeaderH - S(6); float maxMainScroll = Math.Max(0, _contentHeight + (int)_slideOffset - viewHeight);
             if (maxMainScroll > 0)
@@ -2562,7 +2726,7 @@ private bool GetHitRow(float contentY, out int layoutIdx, out RowLayout hitRow)
                     }
                 }
             }
-            if (e.Y <= HeaderH && !CloseBtnRect.Contains(e.Location)) { ReleaseCapture(); SendMessage(Handle, 0xA1, 0x2, 0); }
+            if (e.Y <= HeaderH && !CloseBtnRect.Contains(e.Location) && !(_onExpandToFull != null && ExpandBtnRect.Contains(e.Location))) { ReleaseCapture(); SendMessage(Handle, 0xA1, 0x2, 0); }
         }
 
         protected override void OnMouseUp(MouseEventArgs e)
@@ -2606,7 +2770,20 @@ private bool GetHitRow(float contentY, out int layoutIdx, out RowLayout hitRow)
             }
 
             bool newHoverClose = CloseBtnRect.Contains(e.Location);
-            if (_hoverClose != newHoverClose) { _hoverClose = newHoverClose; Invalidate(); }
+            bool newHoverExpand = _onExpandToFull != null && ExpandBtnRect.Contains(e.Location);
+            if (_hoverClose != newHoverClose || _hoverExpand != newHoverExpand)
+            {
+                _hoverClose = newHoverClose;
+                _hoverExpand = newHoverExpand;
+                Cursor = (_hoverClose || _hoverExpand) ? Cursors.Hand : Cursors.Default;
+                string nextTip = _hoverExpand ? "Expand to Full Relay Console" : (_hoverClose ? "Hide to System Tray" : "");
+                if (_activeTooltipText != nextTip)
+                {
+                    _headerToolTip.SetToolTip(this, nextTip);
+                    _activeTooltipText = nextTip;
+                }
+                Invalidate(new Rectangle(0, 0, Width, HeaderH));
+            }
 
             int prev = _hoverLayoutIdx, prevCopy = _hoverCopyJobIdx, prevDiag = _hoverDiagJobIdx, prevDelGroup = _hoverDeleteGroupIdx, prevTrash = _hoverTrashJobIdx;
             _hoverLayoutIdx = -1; _hoverCopyJobIdx = -1; _hoverDiagJobIdx = -1; _hoverDeleteGroupIdx = -1; _hoverTrashJobIdx = -1;
@@ -2652,6 +2829,7 @@ private bool GetHitRow(float contentY, out int layoutIdx, out RowLayout hitRow)
         {
             if (e.Button != MouseButtons.Left) return;
             if (CloseBtnRect.Contains(e.Location)) { Close(); return; }
+            if (_onExpandToFull != null && ExpandBtnRect.Contains(e.Location)) { _onExpandToFull(); return; }
 
             if (_purgeAnimFrames > 0) return; 
 
@@ -2796,7 +2974,37 @@ private bool GetHitRow(float contentY, out int layoutIdx, out RowLayout hitRow)
 
         protected override void Dispose(bool disposing)
         {
-            if (disposing) { _anim.Stop(); _anim.Dispose(); _bgBrush?.Dispose(); _fTitle28Bold?.Dispose(); _fTitle125Bold?.Dispose(); _fTitle10Bold?.Dispose(); _fTitle95?.Dispose(); _fBody95Italic?.Dispose(); _fBody8Bold?.Dispose(); _fBody8Italic?.Dispose(); _fBody75Bold?.Dispose(); _fBody75Italic?.Dispose(); _fBody75Reg?.Dispose(); _fBody7Bold?.Dispose(); _fMono9Bold?.Dispose(); _fMono9?.Dispose(); _fMono8Bold?.Dispose(); _fMono8?.Dispose(); _fMono75Bold?.Dispose(); _sfCenter?.Dispose(); _sfLeft?.Dispose(); _fBody8Bold?.Dispose(); _fBody8Reg?.Dispose(); }
+            if (disposing)
+            {
+                if (_watcher != null) _watcher.JobsChanged -= OnWatcherJobsChanged;
+                _phantomTimer?.Stop();
+                _phantomTimer?.Dispose();
+                _headerToolTip.Dispose();
+                _anim.Stop();
+                _anim.Dispose();
+                _bgBrush?.Dispose();
+                _fTitle28Bold?.Dispose();
+                _fTitle125Bold?.Dispose();
+                _fTitle10Bold?.Dispose();
+                _fTitle95?.Dispose();
+                _fBody95Italic?.Dispose();
+                _fBody9Bold?.Dispose();
+                _fBody8Bold?.Dispose();
+                _fBody8Reg?.Dispose();
+                _fBody8Italic?.Dispose();
+                _fBody75Bold?.Dispose();
+                _fBody75Italic?.Dispose();
+                _fBody75Reg?.Dispose();
+                _fBody7Bold?.Dispose();
+                _fLogFont?.Dispose();
+                _fMono9Bold?.Dispose();
+                _fMono9?.Dispose();
+                _fMono8Bold?.Dispose();
+                _fMono8?.Dispose();
+                _fMono75Bold?.Dispose();
+                _sfCenter?.Dispose();
+                _sfLeft?.Dispose();
+            }
             base.Dispose(disposing);
         }
     }

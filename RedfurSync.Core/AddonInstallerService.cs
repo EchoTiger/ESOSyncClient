@@ -44,11 +44,13 @@ namespace RedfurSync
         public const string ClientDirectoryName = "Client";
         public const string InstallFolderName = "FissalRelay";
         public const string TargetExeName = "RedfurSync.exe";
-        public const string LatestAddonVersion = "1.9.6";
-        public const int LatestAddonVersionCode = 10906;
+        public const string LatestAddonVersion = "1.9.7";
+        public const int LatestAddonVersionCode = 10907;
         public static readonly string[] AddonFiles = new[]
         {
             "FissalRelay.txt",
+            "FissalRelay.addon",
+            "FissalRelay_Templates.xml",
             "FissalRelay.lua",
             "FissalRelay_UI.lua",
             "FissalRelay_RaffleData.lua",
@@ -58,7 +60,8 @@ namespace RedfurSync
             "FissalRelay_Audit.lua",
             "FissalRelay_KioskRecon.lua",
             "FissalRelay_Bids.lua",
-            "FissalRelay_Ranks.lua"
+            "FissalRelay_Ranks.lua",
+            "Bindings.xml"
         };
 
         public const string TtcPriceTableUrl = "https://us.tamrieltradecentre.com/download/PriceTable";
@@ -337,7 +340,9 @@ namespace RedfurSync
 
             string addonsRoot = Path.Combine(liveDir, "AddOns");
             string addonDir = Path.Combine(addonsRoot, AddonDirectoryName);
-            string manifestPath = Path.Combine(addonDir, "FissalRelay.txt");
+            string txtManifestPath = Path.Combine(addonDir, "FissalRelay.txt");
+            string addonManifestPath = Path.Combine(addonDir, "FissalRelay.addon");
+            string manifestPath = File.Exists(txtManifestPath) ? txtManifestPath : addonManifestPath;
             string mainLuaPath = Path.Combine(addonDir, "FissalRelay.lua");
 
             bool libAddonMenu = IsValidEsoAddonInstalled(addonsRoot, "LibAddonMenu-2.0");
@@ -512,6 +517,7 @@ namespace RedfurSync
             return filename.ToLowerInvariant() switch
             {
                 "fissalrelay.txt" => AddonManifestTemplate,
+                "fissalrelay.addon" => AddonManifestTemplate,
                 "fissalrelay.lua" => AddonLuaTemplate,
                 "fissalrelay_ui.lua" => AddonUiTemplate,
                 _ => null,
@@ -1000,14 +1006,15 @@ namespace RedfurSync
             }
         }
 
-        private const string AddonManifestTemplate = @"## Title: |cFF9900Fissal's|r Cogwork Relay |c888888v1.9.6|r
+        private const string AddonManifestTemplate = @"## Title: |cFF9900Fissal's|r Cogwork Relay |c888888v1.9.7|r
 ## Author: Echo & Fissal
-## Version: 1.9.6
-## AddOnVersion: 10906
+## Version: 1.9.7
+## AddOnVersion: 10907
 ## APIVersion: 101051 101052
 ## SavedVariables: FissalRelay_SavedVariables
 ## OptionalDependsOn: LibHistoire>=1062 LibAddonMenu-2.0>=41 LibCustomMenu TamrielTradeCentre MasterMerchant LibGuildStore AwesomeGuildStore RaffleGold
 
+FissalRelay_Templates.xml
 FissalRelay.lua
 FissalRelay_UI.lua
 FissalRelay_RaffleData.lua
@@ -1018,6 +1025,7 @@ FissalRelay_Audit.lua
 FissalRelay_KioskRecon.lua
 FissalRelay_Bids.lua
 FissalRelay_Ranks.lua
+Bindings.xml
 ";
 
         // NOTE: This template is a last-resort fallback used only if the embedded

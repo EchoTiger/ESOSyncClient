@@ -341,6 +341,117 @@ function FR:UpdateTactileTheme(btn, theme)
 end
 
 --[[ =========================================================================
+     POOLED VIRTUAL SCROLL LIST & BURNISHED BRASS SCROLLBAR FACTORY
+========================================================================= ]]--
+
+function FR:CreateBrassScrollList(name, parent, rowHeight, initRowFn, bindRowFn)
+    local wm = WINDOW_MANAGER
+    rowHeight = tonumber(rowHeight) or 30
+
+    local list = wm:CreateControlFromVirtual(name, parent, "ZO_ScrollList")
+    if not list.dataTypes and ZO_ScrollList_Initialize then
+        ZO_ScrollList_Initialize(list)
+    end
+    if ZO_ScrollList_SetUseFadeGradient then
+        ZO_ScrollList_SetUseFadeGradient(list, false)
+    end
+
+    ZO_ScrollList_AddDataType(list, 1, "FissalRelay_ScrollRowTemplate", rowHeight, function(control, wrapper)
+        if not control._frInit then
+            control:SetHeight(rowHeight)
+            local rowBg = wm:CreateControl("$(parent)_RowBg", control, CT_BACKDROP)
+            rowBg:SetAnchorFill()
+            rowBg:SetCenterColor(0.05, 0.05, 0.07, 0.72)
+            rowBg:SetEdgeColor(0.22, 0.18, 0.12, 0.42)
+            rowBg:SetEdgeTexture("", 8, 1, 0)
+            control.rowBg = rowBg
+
+            if initRowFn then
+                initRowFn(control)
+            end
+            control._frInit = true
+        end
+
+        local idx = (wrapper and wrapper.index) or 1
+        local item = wrapper and wrapper.item or wrapper
+        if control.rowBg then
+            if idx % 2 == 0 then
+                control.rowBg:SetCenterColor(0.065, 0.062, 0.085, 0.78)
+            else
+                control.rowBg:SetCenterColor(0.045, 0.045, 0.065, 0.70)
+            end
+        end
+
+        if bindRowFn then
+            bindRowFn(control, item, idx)
+        end
+    end)
+
+    -- Style ESO scrollbar in warm Dwemer burnished brass
+    local sb = list.scrollbar or list:GetNamedChild("ScrollBar")
+    if sb then
+        local trackBg = wm:CreateControl("$(parent)_BrassTrack", sb, CT_BACKDROP)
+        trackBg:SetAnchor(TOPLEFT, sb, TOPLEFT, 1, 14)
+        trackBg:SetAnchor(BOTTOMRIGHT, sb, BOTTOMRIGHT, -1, -14)
+        trackBg:SetCenterColor(0.05, 0.04, 0.02, 0.88)
+        trackBg:SetEdgeColor(0.58, 0.40, 0.12, 0.65)
+        trackBg:SetEdgeTexture("", 1, 1, 0)
+        trackBg:SetDrawLayer(DL_BACKGROUND)
+        list._brassTrack = trackBg
+
+        if sb.GetThumbTextureControl then
+            local thumb = sb:GetThumbTextureControl()
+            if thumb and thumb.SetColor then
+                thumb:SetColor(0.92, 0.68, 0.22, 0.96)
+            end
+        end
+        local thumbMunge = sb:GetNamedChild("ThumbMunge")
+        if thumbMunge and thumbMunge.SetColor then
+            thumbMunge:SetColor(1.0, 0.82, 0.35, 0.40)
+        end
+    end
+
+    list:SetHandler("OnEffectivelyShown", function(ctrl)
+        if ZO_ScrollList_UpdateScroll then
+            ZO_ScrollList_UpdateScroll(ctrl)
+        end
+        if ZO_ScrollList_RefreshVisible then
+            ZO_ScrollList_RefreshVisible(ctrl)
+        end
+    end)
+
+    return list
+end
+
+function FR:CommitBrassScrollList(list, items, keepScrollPos)
+    if not list or not ZO_ScrollList_GetDataList then return end
+    local sb = list.scrollbar or list:GetNamedChild("ScrollBar")
+    local prevOffset = nil
+    if keepScrollPos and sb and sb.GetValue then
+        prevOffset = sb:GetValue()
+    end
+
+    ZO_ScrollList_Clear(list)
+    local scrollData = ZO_ScrollList_GetDataList(list)
+    if items then
+        for i = 1, #items do
+            scrollData[i] = ZO_ScrollList_CreateDataEntry(1, {
+                item = items[i],
+                index = i,
+            })
+        end
+    end
+    ZO_ScrollList_Commit(list)
+
+    if prevOffset and prevOffset > 0 and sb and sb.GetMinMax and sb.SetValue then
+        local _, maxVal = sb:GetMinMax()
+        if maxVal and maxVal > 0 then
+            sb:SetValue(math.min(prevOffset, maxVal))
+        end
+    end
+end
+
+--[[ =========================================================================
      CONSOLE INITIALIZATION & FRAME
 ========================================================================= ]]--
 

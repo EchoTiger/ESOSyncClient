@@ -163,10 +163,30 @@ function FR:CreateHUD()
         ClearTooltip(InformationTooltip)
     end)
 
+    -- 6b. Collapse / Expand Micro-Pill Toggle [–] / [+]
+    local collapseBtn = wm:CreateControl("$(parent)_Collapse", hud, CT_BUTTON)
+    collapseBtn:SetAnchor(RIGHT, closeBtn, LEFT, -4, 0)
+    collapseBtn:SetDimensions(18, 18)
+    collapseBtn:SetFont("ZoFontGameBold")
+    collapseBtn:SetNormalFontColor(0.90, 0.72, 0.30, 1)
+    collapseBtn:SetMouseOverFontColor(1, 0.95, 0.65, 1)
+    collapseBtn:SetText("–")
+    collapseBtn:SetHandler("OnClicked", function()
+        self:ToggleHUDCollapsed()
+    end)
+    collapseBtn:SetHandler("OnMouseEnter", function(ctrl)
+        InitializeTooltip(InformationTooltip, ctrl, TOP, 0, -4)
+        local isCol = self.savedVars and self.savedVars.settings and self.savedVars.settings.hudCollapsed
+        SetTooltipText(InformationTooltip, isCol and "Expand Full Telemetry HUD" or "Collapse into Compact Micro-Pill")
+    end)
+    collapseBtn:SetHandler("OnMouseExit", function()
+        ClearTooltip(InformationTooltip)
+    end)
+
     -- 7. Prime Console Button [Console]
     local consoleBtn = wm:CreateControl("$(parent)_Console", hud, CT_BUTTON)
-    consoleBtn:SetAnchor(RIGHT, closeBtn, LEFT, -8, 0)
-    consoleBtn:SetDimensions(75, 18)
+    consoleBtn:SetAnchor(RIGHT, collapseBtn, LEFT, -6, 0)
+    consoleBtn:SetDimensions(68, 18)
     consoleBtn:SetFont("ZoFontGame")
     consoleBtn:SetNormalFontColor(0, 1, 0.8, 1)
     consoleBtn:SetMouseOverFontColor(1, 0.9, 0.4, 1)
@@ -186,12 +206,34 @@ function FR:CreateHUD()
         ClearTooltip(InformationTooltip)
     end)
 
+    -- 7b. Micro-Pill Summary Label (visible when collapsed)
+    local pillLbl = wm:CreateControl("$(parent)_PillSummary", hud, CT_LABEL)
+    pillLbl:SetAnchor(LEFT, icon, RIGHT, 6, 0)
+    pillLbl:SetAnchor(RIGHT, collapseBtn, LEFT, -6, 0)
+    pillLbl:SetFont("ZoFontGameBold")
+    pillLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+    pillLbl:SetText("|cFF9900◈ Fissal|r • |c00FF00● Ready|r")
+    pillLbl:SetHidden(true)
+    pillLbl:SetMouseEnabled(true)
+    pillLbl:SetHandler("OnMouseUp", function(_, button, upInside)
+        if upInside and button == MOUSE_BUTTON_INDEX_LEFT then
+            if self.ToggleConsole then self:ToggleConsole() end
+        end
+    end)
+    pillLbl:SetHandler("OnMouseEnter", function(ctrl)
+        InitializeTooltip(InformationTooltip, ctrl, TOP, 0, -4)
+        SetTooltipText(InformationTooltip, "Left-click to open Fissal Command Console • Click [+] to expand HUD.")
+    end)
+    pillLbl:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
+
     -- 8. Header Divider Line
     local divider = wm:CreateControl("$(parent)_Div1", hud, CT_TEXTURE)
     divider:SetAnchor(TOPLEFT, hud, TOPLEFT, 8, 31)
     divider:SetAnchor(TOPRIGHT, hud, TOPRIGHT, -8, 31)
     divider:SetHeight(1)
     divider:SetColor(0.8, 0.5, 0.1, 0.4)
+
+    self.hudExpandedControls = { title, consoleBtn, divider }
 
     -- 9. Telemetry Meter Rows (Enlarged with ZoFontGame & ZoFontGameBold)
     local function CreateMeterRow(name, labelText, yOffset)
@@ -209,6 +251,8 @@ function FR:CreateHUD()
         val:SetWidth(235)
         val:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
 
+        table.insert(self.hudExpandedControls, lbl)
+        table.insert(self.hudExpandedControls, val)
         return lbl, val
     end
 
@@ -219,11 +263,15 @@ function FR:CreateHUD()
     local _readyLbl,  _readyVal  = CreateMeterRow("Ready",   "Upload Status:",    128)
 
     self.hudElements = {
-        salesVal  = _salesVal,
-        syncVal   = _syncVal,
-        kiosksVal = _kiosksVal,
-        rosterVal = _rosterVal,
-        readyVal  = _readyVal,
+        title       = title,
+        consoleBtn  = consoleBtn,
+        collapseBtn = collapseBtn,
+        pillLbl     = pillLbl,
+        salesVal    = _salesVal,
+        syncVal     = _syncVal,
+        kiosksVal   = _kiosksVal,
+        rosterVal   = _rosterVal,
+        readyVal    = _readyVal,
     }
 
     local readyLbl = _readyLbl
@@ -493,20 +541,40 @@ function FR:CreateHUD()
         end
     end
 
+    -- 10c. Kiosk Coverage / Sweep Visual Progress Bar (4px burnished-brass bar)
+    local sweepProgTrack = wm:CreateControl("$(parent)_SweepProgTrack", hud, CT_BACKDROP)
+    sweepProgTrack:SetAnchor(TOPLEFT, hud, TOPLEFT, 12, 196)
+    sweepProgTrack:SetAnchor(TOPRIGHT, hud, TOPRIGHT, -12, 196)
+    sweepProgTrack:SetHeight(4)
+    sweepProgTrack:SetCenterColor(0.08, 0.08, 0.12, 0.90)
+    sweepProgTrack:SetEdgeColor(0.45, 0.32, 0.10, 0.65)
+    sweepProgTrack:SetEdgeTexture("", 1, 1, 0)
+
+    local sweepProgFill = wm:CreateControl("$(parent)_SweepProgFill", sweepProgTrack, CT_TEXTURE)
+    sweepProgFill:SetAnchor(TOPLEFT, sweepProgTrack, TOPLEFT, 1, 1)
+    sweepProgFill:SetDimensions(0, 2)
+    sweepProgFill:SetColor(0.0, 0.95, 0.78, 0.95)
+
+    self.hudElements.sweepProgTrack = sweepProgTrack
+    self.hudElements.sweepProgFill  = sweepProgFill
+    table.insert(self.hudExpandedControls, sweepProgTrack)
+
     -- 11. Bottom Divider Line
     local divider2 = wm:CreateControl("$(parent)_Div2", hud, CT_TEXTURE)
-    divider2:SetAnchor(TOPLEFT, hud, TOPLEFT, 8, 200)
-    divider2:SetAnchor(TOPRIGHT, hud, TOPRIGHT, -8, 200)
+    divider2:SetAnchor(TOPLEFT, hud, TOPLEFT, 8, 204)
+    divider2:SetAnchor(TOPRIGHT, hud, TOPRIGHT, -8, 204)
     divider2:SetHeight(1)
     divider2:SetColor(0.3, 0.3, 0.35, 0.4)
+    table.insert(self.hudExpandedControls, divider2)
 
     -- 12. Footer Heartbeat & Status Indicator
     local footer = wm:CreateControl("$(parent)_Footer", hud, CT_LABEL)
-    footer:SetAnchor(TOPLEFT, hud, TOPLEFT, 12, 208)
-    footer:SetAnchor(TOPRIGHT, hud, TOPRIGHT, -12, 208)
+    footer:SetAnchor(TOPLEFT, hud, TOPLEFT, 12, 211)
+    footer:SetAnchor(TOPRIGHT, hud, TOPRIGHT, -12, 211)
     footer:SetFont("ZoFontGameSmall")
     footer:SetText("|c00FF00●|r Courier Ready • LibHistoire: Auto • /fissal")
     self.hudElements.footer = footer
+    table.insert(self.hudExpandedControls, footer)
 
     -- 12. Scene Fragment Setup (Fades during menus / loading screens)
     self.hud = hud
@@ -518,6 +586,8 @@ function FR:CreateHUD()
         self.savedVars.settings.showHud = isStaff
     end
 
+    self:ApplyHudCollapsedState()
+
     if self.savedVars.settings.showHud then
         SafeAddFragment(HUD_SCENE, self.hudFragment)
         SafeAddFragment(HUD_UI_SCENE, self.hudFragment)
@@ -526,16 +596,50 @@ function FR:CreateHUD()
         hud:SetHidden(true)
     end
 
-    -- 13. Throttled Periodic Refresh (1.0s out of combat, 3.0s in combat)
+    -- 13. Event-Driven Refresh (1.0s when dirty/sweeping/syncing, 15.0s when idle)
     local lastTick = 0
     hud:SetHandler("OnUpdate", function(_, currentTime)
-        local interval = (IsUnitInCombat and IsUnitInCombat("player")) and 3.0 or 1.0
+        local isActiveWork = FR._hudDirty
+            or (FR.kioskSweepState and FR.kioskSweepState.active)
+            or FR._hudHasPendingSync
+        local interval
+        if isActiveWork then
+            interval = (IsUnitInCombat and IsUnitInCombat("player")) and 3.0 or 1.0
+        else
+            interval = 15.0
+        end
         if currentTime - lastTick >= interval then
             lastTick = currentTime
+            FR._hudDirty = false
             FR:UpdateHUD()
         end
     end)
 
+    self:UpdateHUD()
+end
+
+function FR:ApplyHudCollapsedState()
+    if not self.hud or not self.hudElements then return end
+    local collapsed = (self.savedVars and self.savedVars.settings and self.savedVars.settings.hudCollapsed) == true
+    for _, ctrl in ipairs(self.hudExpandedControls or {}) do
+        ctrl:SetHidden(collapsed)
+    end
+    if self.hudElements.pillLbl then
+        self.hudElements.pillLbl:SetHidden(not collapsed)
+    end
+    if self.hudElements.collapseBtn then
+        self.hudElements.collapseBtn:SetText(collapsed and "+" or "–")
+    end
+    self.hud:SetDimensions(collapsed and 316 or 380, collapsed and 32 or 248)
+end
+
+function FR:ToggleHUDCollapsed(collapsed)
+    if not self.savedVars or not self.savedVars.settings then return end
+    if collapsed == nil then
+        collapsed = not self.savedVars.settings.hudCollapsed
+    end
+    self.savedVars.settings.hudCollapsed = collapsed
+    self:ApplyHudCollapsedState()
     self:UpdateHUD()
 end
 
@@ -557,6 +661,7 @@ function FR:UpdateHUD()
 
     -- 2. LibHistoire Sync Status: x-of-x Channels & Queue ETA
     local linked, totalCats, requesting, pendingEvents, speed, timeLeft = GetLibHistoireSyncStatus()
+    self._hudHasPendingSync = (pendingEvents > 0) or (requesting > 0)
 
     if pendingEvents > 0 then
         local etaStr = FormatETA(timeLeft)
@@ -584,9 +689,28 @@ function FR:UpdateHUD()
             ownedCount = ownedCount + 1
         end
     end
-    local bidCount = NonContiguousCount(self.savedVars.staff and self.savedVars.staff.bids or {})
+    if self._hudCachedBidsCount == nil then
+        self._hudCachedBidsCount = NonContiguousCount(self.savedVars.staff and self.savedVars.staff.bids or {})
+    end
+    local bidCount = self._hudCachedBidsCount
     self.hudElements.kiosksVal:SetText(string.format("|c00FF00%d|r owned • |c00FFCC%d/291|r wk • |cFFD700%d|r bids",
         ownedCount, weekKiosks, bidCount))
+
+    -- Update Collapsed Micro-Pill Summary if present
+    if self.hudElements.pillLbl then
+        local linkPill
+        if kt and kt.active then
+            linkPill = "|cFFD700⟳ Sweeping|r"
+        elseif pendingEvents > 0 or requesting > 0 then
+            linkPill = string.format("|cFFCC00⟳ %d/%d|r", linked, totalCats)
+        elseif linked > 0 and linked == totalCats then
+            linkPill = "|c00FF00● Linked|r"
+        else
+            linkPill = string.format("|c00FFCC● %d/%d|r", linked, totalCats)
+        end
+        self.hudElements.pillLbl:SetText(string.format("|cFF9900Fissal|r • %s • |c00FFCC%d/291|r Kiosks",
+            linkPill, weekKiosks))
+    end
 
     -- 3b. Last Bump Time & Impact Telemetry
     if self.hudElements.bumpVal then
@@ -646,8 +770,28 @@ function FR:UpdateHUD()
         end
     end
 
+    -- 3d. Update Sweep / Coverage Progress Bar Fill
+    if self.hudElements.sweepProgTrack and self.hudElements.sweepProgFill then
+        local trackW = math.max(0, (self.hudElements.sweepProgTrack:GetWidth() or 356) - 2)
+        local frac = math.min(1, math.max(0, weekKiosks / 291))
+        if kt and kt.active then
+            if kt.phase == "guild_finder" and (kt.totalPasses or 0) > 0 then
+                frac = math.min(1, math.max(0.03, (kt.passIndex or 1) / kt.totalPasses * 0.35))
+            elseif (kt.totalProbes or 0) > 0 then
+                frac = math.min(1, 0.35 + ((kt.probeIndex or 0) / kt.totalProbes * 0.65))
+            end
+            self.hudElements.sweepProgFill:SetColor(1.0, 0.78, 0.20, 0.98)
+        else
+            self.hudElements.sweepProgFill:SetColor(0.0, 0.92, 0.75, 0.90)
+        end
+        self.hudElements.sweepProgFill:SetDimensions(math.floor(trackW * frac), 2)
+    end
+
     -- 4. Rosters & Bank Dues
-    local rosters = NonContiguousCount(self.savedVars.staff and self.savedVars.staff.rosterSnapshots or {})
+    if self._hudCachedRostersCount == nil then
+        self._hudCachedRostersCount = NonContiguousCount(self.savedVars.staff and self.savedVars.staff.rosterSnapshots or {})
+    end
+    local rosters = self._hudCachedRostersCount
     local deposits = self:GetCount("deposits")
     self.hudElements.rosterVal:SetText(string.format("|c00FFFF%d|r guilds • |cFFAA00%s|r deps",
         rosters, ZO_LocalizeDecimalNumber(deposits)))
@@ -863,25 +1007,40 @@ function FR:CreateBumperUI()
     divider2:SetHeight(1)
     divider2:SetColor(0.3, 0.3, 0.35, 0.4)
 
-    -- 11. Status / Progress Label
+    -- 11. Status / Progress Label + 4px Visual Progress Bar
     local statusLbl = wm:CreateControl("$(parent)_Status", bumper, CT_LABEL)
-    statusLbl:SetAnchor(TOPLEFT, bumper, TOPLEFT, 12, 174)
-    statusLbl:SetAnchor(TOPRIGHT, bumper, TOPRIGHT, -12, 174)
-    statusLbl:SetHeight(18)
+    statusLbl:SetAnchor(TOPLEFT, bumper, TOPLEFT, 12, 173)
+    statusLbl:SetAnchor(TOPRIGHT, bumper, TOPRIGHT, -12, 173)
+    statusLbl:SetHeight(17)
     statusLbl:SetFont("ZoFontGameSmall")
     statusLbl:SetText("Ready to bump.")
     self.bumperStatusText = statusLbl
 
+    local bumperProgTrack = wm:CreateControl("$(parent)_ProgTrack", bumper, CT_BACKDROP)
+    bumperProgTrack:SetAnchor(TOPLEFT, bumper, TOPLEFT, 12, 191)
+    bumperProgTrack:SetAnchor(TOPRIGHT, bumper, TOPRIGHT, -12, 191)
+    bumperProgTrack:SetHeight(4)
+    bumperProgTrack:SetCenterColor(0.08, 0.08, 0.12, 0.90)
+    bumperProgTrack:SetEdgeColor(0.55, 0.38, 0.12, 0.70)
+    bumperProgTrack:SetEdgeTexture("", 1, 1, 0)
+
+    local bumperProgFill = wm:CreateControl("$(parent)_ProgFill", bumperProgTrack, CT_TEXTURE)
+    bumperProgFill:SetAnchor(TOPLEFT, bumperProgTrack, TOPLEFT, 1, 1)
+    bumperProgFill:SetDimensions(0, 2)
+    bumperProgFill:SetColor(0.0, 0.95, 0.78, 0.95)
+    self.bumperProgTrack = bumperProgTrack
+    self.bumperProgFill  = bumperProgFill
+
     -- 12. Automation Option Divider
     local divider3 = wm:CreateControl("$(parent)_Div3", bumper, CT_TEXTURE)
-    divider3:SetAnchor(TOPLEFT, bumper, TOPLEFT, 8, 195)
-    divider3:SetAnchor(TOPRIGHT, bumper, TOPRIGHT, -8, 195)
+    divider3:SetAnchor(TOPLEFT, bumper, TOPLEFT, 8, 198)
+    divider3:SetAnchor(TOPRIGHT, bumper, TOPRIGHT, -8, 198)
     divider3:SetHeight(1)
     divider3:SetColor(0.8, 0.5, 0.1, 0.25)
 
     -- 13. Auto-Reload UI Checkbox Row
     local autoReloadRow = wm:CreateControl("$(parent)_AutoReloadRow", bumper, CT_CONTROL)
-    autoReloadRow:SetAnchor(TOPLEFT, bumper, TOPLEFT, 10, 199)
+    autoReloadRow:SetAnchor(TOPLEFT, bumper, TOPLEFT, 10, 201)
     autoReloadRow:SetDimensions(300, 20)
     autoReloadRow:SetMouseEnabled(true)
 
@@ -1175,6 +1334,22 @@ function FR:UpdateBumperUI(customStatus)
                 self.bumperStatusText:SetText("|cFF5555No guilds selected. Check a guild above.|r")
             end
         end
+    end
+
+    if self.bumperProgTrack and self.bumperProgFill then
+        local trackW = math.max(0, (self.bumperProgTrack:GetWidth() or 296) - 2)
+        local frac = 0
+        if self.isBumping and self.bumpQueue and #self.bumpQueue > 0 then
+            local totalG = #self.bumpQueue
+            local curIdx = math.max(1, math.min(totalG, self.currentBumpIndex or 1))
+            local pageHint = math.min(0.85, ((self.bumpCurrentPage or 0) + 1) * 0.12)
+            frac = math.min(1, ((curIdx - 1) + pageHint) / totalG)
+            self.bumperProgFill:SetColor(1.0, 0.78, 0.20, 0.98)
+        elseif customStatus and tostring(customStatus):find("Complete", 1, true) then
+            frac = 1
+            self.bumperProgFill:SetColor(0.2, 0.95, 0.55, 0.95)
+        end
+        self.bumperProgFill:SetDimensions(math.floor(trackW * frac), 2)
     end
 
     -- Update Auto-Reload UI and Wait for LibHistoire toggles

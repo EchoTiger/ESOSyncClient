@@ -1185,20 +1185,43 @@ function FR:RecordCanonicalKiosk(rawTrader, guildId, rawGuildName, sourceTag, xC
     }
 
     -- Single-Kiosk-Per-Guild Invariant in savedVars.kiosks for the active trade week:
-    -- If this guild (non-Vacant, non-placeholder) was recorded on a DIFFERENT trader during the current trade week,
-    -- prune the conflicting current-week trader entry while preserving prior-week history.
-    if guildName ~= "Vacant"
-        and guildName ~= "Available Trader Kiosk"
-        and cleanGuildId ~= 536021
-        and curWeekStart > 0
-    then
-        for otherTrader, otherObs in pairs(self.savedVars.kiosks) do
-            if otherTrader ~= resolved.trader and otherObs and otherObs.guildName == guildName then
-                if (tonumber(otherObs.timestamp) or 0) >= curWeekStart then
-                    self.savedVars.kiosks[otherTrader] = nil
+    -- Maintain O(1) _weekGuildToTrader map so duplicate-guild eviction never scans all 291 kiosks per record.
+    if curWeekStart > 0 then
+        if not self._weekGuildToTrader or self._weekGuildToTraderWeek ~= curWeekStart then
+            self._weekGuildToTrader = {}
+            self._weekGuildToTraderWeek = curWeekStart
+            for tKey, obs in pairs(self.savedVars.kiosks) do
+                if obs and obs.guildName and obs.guildName ~= "Vacant" and obs.guildName ~= "Available Trader Kiosk"
+                    and (tonumber(obs.timestamp) or 0) >= curWeekStart
+                then
+                    self._weekGuildToTrader[obs.guildName] = tKey
                 end
             end
         end
+
+        -- If this trader previously belonged to another guild this week, clear that stale mapping
+        if existing and existing.guildName and self._weekGuildToTrader[existing.guildName] == resolved.trader and existing.guildName ~= guildName then
+            self._weekGuildToTrader[existing.guildName] = nil
+        end
+
+        if guildName ~= "Vacant"
+            and guildName ~= "Available Trader Kiosk"
+            and cleanGuildId ~= 536021
+        then
+            local prevTrader = self._weekGuildToTrader[guildName]
+            if prevTrader and prevTrader ~= resolved.trader then
+                local prevObs = self.savedVars.kiosks[prevTrader]
+                if prevObs and prevObs.guildName == guildName and (tonumber(prevObs.timestamp) or 0) >= curWeekStart then
+                    self.savedVars.kiosks[prevTrader] = nil
+                end
+            end
+            self._weekGuildToTrader[guildName] = resolved.trader
+        end
+    end
+
+    if isNewOrChanged then
+        self._reconDataVersion = (self._reconDataVersion or 0) + 1
+        if self.MarkHudDirty then self:MarkHudDirty() end
     end
 
     if not silent and isNewOrChanged and self.savedVars.settings and self.savedVars.settings.announceKioskRecon then
@@ -1466,27 +1489,22 @@ local function BuildGuildFinderPasses()
         { id = ALLIANCE_EBONHEART_PACT or 2, code = "EP" },
     }
 
-    -- Split high-density trader categories (Trading, Social, Group PvE) by Alliance up front
-    -- so ESO's per-query result cap never truncates guilds holding kiosks.
-    local allianceSplitFocuses = {
-        { id = GUILD_FOCUS_ATTRIBUTE_VALUE_TRADING or 1, label = "Trading" },
-        { id = GUILD_FOCUS_ATTRIBUTE_VALUE_SOCIAL, label = "Social" },
-        { id = GUILD_FOCUS_ATTRIBUTE_VALUE_GROUP_PVE, label = "Group PvE" },
-    }
-    for _, f in ipairs(allianceSplitFocuses) do
-        if f.id then
-            for _, a in ipairs(alliances) do
-                table.insert(passes, {
-                    focus = f.id,
-                    alliance = a.id,
-                    label = string.format("%s (%s)", f.label, a.code),
-                    baseLabel = f.label,
-                })
-            end
-        end
+    -- Pre-split Trading by Alliance up front (always exceeds 25 results per alliance);
+    -- Social, Group PvE, and remaining categories run unsplit first and dynamically subdivide
+    -- by alliance only if ESO's 25-result cap is reached.
+    local tradingFocusId = GUILD_FOCUS_ATTRIBUTE_VALUE_TRADING or 1
+    for _, a in ipairs(alliances) do
+        table.insert(passes, {
+            focus = tradingFocusId,
+            alliance = a.id,
+            label = string.format("Trading (%s)", a.code),
+            baseLabel = "Trading",
+        })
     end
 
     local otherFocuses = {
+        { id = GUILD_FOCUS_ATTRIBUTE_VALUE_SOCIAL, label = "Social" },
+        { id = GUILD_FOCUS_ATTRIBUTE_VALUE_GROUP_PVE, label = "Group PvE" },
         { id = GUILD_FOCUS_ATTRIBUTE_VALUE_CRAFTING, label = "Crafting" },
         { id = GUILD_FOCUS_ATTRIBUTE_VALUE_PVP, label = "PvP" },
         { id = GUILD_FOCUS_ATTRIBUTE_VALUE_QUESTING, label = "Questing" },

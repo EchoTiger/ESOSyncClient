@@ -138,9 +138,22 @@ function FR:CollectBidsData()
     self.bidsList = filtered
 end
 
-function FR:CollectReconData()
-    local reconMap = {}
+function FR:InvalidateReconCache()
+    self._reconDataVersion = (self._reconDataVersion or 0) + 1
+    self._reconMasterCache = nil
+end
+
+function FR:EnsureReconMasterCache()
     local curWeekStart = self.GetTuesdayTradeWeek and self:GetTuesdayTradeWeek(GetTimeStamp()) or 0
+    local dataVer = self._reconDataVersion or 0
+    local sheetRef = self.SpreadsheetKiosks or (self.savedVars and self.savedVars.spreadsheetKiosks) or nil
+
+    local cache = self._reconMasterCache
+    if cache and cache.version == dataVer and cache.weekStart == curWeekStart and cache.sheetRef == sheetRef then
+        return cache
+    end
+
+    local reconMap = {}
 
     local function IsKioskVacant(k)
         if k.guildId and tonumber(k.guildId) and tonumber(k.guildId) > 0 then return false end
@@ -178,7 +191,7 @@ function FR:CollectReconData()
     end
 
     -- 1. Ingest synced spreadsheet kiosks from Fissal Relay
-    local sheetKiosks = self.SpreadsheetKiosks or (self.savedVars and self.savedVars.spreadsheetKiosks) or {}
+    local sheetKiosks = sheetRef or {}
     for key, sk in pairs(sheetKiosks) do
         local rawName = sk.trader or key
         local resolved = self.ResolveCanonicalKiosk and self:ResolveCanonicalKiosk(rawName, sk.city, sk.zone) or nil
@@ -241,16 +254,12 @@ function FR:CollectReconData()
         end
     end
 
-    local recon = {}
+    local masterRows = {}
     local verifiedThisWeekCount = 0
     local vacantCount = 0
     local unverifiedCount = 0
-    local totalDirectoryCount = 0
-    local statusFilt = self.reconStatusFilter or "ALL"
-    local searchQ = string.lower(tostring(self.reconSearchQuery or "")):gsub("^%s+", ""):gsub("%s+$", "")
 
     for _, k in pairs(reconMap) do
-        totalDirectoryCount = totalDirectoryCount + 1
         if k.isCurrentWeek then
             verifiedThisWeekCount = verifiedThisWeekCount + 1
             if k.isOpen then
@@ -260,6 +269,61 @@ function FR:CollectReconData()
             unverifiedCount = unverifiedCount + 1
         end
 
+        local lowerNotes = string.lower(k.notes or "")
+        local lowerCity = string.lower(k.city or "")
+        k._isOutlaw = (string.find(lowerNotes, "outlaw", 1, true) ~= nil) or (string.find(lowerCity, "refuge", 1, true) ~= nil)
+        k._sortTrader = string.lower(k.trader or "")
+        k._sortLoc = lowerCity .. " " .. string.lower(k.zone or "")
+        k._sortGuild = string.lower(k.guildName or "")
+        k._sortSource = string.lower(k.source or "")
+        k._searchHay = string.lower(string.format("%s %s %s %s %s %s",
+            k.trader or "",
+            k.city or "",
+            k.zone or "",
+            k.guildName or "",
+            k.source or "",
+            k.notes or ""))
+
+        masterRows[#masterRows + 1] = k
+    end
+
+    local knownGuildsCount = 0
+    if self.savedVars and self.savedVars.knownTradingGuilds then
+        for _ in pairs(self.savedVars.knownTradingGuilds) do
+            knownGuildsCount = knownGuildsCount + 1
+        end
+    end
+
+    cache = {
+        version = dataVer,
+        weekStart = curWeekStart,
+        sheetRef = sheetRef,
+        rows = masterRows,
+        totalDirectoryCount = #masterRows > 0 and #masterRows or 291,
+        verifiedThisWeekCount = verifiedThisWeekCount,
+        vacantCount = vacantCount,
+        unverifiedCount = unverifiedCount,
+        knownGuildsCount = knownGuildsCount,
+    }
+    self._reconMasterCache = cache
+    return cache
+end
+
+function FR:CollectReconData()
+    local cache = self:EnsureReconMasterCache()
+    self.reconTotalDirectoryCount = cache.totalDirectoryCount
+    self.reconVerifiedThisWeekCount = cache.verifiedThisWeekCount
+    self.reconVacantCount = cache.vacantCount
+    self.reconUnverifiedCount = cache.unverifiedCount
+    self.reconKnownGuildsCount = cache.knownGuildsCount
+
+    local recon = {}
+    local statusFilt = self.reconStatusFilter or "ALL"
+    local searchQ = string.lower(tostring(self.reconSearchQuery or "")):gsub("^%s+", ""):gsub("%s+$", "")
+
+    local masterRows = cache.rows
+    for i = 1, #masterRows do
+        local k = masterRows[i]
         local passStatus = true
         if statusFilt == "VERIFIED" then
             passStatus = (k.isCurrentWeek == true)
@@ -268,29 +332,13 @@ function FR:CollectReconData()
         elseif statusFilt == "VACANT" then
             passStatus = (k.isOpen == true and k.isCurrentWeek == true)
         elseif statusFilt == "OUTLAW" then
-            passStatus = (string.find(string.lower(k.notes or ""), "outlaw") ~= nil) or (string.find(string.lower(k.city or ""), "refuge") ~= nil)
+            passStatus = (k._isOutlaw == true)
         end
 
-        local passSearch = true
-        if searchQ ~= "" then
-            local hay = string.lower(string.format("%s %s %s %s %s %s",
-                k.trader or "",
-                k.city or "",
-                k.zone or "",
-                k.guildName or "",
-                k.source or "",
-                k.notes or ""))
-            passSearch = (string.find(hay, searchQ, 1, true) ~= nil)
-        end
-
-        if passStatus and passSearch then
-            table.insert(recon, k)
+        if passStatus and (searchQ == "" or string.find(k._searchHay, searchQ, 1, true) ~= nil) then
+            recon[#recon + 1] = k
         end
     end
-    self.reconTotalDirectoryCount = totalDirectoryCount > 0 and totalDirectoryCount or 291
-    self.reconVerifiedThisWeekCount = verifiedThisWeekCount
-    self.reconVacantCount = vacantCount
-    self.reconUnverifiedCount = unverifiedCount
 
     local sortCol = self.reconSortCol
     local asc = self.reconSortAsc or false
@@ -329,20 +377,20 @@ function FR:CollectReconData()
         end
         local valA, valB
         if sortCol == "guild" then -- TRADER NPC
-            valA = string.lower(a.trader or "")
-            valB = string.lower(b.trader or "")
+            valA = a._sortTrader
+            valB = b._sortTrader
         elseif sortCol == "kiosk" then -- CITY / ZONE
-            valA = string.lower((a.city or "") .. " " .. (a.zone or ""))
-            valB = string.lower((b.city or "") .. " " .. (b.zone or ""))
+            valA = a._sortLoc
+            valB = b._sortLoc
         elseif sortCol == "bidder" then -- STATUS
             valA = ReconStatusTier(a)
             valB = ReconStatusTier(b)
         elseif sortCol == "amount" then -- CONTROLLING GUILD
-            valA = string.lower(a.guildName or "")
-            valB = string.lower(b.guildName or "")
+            valA = a._sortGuild
+            valB = b._sortGuild
         elseif sortCol == "status" then -- SOURCE
-            valA = string.lower(a.source or "")
-            valB = string.lower(b.source or "")
+            valA = a._sortSource
+            valB = b._sortSource
         else -- "timestamp" / SCOUTED
             valA = tonumber(a.timestamp) or 0
             valB = tonumber(b.timestamp) or 0
@@ -379,18 +427,6 @@ function FR:BuildBidsReconUI(parent)
     card:SetEdgeColor(0.30, 0.25, 0.18, 0.70)
     card:SetEdgeTexture("", 8, 1, 0)
     card:SetMouseEnabled(true)
-    card:SetHandler("OnMouseWheel", function(control, delta)
-        local isBids = (self.bidsSubView == "bids")
-        local activeList = isBids and self.bidsList or self.reconList
-        local maxPages = math.max(1, math.ceil(#activeList / ROWS_PER_PAGE))
-        if delta < 0 and self.bidsCurrentPage < maxPages then
-            self.bidsCurrentPage = self.bidsCurrentPage + 1
-            self:RenderBidsRows()
-        elseif delta > 0 and self.bidsCurrentPage > 1 then
-            self.bidsCurrentPage = self.bidsCurrentPage - 1
-            self:RenderBidsRows()
-        end
-    end)
 
     -- 2. Sub-View Switcher Bar (Bids Ledger vs Ground Recon)
     local bidsBtn = wm:CreateControl("$(parent)_BidsBtn", card, CT_BUTTON)
@@ -702,8 +738,22 @@ function FR:BuildBidsReconUI(parent)
         if self.reconSearchQuery ~= txt then
             self.reconSearchQuery = txt
             self.bidsCurrentPage = 1
-            self:CollectReconData()
-            self:RenderBidsRows()
+            EVENT_MANAGER:UnregisterForUpdate("FissalRelay_ReconSearchDebounce")
+            EVENT_MANAGER:RegisterForUpdate("FissalRelay_ReconSearchDebounce", 120, function()
+                EVENT_MANAGER:UnregisterForUpdate("FissalRelay_ReconSearchDebounce")
+                self:CollectReconData()
+                if self.bidsSubView == "recon" and self.bidsRibbonLbl then
+                    local verifiedWk = self.reconVerifiedThisWeekCount or 0
+                    local vacantCnt = self.reconVacantCount or 0
+                    local unverifiedCnt = self.reconUnverifiedCount or 0
+                    local totalDir = self.reconTotalDirectoryCount or 291
+                    self.bidsRibbonLbl:SetText(string.format(
+                        "• |c00FFCCGround Recon:|r Verified This Week: |c59E08A%d / %d|r  |  Vacant: |cFFD700%d|r  |  Unverified: |c888888%d|r  |  Showing: |cFFFFFF%d|r",
+                        verifiedWk, totalDir, vacantCnt, unverifiedCnt, #(self.reconList or {})
+                    ))
+                end
+                self:RenderBidsRows(false)
+            end)
         end
     end)
     searchEdit:SetHandler("OnEscape", function(eb)
@@ -715,6 +765,7 @@ function FR:BuildBidsReconUI(parent)
     self.reconSearchEdit = searchEdit
 
     clearSearchBtn:SetHandler("OnClicked", function()
+        EVENT_MANAGER:UnregisterForUpdate("FissalRelay_ReconSearchDebounce")
         self.reconSearchQuery = ""
         if self.reconSearchEdit then
             self.reconSearchEdit:SetText("")
@@ -724,27 +775,44 @@ function FR:BuildBidsReconUI(parent)
         self:UpdateBidsUI()
     end)
 
-    -- 4. Financial Telemetry Ribbon
+    -- 4. Financial & Recon Telemetry Ribbon + 4px Brass Sweep Progress Bar
     local ribbon = wm:CreateControl("$(parent)_Ribbon", card, CT_BACKDROP)
     ribbon:SetAnchor(TOPLEFT, card, TOPLEFT, 10, 64)
     ribbon:SetAnchor(TOPRIGHT, card, TOPRIGHT, -10, 64)
-    ribbon:SetHeight(24)
+    ribbon:SetHeight(25)
     ribbon:SetCenterColor(0.08, 0.07, 0.05, 0.80)
     ribbon:SetEdgeColor(0.40, 0.30, 0.15, 0.50)
     ribbon:SetEdgeTexture("", 8, 1, 0)
     self.bidsRibbon = ribbon
 
     local ribLbl = wm:CreateControl("$(parent)_RibLbl", ribbon, CT_LABEL)
-    ribLbl:SetAnchor(LEFT, ribbon, LEFT, 8, 0)
+    ribLbl:SetAnchor(TOPLEFT, ribbon, TOPLEFT, 8, 2)
+    ribLbl:SetAnchor(TOPRIGHT, ribbon, TOPRIGHT, -8, 2)
     ribLbl:SetFont("ZoFontGameSmall")
     ribLbl:SetText("• Bids: --  |  Committed: --  |  Won: --  |  Refunded: --")
     self.bidsRibbonLbl = ribLbl
 
-    -- 5. Sortable Column Header Row
+    local reconProgTrack = wm:CreateControl("$(parent)_ReconProgTrack", ribbon, CT_BACKDROP)
+    reconProgTrack:SetAnchor(BOTTOMLEFT, ribbon, BOTTOMLEFT, 4, -2)
+    reconProgTrack:SetAnchor(BOTTOMRIGHT, ribbon, BOTTOMRIGHT, -4, -2)
+    reconProgTrack:SetHeight(4)
+    reconProgTrack:SetCenterColor(0.03, 0.03, 0.04, 0.90)
+    reconProgTrack:SetEdgeColor(0.45, 0.32, 0.12, 0.55)
+    reconProgTrack:SetEdgeTexture("", 1, 1, 0)
+    reconProgTrack:SetHidden(true)
+    self.reconProgressTrack = reconProgTrack
+
+    local reconProgFill = wm:CreateControl("$(parent)_ReconProgFill", reconProgTrack, CT_TEXTURE)
+    reconProgFill:SetAnchor(TOPLEFT, reconProgTrack, TOPLEFT, 1, 1)
+    reconProgFill:SetDimensions(0, 2)
+    reconProgFill:SetColor(0.92, 0.68, 0.22, 0.95)
+    self.reconProgressFill = reconProgFill
+
+    -- 5. Sortable Column Header Row (Aligned with ZO_ScrollList Contents Area)
     local headerY = 92
     local colHeader = wm:CreateControl("$(parent)_Header", card, CT_BACKDROP)
     colHeader:SetAnchor(TOPLEFT, card, TOPLEFT, 10, headerY)
-    colHeader:SetAnchor(TOPRIGHT, card, TOPRIGHT, -10, headerY)
+    colHeader:SetAnchor(TOPRIGHT, card, TOPRIGHT, -26, headerY)
     colHeader:SetHeight(24)
     colHeader:SetCenterColor(0.10, 0.10, 0.14, 0.95)
     colHeader:SetEdgeColor(0.25, 0.20, 0.15, 0.65)
@@ -756,6 +824,7 @@ function FR:BuildBidsReconUI(parent)
         btn:SetDimensions(width, 22)
         btn:SetFont("ZoFontGameBold")
         btn:SetNormalFontColor(0.8, 0.75, 0.65, 1)
+        btn:SetMouseOverFontColor(1.0, 0.90, 0.45, 1)
         btn:SetText(text)
         btn:SetHandler("OnClicked", function()
             if self.bidsSubView == "recon" then
@@ -767,7 +836,7 @@ function FR:BuildBidsReconUI(parent)
                 end
                 self:UpdateHeaderArrows()
                 self:CollectReconData()
-                self:RenderBidsRows()
+                self:RenderBidsRows(false)
             else
                 if self.bidsSortCol == sortKey then
                     self.bidsSortAsc = not self.bidsSortAsc
@@ -777,132 +846,137 @@ function FR:BuildBidsReconUI(parent)
                 end
                 self:UpdateHeaderArrows()
                 self:CollectBidsData()
-                self:RenderBidsRows()
+                self:RenderBidsRows(false)
             end
         end)
         return btn
     end
 
     self.bidsH1 = MakeSortHeader("H1", colHeader, LEFT, LEFT, 8, 140, "GUILD ▲", "guild")
-    self.bidsH2 = MakeSortHeader("H2", self.bidsH1, LEFT, RIGHT, 8, 240, "KIOSK TRADER & LOCATION", "kiosk")
+    self.bidsH2 = MakeSortHeader("H2", self.bidsH1, LEFT, RIGHT, 8, 236, "KIOSK TRADER & LOCATION", "kiosk")
     self.bidsH3 = MakeSortHeader("H3", self.bidsH2, LEFT, RIGHT, 8, 120, "BIDDER", "bidder")
-    self.bidsH4 = MakeSortHeader("H4", self.bidsH3, LEFT, RIGHT, 8, 155, "AMOUNT", "amount")
-    self.bidsH5 = MakeSortHeader("H5", self.bidsH4, LEFT, RIGHT, 8, 125, "STATUS", "status")
-    self.bidsH6 = MakeSortHeader("H6", self.bidsH5, LEFT, RIGHT, 8, 88, "DATE / AGE", "timestamp")
+    self.bidsH4 = MakeSortHeader("H4", self.bidsH3, LEFT, RIGHT, 8, 150, "AMOUNT", "amount")
+    self.bidsH5 = MakeSortHeader("H5", self.bidsH4, LEFT, RIGHT, 8, 120, "STATUS", "status")
+    self.bidsH6 = MakeSortHeader("H6", self.bidsH5, LEFT, RIGHT, 8, 78, "DATE / AGE", "timestamp")
 
-    -- 6. Table Rows (10 Spacious Rows with Alternating Shading)
-    self.bidsRows = {}
-    local rowStartY = headerY + 26
-    local rowHeight = 27
+    -- 6. Pooled Virtual ZO_ScrollList with Burnished-Brass Scrollbar
+    local scrollList = self:CreateBrassScrollList(
+        "FissalRelay_BidsScrollList",
+        card,
+        28,
+        function(row)
+            row:SetMouseEnabled(true)
 
-    for r = 1, ROWS_PER_PAGE do
-        local row = wm:CreateControl("$(parent)_Row_" .. r, card, CT_BACKDROP)
-        row:SetAnchor(TOPLEFT, card, TOPLEFT, 10, rowStartY + (r - 1) * (rowHeight + 2))
-        row:SetAnchor(TOPRIGHT, card, TOPRIGHT, -10, rowStartY + (r - 1) * (rowHeight + 2))
-        row:SetHeight(rowHeight)
-        row:SetCenterColor(0.04, 0.04, 0.06, 0.60)
-        row:SetEdgeColor(0.18, 0.16, 0.12, 0.40)
-        row:SetEdgeTexture("", 8, 1, 0)
-        row:SetMouseEnabled(true)
+            local col1 = wm:CreateControl("$(parent)_Col1", row, CT_LABEL)
+            col1:SetAnchor(LEFT, row, LEFT, 8, 0)
+            col1:SetDimensions(140, 20)
+            col1:SetFont("ZoFontGameMedium")
+            col1:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+            col1:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            row.col1 = col1
 
-        local col1 = wm:CreateControl("$(parent)_Col1", row, CT_LABEL)
-        col1:SetAnchor(LEFT, row, LEFT, 8, 0)
-        col1:SetDimensions(140, 20)
-        col1:SetFont("ZoFontGameMedium")
-        col1:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-        col1:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
-        row.col1 = col1
+            local col2 = wm:CreateControl("$(parent)_Col2", row, CT_LABEL)
+            col2:SetAnchor(LEFT, col1, RIGHT, 8, 0)
+            col2:SetDimensions(236, 20)
+            col2:SetFont("ZoFontGameSmall")
+            col2:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+            col2:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            row.col2 = col2
 
-        local col2 = wm:CreateControl("$(parent)_Col2", row, CT_LABEL)
-        col2:SetAnchor(LEFT, col1, RIGHT, 8, 0)
-        col2:SetDimensions(240, 20)
-        col2:SetFont("ZoFontGameSmall")
-        col2:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-        col2:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
-        row.col2 = col2
+            local col3 = wm:CreateControl("$(parent)_Col3", row, CT_LABEL)
+            col3:SetAnchor(LEFT, col2, RIGHT, 8, 0)
+            col3:SetDimensions(120, 20)
+            col3:SetFont("ZoFontGameSmall")
+            col3:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+            col3:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            row.col3 = col3
 
-        local col3 = wm:CreateControl("$(parent)_Col3", row, CT_LABEL)
-        col3:SetAnchor(LEFT, col2, RIGHT, 8, 0)
-        col3:SetDimensions(120, 20)
-        col3:SetFont("ZoFontGameSmall")
-        col3:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-        col3:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
-        row.col3 = col3
+            local col4 = wm:CreateControl("$(parent)_Col4", row, CT_LABEL)
+            col4:SetAnchor(LEFT, col3, RIGHT, 8, 0)
+            col4:SetDimensions(150, 20)
+            col4:SetFont("ZoFontGameBold")
+            col4:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+            col4:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            row.col4 = col4
 
-        local col4 = wm:CreateControl("$(parent)_Col4", row, CT_LABEL)
-        col4:SetAnchor(LEFT, col3, RIGHT, 8, 0)
-        col4:SetDimensions(155, 20)
-        col4:SetFont("ZoFontGameBold")
-        col4:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-        col4:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
-        row.col4 = col4
+            local col5 = wm:CreateControl("$(parent)_Col5", row, CT_LABEL)
+            col5:SetAnchor(LEFT, col4, RIGHT, 8, 0)
+            col5:SetDimensions(120, 20)
+            col5:SetFont("ZoFontGameSmall")
+            col5:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+            col5:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            row.col5 = col5
 
-        local col5 = wm:CreateControl("$(parent)_Col5", row, CT_LABEL)
-        col5:SetAnchor(LEFT, col4, RIGHT, 8, 0)
-        col5:SetDimensions(125, 20)
-        col5:SetFont("ZoFontGameSmall")
-        col5:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-        col5:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
-        row.col5 = col5
+            local col6 = wm:CreateControl("$(parent)_Col6", row, CT_LABEL)
+            col6:SetAnchor(LEFT, col5, RIGHT, 8, 0)
+            col6:SetAnchor(RIGHT, row, RIGHT, -8, 0)
+            col6:SetFont("ZoFontGameSmall")
+            col6:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+            col6:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            row.col6 = col6
 
-        local col6 = wm:CreateControl("$(parent)_Col6", row, CT_LABEL)
-        col6:SetAnchor(LEFT, col5, RIGHT, 8, 0)
-        col6:SetAnchor(RIGHT, row, RIGHT, -8, 0)
-        col6:SetFont("ZoFontGameSmall")
-        col6:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-        col6:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
-        row.col6 = col6
-
-        row:SetHandler("OnMouseEnter", function(control)
-            control:SetCenterColor(0.10, 0.10, 0.16, 0.90)
-            control:SetEdgeColor(0.90, 0.70, 0.20, 0.85)
-            if control.bidData then
-                local b = control.bidData
-                InitializeTooltip(InformationTooltip, control, RIGHT, 5, 0)
-                InformationTooltip:AddLine(string.format("|c00FFCC%s|r", b.kioskName), "ZoFontGameBold")
-                InformationTooltip:AddLine(string.format("• Guild: |cFFFFFF%s|r", b.guildName), "ZoFontGameSmall")
-                InformationTooltip:AddLine(string.format("• Bid Amount: |cFFD700%s gold|r", ZO_LocalizeDecimalNumber(b.amount)), "ZoFontGameSmall")
-                InformationTooltip:AddLine(string.format("• Bidder: |cFFFFFF%s|r", b.bidder), "ZoFontGameSmall")
-                InformationTooltip:AddLine(string.format("• Status: |c%s%s|r", b.statusColor or "FFFFFF", b.statusText or "Pending"), "ZoFontGameSmall")
-                if b.refundTime and b.refundTime > 0 then
-                    local refAgo = ZO_FormatDurationAgo(GetTimeStamp() - b.refundTime)
-                    InformationTooltip:AddLine(string.format("• Refunded: |c888888%s ago|r", refAgo), "ZoFontGameSmall")
+            row:SetHandler("OnMouseEnter", function(control)
+                if control.rowBg then
+                    control.rowBg:SetCenterColor(0.10, 0.10, 0.16, 0.92)
+                    control.rowBg:SetEdgeColor(0.90, 0.70, 0.20, 0.85)
                 end
-                local okD, dateStr = pcall(os.date, "!%A, %b %d at %H:%M UTC", b.timestamp or 0)
-                InformationTooltip:AddLine(string.format("• Timestamp: |c888888%s|r", (okD and dateStr) or "Recorded"), "ZoFontGameSmall")
-            elseif control.reconData then
-                local rData = control.reconData
-                InitializeTooltip(InformationTooltip, control, RIGHT, 5, 0)
-                InformationTooltip:AddLine(string.format("|c00FFCC%s|r", rData.trader or "Trader"), "ZoFontGameBold")
-                InformationTooltip:AddLine(string.format("• Location: |cFFFFFF%s, %s|r", rData.city or "?", rData.zone or "?"), "ZoFontGameSmall")
-                InformationTooltip:AddLine(string.format("• Controlling Guild: |cFFD700%s|r", rData.guildName or "Unverified"), "ZoFontGameSmall")
-                InformationTooltip:AddLine(string.format("• Source: |c59E08A%s|r", rData.source or "Directory"), "ZoFontGameSmall")
-                if rData.notes and rData.notes ~= "" then
-                    InformationTooltip:AddLine(string.format("• Notes: |cCCCCCC%s|r", rData.notes), "ZoFontGameSmall")
+                if control.bidData then
+                    local b = control.bidData
+                    InitializeTooltip(InformationTooltip, control, RIGHT, 5, 0)
+                    InformationTooltip:AddLine(string.format("|c00FFCC%s|r", b.kioskName), "ZoFontGameBold")
+                    InformationTooltip:AddLine(string.format("• Guild: |cFFFFFF%s|r", b.guildName), "ZoFontGameSmall")
+                    InformationTooltip:AddLine(string.format("• Bid Amount: |cFFD700%s gold|r", ZO_LocalizeDecimalNumber(b.amount)), "ZoFontGameSmall")
+                    InformationTooltip:AddLine(string.format("• Bidder: |cFFFFFF%s|r", b.bidder), "ZoFontGameSmall")
+                    InformationTooltip:AddLine(string.format("• Status: |c%s%s|r", b.statusColor or "FFFFFF", b.statusText or "Pending"), "ZoFontGameSmall")
+                    if b.refundTime and b.refundTime > 0 then
+                        local refAgo = ZO_FormatDurationAgo(GetTimeStamp() - b.refundTime)
+                        InformationTooltip:AddLine(string.format("• Refunded: |c888888%s ago|r", refAgo), "ZoFontGameSmall")
+                    end
+                    local okD, dateStr = pcall(os.date, "!%A, %b %d at %H:%M UTC", b.timestamp or 0)
+                    InformationTooltip:AddLine(string.format("• Timestamp: |c888888%s|r", (okD and dateStr) or "Recorded"), "ZoFontGameSmall")
+                elseif control.reconData then
+                    local rData = control.reconData
+                    InitializeTooltip(InformationTooltip, control, RIGHT, 5, 0)
+                    InformationTooltip:AddLine(string.format("|c00FFCC%s|r", rData.trader or "Trader"), "ZoFontGameBold")
+                    InformationTooltip:AddLine(string.format("• Location: |cFFFFFF%s, %s|r", rData.city or "?", rData.zone or "?"), "ZoFontGameSmall")
+                    InformationTooltip:AddLine(string.format("• Controlling Guild: |cFFD700%s|r", rData.guildName or "Unverified"), "ZoFontGameSmall")
+                    InformationTooltip:AddLine(string.format("• Source: |c59E08A%s|r", rData.source or "Directory"), "ZoFontGameSmall")
+                    if rData.notes and rData.notes ~= "" then
+                        InformationTooltip:AddLine(string.format("• Notes: |cCCCCCC%s|r", rData.notes), "ZoFontGameSmall")
+                    end
+                    if rData.timestamp and rData.timestamp > 0 then
+                        local okR, dateStr = pcall(os.date, "!%A, %b %d at %H:%M UTC", rData.timestamp)
+                        InformationTooltip:AddLine(string.format("• Scouted: |c888888%s|r", (okR and dateStr) or "Recorded"), "ZoFontGameSmall")
+                    else
+                        InformationTooltip:AddLine("• Scouted: |c888888Unverified this week|r", "ZoFontGameSmall")
+                    end
                 end
-                if rData.timestamp and rData.timestamp > 0 then
-                    local okR, dateStr = pcall(os.date, "!%A, %b %d at %H:%M UTC", rData.timestamp)
-                    InformationTooltip:AddLine(string.format("• Scouted: |c888888%s|r", (okR and dateStr) or "Recorded"), "ZoFontGameSmall")
-                else
-                    InformationTooltip:AddLine("• Scouted: |c888888Unverified this week|r", "ZoFontGameSmall")
+            end)
+
+            row:SetHandler("OnMouseExit", function(control)
+                if control.rowBg then
+                    if control._isVacantHighlight then
+                        control.rowBg:SetCenterColor(0.06, 0.16, 0.08, 0.78)
+                    elseif (control.rowIndex or 1) % 2 == 0 then
+                        control.rowBg:SetCenterColor(0.065, 0.062, 0.085, 0.78)
+                    else
+                        control.rowBg:SetCenterColor(0.045, 0.045, 0.065, 0.70)
+                    end
+                    control.rowBg:SetEdgeColor(0.22, 0.18, 0.12, 0.42)
                 end
-            end
-        end)
-        row:SetHandler("OnMouseExit", function(control)
-            local idx = control.rowIndex or 1
-            if idx % 2 == 0 then
-                control:SetCenterColor(0.04, 0.04, 0.06, 0.60)
-            else
-                control:SetCenterColor(0.03, 0.03, 0.04, 0.40)
-            end
-            control:SetEdgeColor(0.18, 0.16, 0.12, 0.40)
-            ClearTooltip(InformationTooltip)
-        end)
+                ClearTooltip(InformationTooltip)
+            end)
+        end,
+        function(row, item, idx)
+            if not item then return end
+            self:BindBidsReconRow(row, item, idx)
+        end
+    )
+    scrollList:SetAnchor(TOPLEFT, card, TOPLEFT, 10, headerY + 26)
+    scrollList:SetAnchor(BOTTOMRIGHT, card, BOTTOMRIGHT, -10, -34)
+    self.bidsScrollList = scrollList
 
-        self.bidsRows[r] = row
-    end
-
-    -- 7. Footer & Pagination Controls
+    -- 7. Footer Status Bar
     local footerY = -8
     local statLbl = wm:CreateControl("$(parent)_StatLbl", card, CT_LABEL)
     statLbl:SetAnchor(BOTTOMLEFT, card, BOTTOMLEFT, 12, footerY)
@@ -910,57 +984,11 @@ function FR:BuildBidsReconUI(parent)
     statLbl:SetText("Bids Ledger: Initializing...")
     self.bidsStatLbl = statLbl
 
-    local nextBtn = wm:CreateControl("$(parent)_NextBtn", card, CT_BUTTON)
-    nextBtn:SetAnchor(BOTTOMRIGHT, card, BOTTOMRIGHT, -12, footerY)
-    nextBtn:SetDimensions(65, 22)
-    nextBtn:SetFont("ZoFontGameSmall")
-    nextBtn:SetText("Next >")
-    self:StyleTactileButton(nextBtn, {
-        normalBg = { 0.06, 0.06, 0.09, 0.85 },
-        hoverBg = { 0.08, 0.16, 0.18, 0.95 },
-        normalEdge = { 0.25, 0.25, 0.30, 0.60 },
-        hoverEdge = { 0, 0.90, 0.80, 1.0 },
-        normalTextColor = { 0.7, 0.7, 0.7, 1 },
-        hoverTextColor = { 0, 1, 0.9, 1 },
-        tooltipTitle = "Next Page",
-        tooltipText = "View next page of records.",
-    })
-    nextBtn:SetHandler("OnClicked", function()
-        local activeList = (self.bidsSubView == "bids") and self.bidsList or self.reconList
-        local maxPages = math.max(1, math.ceil(#activeList / ROWS_PER_PAGE))
-        if self.bidsCurrentPage < maxPages then
-            self.bidsCurrentPage = self.bidsCurrentPage + 1
-            self:RenderBidsRows()
-        end
-    end)
-
     local pageLbl = wm:CreateControl("$(parent)_PageLbl", card, CT_LABEL)
-    pageLbl:SetAnchor(RIGHT, nextBtn, LEFT, -8, 0)
+    pageLbl:SetAnchor(BOTTOMRIGHT, card, BOTTOMRIGHT, -14, footerY)
     pageLbl:SetFont("ZoFontGameSmall")
-    pageLbl:SetText("Page 1/1")
+    pageLbl:SetText("0 records")
     self.bidsPageLbl = pageLbl
-
-    local prevBtn = wm:CreateControl("$(parent)_PrevBtn", card, CT_BUTTON)
-    prevBtn:SetAnchor(RIGHT, pageLbl, LEFT, -8, 0)
-    prevBtn:SetDimensions(65, 22)
-    prevBtn:SetFont("ZoFontGameSmall")
-    prevBtn:SetText("< Prev")
-    self:StyleTactileButton(prevBtn, {
-        normalBg = { 0.06, 0.06, 0.09, 0.85 },
-        hoverBg = { 0.08, 0.16, 0.18, 0.95 },
-        normalEdge = { 0.25, 0.25, 0.30, 0.60 },
-        hoverEdge = { 0, 0.90, 0.80, 1.0 },
-        normalTextColor = { 0.7, 0.7, 0.7, 1 },
-        hoverTextColor = { 0, 1, 0.9, 1 },
-        tooltipTitle = "Previous Page",
-        tooltipText = "View previous page of records.",
-    })
-    prevBtn:SetHandler("OnClicked", function()
-        if self.bidsCurrentPage > 1 then
-            self.bidsCurrentPage = self.bidsCurrentPage - 1
-            self:RenderBidsRows()
-        end
-    end)
 end
 
 --[[ =========================================================================
@@ -1088,6 +1116,7 @@ function FR:UpdateBidsUI()
     if self.bidsFilterBar then self.bidsFilterBar:SetHidden(not isBids) end
     if self.reconFilterBar then self.reconFilterBar:SetHidden(isBids) end
     if self.bidsRibbon then self.bidsRibbon:SetHidden(false) end
+    if self.reconProgressTrack then self.reconProgressTrack:SetHidden(isBids) end
 
     -- Update column header labels
     self:UpdateHeaderArrows()
@@ -1126,103 +1155,101 @@ function FR:UpdateBidsUI()
                 "• |c00FFCCGround Recon:|r Verified This Week: |c59E08A%d / %d|r  |  Vacant: |cFFD700%d|r  |  Unverified: |c888888%d|r  |  Showing: |cFFFFFF%d|r",
                 verifiedWk, totalDir, vacantCnt, unverifiedCnt, #(self.reconList or {})
             ))
-        end
-    end
 
-    self:RenderBidsRows()
-end
-
-function FR:RenderBidsRows()
-    local isBids = (self.bidsSubView == "bids")
-    local list = isBids and (self.bidsList or {}) or (self.reconList or {})
-    local total = #list
-    local maxPages = math.max(1, math.ceil(total / ROWS_PER_PAGE))
-    if self.bidsCurrentPage > maxPages then self.bidsCurrentPage = maxPages end
-    if self.bidsCurrentPage < 1 then self.bidsCurrentPage = 1 end
-
-    local startIndex = (self.bidsCurrentPage - 1) * ROWS_PER_PAGE
-
-    for r = 1, ROWS_PER_PAGE do
-        local row = self.bidsRows and self.bidsRows[r]
-        local itemIndex = startIndex + r
-
-        if row then
-            row.rowIndex = r
-            if itemIndex <= total then
-                local item = list[itemIndex]
-                row:SetHidden(false)
-                row.bidData = isBids and item or nil
-                row.reconData = (not isBids) and item or nil
-
-                if r % 2 == 0 then
-                    row:SetCenterColor(0.04, 0.04, 0.06, 0.60)
-                else
-                    row:SetCenterColor(0.03, 0.03, 0.04, 0.40)
+            if self.reconProgressFill and self.reconProgressTrack then
+                local pct = 0
+                local sweep = self.kioskSweep
+                if sweep and sweep.active and (sweep.totalSteps or 0) > 0 then
+                    pct = math.max(0, math.min(1, (sweep.completedSteps or 0) / sweep.totalSteps))
+                    self.reconProgressFill:SetColor(0.95, 0.72, 0.22, 0.98)
+                elseif totalDir > 0 then
+                    pct = math.max(0, math.min(1, verifiedWk / totalDir))
+                    self.reconProgressFill:SetColor(0.35, 0.88, 0.54, 0.92)
                 end
-
-                if isBids then
-                    -- Bids item
-                    row.col1:SetText(string.format("|c00FFCC%s|r", item.guildName or "Guild"))
-                    row.col2:SetText(item.kioskName or "Unknown Kiosk")
-                    row.col3:SetText(string.format("|cCCCCCC%s|r", item.bidder or "Staff"))
-                    row.col4:SetText(string.format("|cFFD700%sg|r", ZO_LocalizeDecimalNumber(item.amount or 0)))
-                    row.col5:SetText(string.format("|c%s● %s|r", item.statusColor or "FFFFFF", item.statusText or "Pending"))
-
-                    local timeAgo = item.timestamp and ZO_FormatDurationAgo(GetTimeStamp() - item.timestamp) or "--"
-                    row.col6:SetText(timeAgo)
-                else
-                    -- Recon item
-                    local timeAgo = (item.timestamp and item.timestamp > 0) and ZO_FormatDurationAgo(GetTimeStamp() - item.timestamp) or "--"
-                    if item.isOpen and item.isCurrentWeek then
-                        row:SetCenterColor(0.06, 0.16, 0.08, 0.75)
-                        row.col1:SetText(string.format("|cFFD700⭐ %s|r", item.trader or "Trader"))
-                        row.col2:SetText(string.format("%s, %s", item.city or "?", item.zone or "?"))
-                        row.col3:SetText("|c59E08A⭐ VACANT / OPEN|r")
-                        row.col4:SetText("|c00FFCC(No Guild Claimed)|r")
-                        row.col5:SetText(string.format("|c00FFCC%s|r", item.source or "Recon"))
-                        row.col6:SetText(timeAgo)
-                    elseif item.isCurrentWeek then
-                        row.col1:SetText(string.format("|cFFFFFF%s|r", item.trader or "Trader"))
-                        row.col2:SetText(string.format("%s, %s", item.city or "?", item.zone or "?"))
-                        row.col3:SetText("|c59E08A● Verified (Week)|r")
-                        row.col4:SetText(string.format("|c00FFCC%s|r", item.guildName or "None"))
-                        row.col5:SetText(string.format("|c59E08A%s|r", item.source or "Scouted"))
-                        row.col6:SetText(timeAgo)
-                    elseif item.isPriorWeek then
-                        row.col1:SetText(string.format("|cCCCCCC%s|r", item.trader or "Trader"))
-                        row.col2:SetText(string.format("%s, %s", item.city or "?", item.zone or "?"))
-                        row.col3:SetText("|cE6C387○ Prior Week|r")
-                        row.col4:SetText(string.format("|c888888%s|r", item.guildName or "None"))
-                        row.col5:SetText(string.format("|c888888%s|r", item.source or "Prior"))
-                        row.col6:SetText(timeAgo)
-                    else
-                        row.col1:SetText(string.format("|c777777%s|r", item.trader or "Trader"))
-                        row.col2:SetText(string.format("|c777777%s, %s|r", item.city or "?", item.zone or "?"))
-                        row.col3:SetText("|c666666○ Unscavenged|r")
-                        row.col4:SetText("|c555555Unverified|r")
-                        row.col5:SetText("|c555555Directory|r")
-                        row.col6:SetText("--")
-                    end
-                end
-            else
-                row:SetHidden(true)
-                row.bidData = nil
-                row.reconData = nil
+                local trackW = math.max(0, (self.reconProgressTrack:GetWidth() or 900) - 2)
+                self.reconProgressFill:SetWidth(math.floor(trackW * pct))
             end
         end
     end
 
+    self:RenderBidsRows(false)
+end
+
+function FR:BindBidsReconRow(row, item, idx)
+    local isBids = (self.bidsSubView == "bids")
+    row.rowIndex = idx
+    row.bidData = isBids and item or nil
+    row.reconData = (not isBids) and item or nil
+    row._isVacantHighlight = false
+
+    if isBids then
+        row.col1:SetText(string.format("|c00FFCC%s|r", item.guildName or "Guild"))
+        row.col2:SetText(item.kioskName or "Unknown Kiosk")
+        row.col3:SetText(string.format("|cCCCCCC%s|r", item.bidder or "Staff"))
+        row.col4:SetText(string.format("|cFFD700%sg|r", ZO_LocalizeDecimalNumber(item.amount or 0)))
+        row.col5:SetText(string.format("|c%s● %s|r", item.statusColor or "FFFFFF", item.statusText or "Pending"))
+
+        local timeAgo = item.timestamp and ZO_FormatDurationAgo(GetTimeStamp() - item.timestamp) or "--"
+        row.col6:SetText(timeAgo)
+    else
+        local timeAgo = (item.timestamp and item.timestamp > 0) and ZO_FormatDurationAgo(GetTimeStamp() - item.timestamp) or "--"
+        if item.isOpen and item.isCurrentWeek then
+            row._isVacantHighlight = true
+            if row.rowBg then
+                row.rowBg:SetCenterColor(0.06, 0.16, 0.08, 0.78)
+            end
+            row.col1:SetText(string.format("|cFFD700⭐ %s|r", item.trader or "Trader"))
+            row.col2:SetText(string.format("%s, %s", item.city or "?", item.zone or "?"))
+            row.col3:SetText("|c59E08A⭐ VACANT / OPEN|r")
+            row.col4:SetText("|c00FFCC(No Guild Claimed)|r")
+            row.col5:SetText(string.format("|c00FFCC%s|r", item.source or "Recon"))
+            row.col6:SetText(timeAgo)
+        elseif item.isCurrentWeek then
+            row.col1:SetText(string.format("|cFFFFFF%s|r", item.trader or "Trader"))
+            row.col2:SetText(string.format("%s, %s", item.city or "?", item.zone or "?"))
+            row.col3:SetText("|c59E08A● Verified (Week)|r")
+            row.col4:SetText(string.format("|c00FFCC%s|r", item.guildName or "None"))
+            row.col5:SetText(string.format("|c59E08A%s|r", item.source or "Scouted"))
+            row.col6:SetText(timeAgo)
+        elseif item.isPriorWeek then
+            row.col1:SetText(string.format("|cCCCCCC%s|r", item.trader or "Trader"))
+            row.col2:SetText(string.format("%s, %s", item.city or "?", item.zone or "?"))
+            row.col3:SetText("|cE6C387○ Prior Week|r")
+            row.col4:SetText(string.format("|c888888%s|r", item.guildName or "None"))
+            row.col5:SetText(string.format("|c888888%s|r", item.source or "Prior"))
+            row.col6:SetText(timeAgo)
+        else
+            row.col1:SetText(string.format("|c777777%s|r", item.trader or "Trader"))
+            row.col2:SetText(string.format("|c777777%s, %s|r", item.city or "?", item.zone or "?"))
+            row.col3:SetText("|c666666○ Unscavenged|r")
+            row.col4:SetText("|c555555Unverified|r")
+            row.col5:SetText("|c555555Directory|r")
+            row.col6:SetText("--")
+        end
+    end
+end
+
+function FR:RenderBidsRows(keepScrollPos)
+    local isBids = (self.bidsSubView == "bids")
+    local list = isBids and (self.bidsList or {}) or (self.reconList or {})
+    local total = #list
+
+    if self.bidsScrollList and self.CommitBrassScrollList then
+        self:CommitBrassScrollList(self.bidsScrollList, list, keepScrollPos == true)
+    end
+
     if self.bidsPageLbl then
-        self.bidsPageLbl:SetText(string.format("Page %d/%d (%d records)", self.bidsCurrentPage, maxPages, total))
+        self.bidsPageLbl:SetText(string.format("|cE6C387%d|r |c888888records|r", total))
     end
 
     if self.bidsStatLbl then
         if isBids then
-            self.bidsStatLbl:SetText(string.format("Bids Ledger: %d records  •  Scroll wheel to page", total))
+            self.bidsStatLbl:SetText(string.format("Bids Ledger: %d records  •  Mouse-wheel or drag brass scrollbar", total))
         else
             local verifiedWk = self.reconVerifiedThisWeekCount or 0
-            local knownGuilds = NonContiguousCount((self.savedVars and self.savedVars.knownTradingGuilds) or {})
-            self.bidsStatLbl:SetText(string.format("Ground Recon: %d/%d Tamriel kiosks verified this week  •  %d trading guilds indexed", verifiedWk, total, knownGuilds))
+            local totalDir = self.reconTotalDirectoryCount or 291
+            local knownGuilds = self.reconKnownGuildsCount or 0
+            self.bidsStatLbl:SetText(string.format("Ground Recon: %d/%d Tamriel kiosks verified this week  •  %d trading guilds indexed", verifiedWk, totalDir, knownGuilds))
         end
     end
 end

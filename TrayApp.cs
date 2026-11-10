@@ -16,14 +16,6 @@ namespace RedfurSync
         [DllImport("user32.dll", SetLastError = true)]
         private static extern bool DestroyIcon(IntPtr hIcon);
 
-        private static void TraceLog(string msg)
-        {
-            try {
-                var p = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "debug.log");
-                File.AppendAllText(p, $"[{DateTime.Now:HH:mm:ss.fff}] [TrayApp] {msg}\n");
-            } catch {}
-        }
-
         private readonly NotifyIcon        _trayIcon;
         private readonly ContextMenuStrip  _menu;
         private readonly FileWatcherService _watcher;
@@ -38,6 +30,7 @@ namespace RedfurSync
 
         private readonly SynchronizationContext? _uiContext;
         private RelayMainWindow?    _mainWindow;
+        private UploadProgressForm? _compactWindow;
         private EventWaitHandle?    _wakeEvent;
         private RegisteredWaitHandle? _wakeRegistration;
 
@@ -51,7 +44,6 @@ namespace RedfurSync
 
         public TrayApp(bool startMinimized = false)
         {
-            TraceLog("ctor started. startMinimized: " + startMinimized);
             _uiContext = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
             _menu     = BuildMenu();
             
@@ -100,19 +92,22 @@ namespace RedfurSync
             SetPerformanceMode(config.VisualFidelity, saveConfig: false);
 
             CheckFirstRun();
-            TraceLog("CheckFirstRun done");
 
             if (!startMinimized)
             {
                 // If the watcher never started (user canceled first-run), show setup tab
                 // so the app visibly launches instead of sitting invisibly in the tray
-                string initialTab = string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken)
-                    && string.IsNullOrWhiteSpace(AppConfig.Instance.ApiKey)
-                    ? "setup" : "sync";
+                bool needsSetup = string.IsNullOrWhiteSpace(AppConfig.Instance.DeviceToken)
+                    && string.IsNullOrWhiteSpace(AppConfig.Instance.ApiKey);
+                Action showInitial = needsSetup
+                    ? () => OpenMainWindow("setup", forceFull: true)
+                    : AppConfig.Instance.CompactMode
+                        ? () => OpenCompactWindow()
+                        : () => OpenMainWindow("sync");
                 if (_uiContext != null)
-                    _uiContext.Post(_ => OpenMainWindow(initialTab), null);
+                    _uiContext.Post(_ => showInitial(), null);
                 else
-                    OpenMainWindow(initialTab);
+                    showInitial();
             }
         }
         private System.Windows.Forms.Timer? _batchAlertTimer;
@@ -176,13 +171,22 @@ namespace RedfurSync
         {
             if (e.Button != MouseButtons.Left) return;
 
+            if (_compactWindow != null && !_compactWindow.IsDisposed && _compactWindow.Visible)
+            {
+                _compactWindow.Hide();
+                return;
+            }
+
             if (_mainWindow != null && !_mainWindow.IsDisposed && _mainWindow.Visible)
             {
                 _mainWindow.Hide();
                 return;
             }
 
-            OpenMainWindow("sync");
+            if (AppConfig.Instance.CompactMode)
+                OpenCompactWindow();
+            else
+                OpenMainWindow("sync");
         }
 
         public void ActivateMainWindow()
@@ -198,20 +202,121 @@ namespace RedfurSync
             _mainWindow.Focus();
         }
 
-        private void OpenMainWindow(string tabId = "sync")
+        private void OpenCompactWindow(Point? anchorTopRight = null)
         {
             if (_disposed) return;
-            TraceLog("OpenMainWindow tab: " + tabId);
             if (_menu.InvokeRequired)
             {
                 if (_disposed || _menu.IsDisposed || !_menu.IsHandleCreated) return;
-                _menu.BeginInvoke(() => OpenMainWindow(tabId));
+                _menu.BeginInvoke(() => OpenCompactWindow(anchorTopRight));
                 return;
+            }
+
+            if (_mainWindow != null && !_mainWindow.IsDisposed && _mainWindow.Visible)
+                _mainWindow.Hide();
+
+            bool newlyCreated = false;
+            if (_compactWindow == null || _compactWindow.IsDisposed)
+            {
+                _compactWindow = new UploadProgressForm(_watcher, ApplyUpdate, SwapToFullWindow);
+                newlyCreated = true;
+            }
+
+            if (anchorTopRight.HasValue)
+            {
+                var scr = Screen.FromPoint(anchorTopRight.Value) ?? Screen.PrimaryScreen;
+                var wa = scr?.WorkingArea ?? new Rectangle(0, 0, 1920, 1080);
+                int x = Math.Clamp(anchorTopRight.Value.X - _compactWindow.Width, wa.Left + 8, Math.Max(wa.Left + 8, wa.Right - _compactWindow.Width - 8));
+                int y = Math.Clamp(anchorTopRight.Value.Y, wa.Top + 8, Math.Max(wa.Top + 8, wa.Bottom - _compactWindow.Height - 8));
+                _compactWindow.StartPosition = FormStartPosition.Manual;
+                _compactWindow.Location = new Point(x, y);
+            }
+            else if (newlyCreated)
+            {
+                _compactWindow.PositionAboveTray();
+            }
+
+            if (!_compactWindow.Visible) _compactWindow.Show();
+            if (_compactWindow.WindowState == FormWindowState.Minimized)
+                _compactWindow.WindowState = FormWindowState.Normal;
+            _compactWindow.TopMost = true;
+            _compactWindow.TopMost = false;
+            _compactWindow.BringToFront();
+            _compactWindow.Activate();
+            _compactWindow.Focus();
+        }
+
+        private void SwapToCompactWindow()
+        {
+            if (_disposed) return;
+            if (_menu.InvokeRequired)
+            {
+                if (_disposed || _menu.IsDisposed || !_menu.IsHandleCreated) return;
+                _menu.BeginInvoke(SwapToCompactWindow);
+                return;
+            }
+
+            AppConfig.Instance.CompactMode = true;
+            AppConfig.Instance.Save();
+
+            Point? anchor = null;
+            if (_mainWindow != null && !_mainWindow.IsDisposed && _mainWindow.Visible && _mainWindow.WindowState != FormWindowState.Minimized)
+            {
+                anchor = new Point(_mainWindow.Right, _mainWindow.Top);
+                _mainWindow.Hide();
+            }
+
+            OpenCompactWindow(anchor);
+        }
+
+        private void SwapToFullWindow()
+        {
+            if (_disposed) return;
+            if (_menu.InvokeRequired)
+            {
+                if (_disposed || _menu.IsDisposed || !_menu.IsHandleCreated) return;
+                _menu.BeginInvoke(SwapToFullWindow);
+                return;
+            }
+
+            AppConfig.Instance.CompactMode = false;
+            AppConfig.Instance.Save();
+
+            if (_compactWindow != null && !_compactWindow.IsDisposed && _compactWindow.Visible)
+                _compactWindow.Hide();
+
+            OpenMainWindow("sync", forceFull: true);
+        }
+
+        private void OpenMainWindow(string tabId = "sync", bool forceFull = false)
+        {
+            if (_disposed) return;
+            if (_menu.InvokeRequired)
+            {
+                if (_disposed || _menu.IsDisposed || !_menu.IsHandleCreated) return;
+                _menu.BeginInvoke(() => OpenMainWindow(tabId, forceFull));
+                return;
+            }
+
+            if (!forceFull && tabId == "sync" && AppConfig.Instance.CompactMode)
+            {
+                OpenCompactWindow();
+                return;
+            }
+
+            if (_compactWindow != null && !_compactWindow.IsDisposed && _compactWindow.Visible)
+            {
+                _compactWindow.Hide();
+                if (AppConfig.Instance.CompactMode)
+                {
+                    AppConfig.Instance.CompactMode = false;
+                    AppConfig.Instance.Save();
+                }
             }
 
             if (_mainWindow == null || _mainWindow.IsDisposed)
             {
-                _mainWindow = new RelayMainWindow(_watcher, ApplyUpdate);
+                _mainWindow = new RelayMainWindow(_watcher, ApplyUpdate, SwapToCompactWindow, UpdateStartupText, UpdateSilentSyncText);
             }
 
             _mainWindow.NavigateToTab(tabId);
@@ -231,6 +336,8 @@ namespace RedfurSync
             using var dlg = new RelayAssistantForm(_watcher);
             if (_mainWindow != null && !_mainWindow.IsDisposed && _mainWindow.Visible)
                 dlg.ShowDialog(_mainWindow);
+            else if (_compactWindow != null && !_compactWindow.IsDisposed && _compactWindow.Visible)
+                dlg.ShowDialog(_compactWindow);
             else
                 dlg.ShowDialog();
         }
@@ -429,17 +536,17 @@ namespace RedfurSync
             menu.Items.Add(_silentSyncItem);
             menu.Items.Add(new ToolStripSeparator());
 
-            menu.Items.Add("⚡  Open Relay Terminal",     null, (_, _) => OpenMainWindow("sync"));
+            menu.Items.Add("⚡  Open Relay Terminal",     null, (_, _) => OpenMainWindow("sync", forceFull: true));
             menu.Items.Add("💬  Ask Fissal...",          null, (_, _) => OpenAssistantDialog());
             menu.Items.Add("◱  Toggle Compact Mode",     null, (_, _) => {
-                bool wasCreated = _mainWindow != null && !_mainWindow.IsDisposed;
-                OpenMainWindow("sync");
-                if (wasCreated || !AppConfig.Instance.CompactMode)
-                    _mainWindow?.ToggleCompactMode();
+                if (AppConfig.Instance.CompactMode)
+                    SwapToFullWindow();
+                else
+                    SwapToCompactWindow();
             });
-            menu.Items.Add("🛠️  Setup & Pairing",         null, (_, _) => OpenMainWindow("setup"));
-            menu.Items.Add("🎨  Terminal Themes",         null, (_, _) => OpenMainWindow("themes"));
-            menu.Items.Add("⚙️  Diagnostics",             null, (_, _) => OpenMainWindow("diagnostics"));
+            menu.Items.Add("🛠️  Setup & Pairing",         null, (_, _) => OpenMainWindow("setup", forceFull: true));
+            menu.Items.Add("🎨  Terminal Themes",         null, (_, _) => OpenMainWindow("themes", forceFull: true));
+            menu.Items.Add("⚙️  Diagnostics",             null, (_, _) => OpenMainWindow("diagnostics", forceFull: true));
             menu.Items.Add(new ToolStripSeparator());
             menu.Items.Add("🔌  Cut Connection",          null, OnShutdown);
 
@@ -449,6 +556,8 @@ namespace RedfurSync
         private void SetPerformanceMode(FidelityMode mode, bool saveConfig)
         {
             UploadProgressForm.AppConfig.SetMode(mode);
+            _compactWindow?.ApplyAnimationInterval();
+            _mainWindow?.UpdateIdleTimerInterval();
 
             _perfLowItem.Text  = (mode == FidelityMode.Low ? Checked : Unchecked) + "Minimal (Low FX)";
             _perfMedItem.Text  = (mode == FidelityMode.Medium ? Checked : Unchecked) + "Balanced";
@@ -472,6 +581,7 @@ namespace RedfurSync
                 return;
             }
             _startupItem.Text = (on ? Checked : Unchecked) + "Run Fissal on startup";
+            _mainWindow?.RefreshPreferencesControls();
         }
 
         private void UpdateSilentSyncText(bool silent)
@@ -485,6 +595,7 @@ namespace RedfurSync
             }
             if (_silentSyncItem != null)
                 _silentSyncItem.Text = (silent ? Checked : Unchecked) + "Silent Background Sync";
+            _mainWindow?.RefreshPreferencesControls();
         }
 
         private void UpdateStatus(string msg)
@@ -707,7 +818,6 @@ namespace RedfurSync
 
         public void Dispose()
         {
-            TraceLog("Dispose called! Stack: " + Environment.StackTrace);
             if (_disposed) return;
             _disposed = true;
 
@@ -720,6 +830,7 @@ namespace RedfurSync
 
             _batchAlertTimer?.Stop();
             _batchAlertTimer?.Dispose();
+            _compactWindow?.Dispose();
             _mainWindow?.Dispose();
             _trayIcon.Dispose();
             _menu.Dispose();

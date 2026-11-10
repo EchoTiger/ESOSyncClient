@@ -10,14 +10,23 @@ FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
 FR.name = "FissalRelay"
-FR.version = "1.9.6"
+FR.version = "1.9.7"
 FR.author = "Echo & Fissal"
+
+-- Native ESO Keybind Labels (referenced by Bindings.xml)
+if ZO_CreateStringId then
+    ZO_CreateStringId("SI_BINDING_NAME_FISSAL_TOGGLE_CONSOLE", "Toggle Fissal Command Console")
+    ZO_CreateStringId("SI_BINDING_NAME_FISSAL_SWEEP_KIOSKS",   "Start / Stop Tamriel Kiosk Sweep")
+    ZO_CreateStringId("SI_BINDING_NAME_FISSAL_TOGGLE_HUD",     "Toggle Floating Telemetry HUD")
+    ZO_CreateStringId("SI_BINDING_NAME_FISSAL_START_BUMP",     "Start TTC Guild Store Bump")
+end
 
 -- Defaults for SavedVariables
 local DEFAULT_SAVED_VARS = {
     version = 3,
     historyDepthDays = 30,
     lastSeenEventId = {},
+    lastLinkedEventTs = {},
     sales = {},
     kiosks = {},
     knownTradingGuilds = {},
@@ -61,6 +70,7 @@ local DEFAULT_SAVED_VARS = {
         announceKioskRecon = true,
         showHud = false,
         showHudConfigured = false,
+        hudCollapsed = false,
         hudPos = { x = 0, y = 0 },
         bumpGuilds = {},
         bumperPos = { x = 0, y = 0 },
@@ -265,8 +275,110 @@ function FR:IsPlayerOfficerInAnyGuild()
 end
 
 --[[ =========================================================================
-     DUPLICATE CHECKING & SALES INGEST
+     DUPLICATE CHECKING, PER-GUILD INDEXING & SALES INGEST
 ========================================================================= ]]--
+
+function FR:MarkHudDirty()
+    self._hudDirty = true
+    self._hudCachedBidsCount = nil
+    self._hudCachedRostersCount = nil
+end
+
+function FR:GetSaleItemName(sale)
+    if not sale then return "" end
+    if sale.itemName and sale.itemName ~= "" then
+        return sale.itemName
+    end
+    local link = sale.itemLink
+    if not link or link == "" then return "" end
+    local raw = GetItemLinkName and GetItemLinkName(link) or ""
+    if raw == "" then return "" end
+    return zo_strformat and zo_strformat(SI_TOOLTIP_ITEM_NAME, raw) or raw:gsub("%^.*$", "")
+end
+
+function FR:GetGuildMemberLookupSet(guildId)
+    self._guildMemberLookupCache = self._guildMemberLookupCache or {}
+    local now = GetTimeStamp()
+    local entry = self._guildMemberLookupCache[guildId]
+    if entry and (now - entry.ts) < 60 then
+        return entry.set
+    end
+    local set = {}
+    local count = GetNumGuildMembers and GetNumGuildMembers(guildId) or 0
+    for m = 1, count do
+        local name = GetGuildMemberInfo(guildId, m)
+        if name and name ~= "" then
+            set[string.lower(name)] = true
+        end
+    end
+    self._guildMemberLookupCache[guildId] = { ts = now, set = set }
+    return set
+end
+
+function FR:InvalidateGuildMemberLookup(guildId)
+    if not self._guildMemberLookupCache then return end
+    if guildId then
+        self._guildMemberLookupCache[guildId] = nil
+    else
+        self._guildMemberLookupCache = {}
+    end
+end
+
+function FR:GetGuildSalesBucket(guildId)
+    if not self._salesByGuild then
+        self._salesByGuild = {}
+        if self.savedVars and self.savedVars.sales then
+            for _, s in pairs(self.savedVars.sales) do
+                local gId = s and s.guildId
+                if gId then
+                    local b = self._salesByGuild[gId]
+                    if not b then
+                        b = {}
+                        self._salesByGuild[gId] = b
+                    end
+                    b[#b + 1] = s
+                end
+            end
+        end
+    end
+    return self._salesByGuild[guildId] or {}
+end
+
+function FR:GetGuildDepositsBucket(guildId)
+    if not self._depositsByGuild then
+        self._depositsByGuild = {}
+        if self.savedVars and self.savedVars.staff and self.savedVars.staff.bankDeposits then
+            for _, d in pairs(self.savedVars.staff.bankDeposits) do
+                local gId = d and d.guildId
+                if gId then
+                    local b = self._depositsByGuild[gId]
+                    if not b then
+                        b = {}
+                        self._depositsByGuild[gId] = b
+                    end
+                    b[#b + 1] = d
+                end
+            end
+        end
+    end
+    return self._depositsByGuild[guildId] or {}
+end
+
+function FR:IsCategoryLinkedCached(guildId, category)
+    local key = tostring(category) .. "_" .. tostring(guildId)
+    if self._categoryLinked and self._categoryLinked[key] == true then
+        return true
+    end
+    if LibHistoire and LibHistoire.internal and LibHistoire.internal.historyCache then
+        local cache = LibHistoire.internal.historyCache:GetCategoryCache(guildId, category)
+        if cache and cache.HasLinked and cache:HasLinked() then
+            self._categoryLinked = self._categoryLinked or {}
+            self._categoryLinked[key] = true
+            return true
+        end
+    end
+    return false
+end
 
 function FR:AddSale(event, guildId)
     local info = event:GetEventInfo()
@@ -275,31 +387,45 @@ function FR:AddSale(event, guildId)
     local eventId = event:GetEventId()
     local eventIdStr = Id64ToString(eventId)
     if self.savedVars.sales[eventIdStr] then
+        local isLinked = self:IsCategoryLinkedCached(guildId, GUILD_HISTORY_EVENT_CATEGORY_TRADER)
+        if isLinked then
+            local evTs = event:GetEventTimestampS() or 0
+            local lKey = "trader_" .. tostring(guildId)
+            self.savedVars.lastLinkedEventTs = self.savedVars.lastLinkedEventTs or {}
+            if evTs > (self.savedVars.lastLinkedEventTs[lKey] or 0) then
+                self.savedVars.lastLinkedEventTs[lKey] = evTs
+            end
+        end
         return false -- Duplicate already saved
     end
 
-    local guildName = GetGuildName(guildId)
+    self._guildNameCache = self._guildNameCache or {}
+    local guildName = self._guildNameCache[guildId]
+    if not guildName or guildName == "" then
+        guildName = GetGuildName(guildId)
+        self._guildNameCache[guildId] = guildName
+    end
+
     local seller = info.sellerDisplayName or ""
     local buyer = info.buyerDisplayName or ""
     local price = info.price or 0
     local quantity = info.quantity or 1
     local itemLink = info.itemLink or ""
-    if itemLink ~= "" then
+    if itemLink ~= "" and not itemLink:find("[", 1, true) then
         local rawLinkName = GetItemLinkName(itemLink) or ""
         local linkName = rawLinkName:gsub("%^.*$", ""):gsub('["\r\n]', '')
-        if linkName ~= "" and not itemLink:find("%[") then
+        if linkName ~= "" then
             itemLink = itemLink:gsub("|h|h", "|h[" .. linkName .. "]|h")
         end
     end
     local eventTime = event:GetEventTimestampS() or GetTimeStamp()
 
-    -- Check if buyer was an outsider (kiosk sale)
-    -- Root cause verified per Fable 5.1 audit: Native LibHistoire event yields displayName WITHOUT '@'.
-    -- GetGuildMemberIndexFromDisplayName requires '@' prefix and native guildId integer.
+    -- Check if buyer was an outsider (kiosk sale) via O(1) cached guild member set
     local wasKiosk = true
     if buyer ~= "" then
-        local formattedBuyer = (buyer:sub(1,1) == "@") and buyer or ("@" .. buyer)
-        if GetGuildMemberIndexFromDisplayName(guildId, formattedBuyer) then
+        local formattedBuyer = string.lower((buyer:sub(1,1) == "@") and buyer or ("@" .. buyer))
+        local memberSet = self:GetGuildMemberLookupSet(guildId)
+        if memberSet[formattedBuyer] then
             wasKiosk = false
         end
     end
@@ -321,6 +447,14 @@ function FR:AddSale(event, guildId)
         wasKiosk = wasKiosk,
     }
     self.savedVars.sales[eventIdStr] = saleRecord
+    if self._salesByGuild then
+        local bucket = self._salesByGuild[guildId]
+        if not bucket then
+            bucket = {}
+            self._salesByGuild[guildId] = bucket
+        end
+        bucket[#bucket + 1] = saleRecord
+    end
     self:OnRecordAppended("sales", saleRecord)
     self.savedVars.totalSalesGold = (self.savedVars.totalSalesGold or 0) + price
 
@@ -331,13 +465,13 @@ function FR:AddSale(event, guildId)
         self._bumpTelemetryCache = nil
     end
 
-    -- Keep track of latest event ID for this guild (only when category cache is linked,
-    -- or as initial informational telemetry so unlinked historical gaps are never skipped).
-    local isTraderLinked = false
-    if LibHistoire and LibHistoire.internal and LibHistoire.internal.historyCache then
-        local tCache = LibHistoire.internal.historyCache:GetCategoryCache(guildId, GUILD_HISTORY_EVENT_CATEGORY_TRADER)
-        if tCache and tCache.HasLinked and tCache:HasLinked() then
-            isTraderLinked = true
+    -- Keep track of latest event ID and linked cursor timestamp for this guild
+    local isTraderLinked = self:IsCategoryLinkedCached(guildId, GUILD_HISTORY_EVENT_CATEGORY_TRADER)
+    if isTraderLinked then
+        local lKey = "trader_" .. tostring(guildId)
+        self.savedVars.lastLinkedEventTs = self.savedVars.lastLinkedEventTs or {}
+        if eventTime > (self.savedVars.lastLinkedEventTs[lKey] or 0) then
+            self.savedVars.lastLinkedEventTs[lKey] = eventTime
         end
     end
 
@@ -345,11 +479,9 @@ function FR:AddSale(event, guildId)
     if isTraderLinked or not currentLast then
         local isNewer = not currentLast
         if not isNewer then
-            -- Use LibHistoire's CompareEventIds if available, else numeric compare.
             if LibHistoire and LibHistoire.CompareEventIds then
                 isNewer = LibHistoire:CompareEventIds(eventIdStr, currentLast) > 0
             else
-                -- Numeric compare: pad to equal length then lex is safe.
                 local a, b = tonumber(eventIdStr), tonumber(currentLast)
                 isNewer = a and b and a > b
             end
@@ -359,6 +491,7 @@ function FR:AddSale(event, guildId)
         end
     end
 
+    self:MarkHudDirty()
     if self.MarkSavedVarsDirty then
         self:MarkSavedVarsDirty("sale")
     end
@@ -372,12 +505,20 @@ function FR:AddBankDeposit(event, guildId)
 
     local eventId = event:GetEventId()
     local eventIdStr = Id64ToString(eventId)
+    local eventTime = event:GetEventTimestampS() or GetTimeStamp()
+    if self:IsCategoryLinkedCached(guildId, GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY) then
+        local lKey = "bank_" .. tostring(guildId)
+        self.savedVars.lastLinkedEventTs = self.savedVars.lastLinkedEventTs or {}
+        if eventTime > (self.savedVars.lastLinkedEventTs[lKey] or 0) then
+            self.savedVars.lastLinkedEventTs[lKey] = eventTime
+        end
+    end
+
     if self.savedVars.staff.bankDeposits[eventIdStr] then
         return false
     end
 
     local guildName = GetGuildName(guildId)
-    local eventTime = event:GetEventTimestampS() or GetTimeStamp()
 
     self.savedVars.nextSeq = (self.savedVars.nextSeq or 0) + 1
     local seq = self.savedVars.nextSeq
@@ -393,8 +534,17 @@ function FR:AddBankDeposit(event, guildId)
         rawType = CURT_MONEY,
     }
     self.savedVars.staff.bankDeposits[eventIdStr] = depRecord
+    if self._depositsByGuild then
+        local bucket = self._depositsByGuild[guildId]
+        if not bucket then
+            bucket = {}
+            self._depositsByGuild[guildId] = bucket
+        end
+        bucket[#bucket + 1] = depRecord
+    end
     self:OnRecordAppended("deposits", depRecord)
     self._raffleMetricsCache = {}
+    self:MarkHudDirty()
     if self.InvalidateDepositCache then self:InvalidateDepositCache(guildId) end
     if self.MarkSavedVarsDirty then self:MarkSavedVarsDirty("deposit") end
 
@@ -552,6 +702,9 @@ function FR:PruneExpiredData(isManual)
         end
     end
 
+    if prunedSalesCount > 0 then
+        self._salesByGuild = nil
+    end
     if prunedSalesGold > 0 then
         self.savedVars.totalSalesGold = math.max(0, (tonumber(self.savedVars.totalSalesGold) or 0) - prunedSalesGold)
     end
@@ -567,6 +720,9 @@ function FR:PruneExpiredData(isManual)
                 prunedDepositCount = prunedDepositCount + 1
                 prunedStaffCount = prunedStaffCount + 1
             end
+        end
+        if prunedDepositCount > 0 then
+            self._depositsByGuild = nil
         end
     end
     for _, tbl in ipairs({ self.savedVars.staff and self.savedVars.staff.bids, self.savedVars.staff and self.savedVars.staff.bidRefunds }) do
@@ -755,55 +911,109 @@ end
      STAFF TOOLS: ROSTER, INACTIVES & RAFFLES / DUES
 ========================================================================= ]]--
 
+function FR:SnapshotSingleGuildRoster(guildId)
+    if not self.savedVars.staff then self.savedVars.staff = {} end
+    if not self.savedVars.staff.rosterSnapshots then self.savedVars.staff.rosterSnapshots = {} end
+
+    local guildName = GetGuildName(guildId) or ("Guild " .. tostring(guildId))
+    local memberCount = GetNumGuildMembers(guildId)
+    local hiredTrader = GetGuildOwnedKioskInfo(guildId) or "None"
+    local members = {}
+    local rankNames = {}
+    local lookupSet = {}
+    local now = GetTimeStamp()
+
+    for m = 1, memberCount do
+        local name, note, rankIndex, playerStatus, secsSinceLogoff = GetGuildMemberInfo(guildId, m)
+        local isOnline = (playerStatus ~= PLAYER_STATUS_OFFLINE)
+        local rankName = rankNames[rankIndex]
+        if not rankName then
+            rankName = GetGuildRankCustomName(guildId, rankIndex)
+            if not rankName or rankName == "" then
+                rankName = GetDefaultGuildRankName(guildId, rankIndex)
+            end
+            rankNames[rankIndex] = rankName or "Member"
+        end
+
+        if name and name ~= "" then
+            lookupSet[string.lower(name)] = true
+            members[name] = {
+                rank = rankName,
+                rankIndex = rankIndex,
+                note = (note or ""):gsub("[{}]", ""):sub(1, 250),
+                secsSinceLogoff = isOnline and 0 or (secsSinceLogoff or 0),
+                isOnline = isOnline,
+            }
+        end
+    end
+
+    self._guildMemberLookupCache = self._guildMemberLookupCache or {}
+    self._guildMemberLookupCache[guildId] = { ts = now, set = lookupSet }
+
+    self.savedVars.staff.rosterSnapshots[guildId] = {
+        guildName = guildName,
+        hiredTrader = hiredTrader,
+        timestamp = now,
+        memberCount = memberCount,
+        members = members,
+    }
+end
+
 function FR:TakeRosterSnapshot(targetGuildId, onlyRedfur)
     local numGuilds = GetNumGuilds()
     local snapped = 0
 
-    if not self.savedVars.staff then self.savedVars.staff = {} end
-    if not self.savedVars.staff.rosterSnapshots then self.savedVars.staff.rosterSnapshots = {} end
-
     for i = 1, numGuilds do
         local guildId = GetGuildId(i)
         if (not targetGuildId or targetGuildId == guildId) and (not onlyRedfur or self:IsRedfurGuild(guildId)) then
-            local guildName = GetGuildName(guildId) or ("Guild " .. tostring(guildId))
-            local memberCount = GetNumGuildMembers(guildId)
-            local hiredTrader = GetGuildOwnedKioskInfo(guildId) or "None"
-            local members = {}
-
-            for m = 1, memberCount do
-                local name, note, rankIndex, playerStatus, secsSinceLogoff = GetGuildMemberInfo(guildId, m)
-                local isOnline = (playerStatus ~= PLAYER_STATUS_OFFLINE)
-                local rankName = GetGuildRankCustomName(guildId, rankIndex)
-                if not rankName or rankName == "" then
-                    rankName = GetDefaultGuildRankName(guildId, rankIndex)
-                end
-
-                members[name] = {
-                    rank = rankName,
-                    rankIndex = rankIndex,
-                    note = (note or ""):gsub("[{}]", ""):sub(1, 250),
-                    secsSinceLogoff = isOnline and 0 or (secsSinceLogoff or 0),
-                    isOnline = isOnline,
-                }
-            end
-
-            self.savedVars.staff.rosterSnapshots[guildId] = {
-                guildName = guildName,
-                hiredTrader = hiredTrader,
-                timestamp = GetTimeStamp(),
-                memberCount = memberCount,
-                members = members,
-            }
+            self:SnapshotSingleGuildRoster(guildId)
             snapped = snapped + 1
         end
     end
 
     self.savedVars.staff.lastRosterSnapshotTime = GetTimeStamp()
     self:ScanOwnedKiosks()
+    self:MarkHudDirty()
     if snapped > 0 and self.MarkSavedVarsDirty then
         self:MarkSavedVarsDirty("roster")
     end
     return snapped
+end
+
+function FR:TakeRosterSnapshotAsync(targetGuildId, onlyRedfur)
+    local queue = {}
+    local numGuilds = GetNumGuilds()
+    for i = 1, numGuilds do
+        local guildId = GetGuildId(i)
+        if (not targetGuildId or targetGuildId == guildId) and (not onlyRedfur or self:IsRedfurGuild(guildId)) then
+            queue[#queue + 1] = guildId
+        end
+    end
+    if #queue == 0 then
+        self:ScanOwnedKiosks()
+        return
+    end
+
+    local idx = 1
+    local function StepNext()
+        if not self.savedVars then return end
+        local gId = queue[idx]
+        if gId then
+            self:SnapshotSingleGuildRoster(gId)
+            idx = idx + 1
+            if idx <= #queue then
+                zo_callLater(StepNext, 50)
+                return
+            end
+        end
+        self.savedVars.staff.lastRosterSnapshotTime = GetTimeStamp()
+        self:ScanOwnedKiosks()
+        self:MarkHudDirty()
+        if self.MarkSavedVarsDirty then
+            self:MarkSavedVarsDirty("roster")
+        end
+    end
+    StepNext()
 end
 
 function FR:ScheduleRosterSnapshot(delayMs, targetGuildId)
@@ -812,7 +1022,7 @@ function FR:ScheduleRosterSnapshot(delayMs, targetGuildId)
     EVENT_MANAGER:RegisterForUpdate(evName, tonumber(delayMs) or 2500, function()
         EVENT_MANAGER:UnregisterForUpdate(evName)
         if FR.savedVars then
-            FR:TakeRosterSnapshot(targetGuildId)
+            FR:TakeRosterSnapshotAsync(targetGuildId)
         end
     end)
 end
@@ -896,8 +1106,8 @@ function FR:AuditBankDues(guildIndex, limitDays)
     local totalGold = 0
     local count = 0
 
-    for _, dep in pairs(self.savedVars.staff.bankDeposits) do
-        if dep.guildId == guildId and dep.timestamp >= cutoffTs then
+    for _, dep in ipairs(self:GetGuildDepositsBucket(guildId)) do
+        if dep.timestamp >= cutoffTs then
             local depositor = dep.depositor
             depositsByMember[depositor] = (depositsByMember[depositor] or 0) + dep.amount
             totalGold = totalGold + dep.amount
@@ -936,10 +1146,10 @@ function FR:GetMemberSales(guildId, lookbackDays)
     local cutoffTs = nowTs - (lookbackDays * 86400)
     local salesByMember = {}
 
-    -- 1. Scan FissalRelay native sales cache
+    -- 1. Scan FissalRelay native per-guild sales bucket
     if self.savedVars and self.savedVars.sales then
-        for _, sale in pairs(self.savedVars.sales) do
-            if sale.guildId == guildId and (sale.timestamp or 0) >= cutoffTs then
+        for _, sale in ipairs(self:GetGuildSalesBucket(guildId)) do
+            if (sale.timestamp or 0) >= cutoffTs then
                 local seller = sale.seller
                 if seller and seller ~= "" then
                     local cleanSeller = (seller:sub(1,1) == "@") and seller:sub(2) or seller
@@ -1003,8 +1213,8 @@ function FR:GetMemberDetailedSales(guildId, memberName)
     local lastSaleTs = 0
 
     if self.savedVars and self.savedVars.sales then
-        for _, sale in pairs(self.savedVars.sales) do
-            if sale.guildId == guildId and sale.seller then
+        for _, sale in ipairs(self:GetGuildSalesBucket(guildId)) do
+            if sale.seller then
                 local sName = string.gsub(string.lower(sale.seller), "^@", "")
                 if sName == clean then
                     local ts = tonumber(sale.timestamp) or 0
@@ -1855,10 +2065,18 @@ function FR:SetupProcessors()
                 )
 
                 if processor then
-                    -- Rely on SetAfterEventTime(daysCutoff) and AddSale's fast O(1) duplicate check
-                    -- so unlinked history gaps before lastSeenEventId are never skipped after /reloadui.
+                    -- Incremental linked-cursor resume: if LibHistoire category cache is ALREADY linked,
+                    -- resume from (lastLinkedEventTs - 3600) instead of replaying all 30 days on every /reloadui.
+                    -- If unlinked, fall back to full 30-day daysCutoff so unlinked history gaps are never skipped.
                     local daysCutoff = GetTimeStamp() - ((self.savedVars.historyDepthDays or 30) * 86400)
-                    processor:SetAfterEventTime(daysCutoff)
+                    local afterTs = daysCutoff
+                    if self:IsCategoryLinkedCached(guildId, GUILD_HISTORY_EVENT_CATEGORY_TRADER) then
+                        local lastLinkedTs = self.savedVars.lastLinkedEventTs and self.savedVars.lastLinkedEventTs["trader_" .. tostring(guildId)]
+                        if lastLinkedTs and lastLinkedTs > daysCutoff then
+                            afterTs = math.max(daysCutoff, lastLinkedTs - 3600)
+                        end
+                    end
+                    processor:SetAfterEventTime(afterTs)
 
                     processor:SetEventCallback(function(event)
                         if event:GetEventType() == GUILD_HISTORY_TRADER_EVENT_ITEM_SOLD then
@@ -1899,8 +2117,15 @@ function FR:SetupProcessors()
                 )
 
                 if bankProc then
-                    local daysCutoff = GetTimeStamp() - (self.savedVars.historyDepthDays * 86400)
-                    bankProc:SetAfterEventTime(daysCutoff)
+                    local daysCutoff = GetTimeStamp() - ((self.savedVars.historyDepthDays or 30) * 86400)
+                    local afterTs = daysCutoff
+                    if self:IsCategoryLinkedCached(guildId, GUILD_HISTORY_EVENT_CATEGORY_BANKED_CURRENCY) then
+                        local lastLinkedTs = self.savedVars.lastLinkedEventTs and self.savedVars.lastLinkedEventTs["bank_" .. tostring(guildId)]
+                        if lastLinkedTs and lastLinkedTs > daysCutoff then
+                            afterTs = math.max(daysCutoff, lastLinkedTs - 3600)
+                        end
+                    end
+                    bankProc:SetAfterEventTime(afterTs)
 
                     bankProc:SetEventCallback(function(event)
                         local eventType = event:GetEventType()
@@ -1947,6 +2172,9 @@ function FR:SetupProcessors()
             local cb = LibHistoire.internal.callback
             if cb.CATEGORY_LINKED then
                 LibHistoire.internal:RegisterCallback(cb.CATEGORY_LINKED, function(guildId, category)
+                    FR._categoryLinked = FR._categoryLinked or {}
+                    FR._categoryLinked[tostring(category) .. "_" .. tostring(guildId)] = true
+                    FR:MarkHudDirty()
                     FR:UpdateCategorySyncTelemetry()
                 end)
             end
@@ -2708,8 +2936,8 @@ function FR:CalculateRaffleMetrics(guildId, lookbackDays, ticketPrice)
     local voidedCount = 0
 
     if self.savedVars and self.savedVars.staff and self.savedVars.staff.bankDeposits then
-        for _, dep in pairs(self.savedVars.staff.bankDeposits) do
-            if dep.guildId == guildId and (dep.timestamp or 0) >= cutoffTs then
+        for _, dep in ipairs(self:GetGuildDepositsBucket(guildId)) do
+            if (dep.timestamp or 0) >= cutoffTs then
                 local amount = tonumber(dep.amount) or 0
                 -- Rule 1: Strict increment parity. Deposits must be an exact positive multiple of ticketPrice!
                 if amount > 0 and (amount % ticketPrice == 0) then
@@ -3452,6 +3680,7 @@ local function OnAddOnLoaded(eventCode, addOnName)
     FR.savedVars = ZO_SavedVars:NewAccountWide(
         "FissalRelay_SavedVariables", 3, nil, DEFAULT_SAVED_VARS
     )
+    if not FR.savedVars.lastLinkedEventTs then FR.savedVars.lastLinkedEventTs = {} end
     if not FR.savedVars.kiosks then FR.savedVars.kiosks = {} end
     if not FR.savedVars.knownTradingGuilds then FR.savedVars.knownTradingGuilds = {} end
     if not FR.savedVars.staff then FR.savedVars.staff = {} end
@@ -3617,12 +3846,22 @@ local function OnAddOnLoaded(eventCode, addOnName)
         end, 5000)
     end
 
-    -- Auto roster snapshot and kiosk scan on login (non-officers only auto-snapshot canonical Redfur guilds)
+    if EVENT_GUILD_MEMBER_ADDED then
+        EVENT_MANAGER:RegisterForEvent(FR.name .. "_MemberAdd", EVENT_GUILD_MEMBER_ADDED, function(_, guildId)
+            FR:InvalidateGuildMemberLookup(guildId)
+        end)
+    end
+    if EVENT_GUILD_MEMBER_REMOVED then
+        EVENT_MANAGER:RegisterForEvent(FR.name .. "_MemberRem", EVENT_GUILD_MEMBER_REMOVED, function(_, guildId)
+            FR:InvalidateGuildMemberLookup(guildId)
+        end)
+    end
+
+    -- Auto roster snapshot and kiosk scan on login (chunked 1 guild per 50ms to prevent frame hitches)
     if FR.savedVars.settings.autoRosterSnapshotOnLogin then
         zo_callLater(function()
             local onlyRedfur = not FR:IsPlayerRedfurOfficer()
-            FR:TakeRosterSnapshot(nil, onlyRedfur)
-            FR:ScanOwnedKiosks()
+            FR:TakeRosterSnapshotAsync(nil, onlyRedfur)
         end, 10000)
     end
 end

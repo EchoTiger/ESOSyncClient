@@ -206,4 +206,74 @@ FissalRelay_SavedVariables = {
         Assert.Contains("\"@OldPlayer\",35,\"Merchant\",\"Vacation\"", csv);
         Assert.Contains("\"@Sleepy\",18,\"Member\",\"\"", csv);
     }
+
+    [Fact]
+    public void ReadKiosksAndKnownGuilds_SinglePass_ParsesBothInStandardAndReverseKeyOrder()
+    {
+        using var tempDir = new TemporaryDirectory();
+        var forwardLua = @"
+FissalRelay_SavedVariables = {
+    [""Default""] = {
+        [""@EchoTiger""] = {
+            [""$AccountWide""] = {
+                [""kiosks""] = {
+                    [""Shuzug""] = {
+                        [""trader""] = ""Shuzug"",
+                        [""guildId""] = 2,
+                        [""guildName""] = ""Redfur Trading Post"",
+                        [""zone""] = ""Reaper's March"",
+                        [""city""] = ""Rawl'kha"",
+                        [""timestamp""] = 1725330000,
+                        [""observedBy""] = ""@EchoTiger"",
+                        [""source""] = ""Guild Finder Sweep""
+                    }
+                },
+                -- Nested noise table between kiosks and knownTradingGuilds
+                [""sales""] = {
+                    [1] = { [""item""] = ""Chromium Plating {Rare}"", [""price""] = 85000 }
+                },
+                [""knownTradingGuilds""] = {
+                    [2] = ""Redfur Trading Post"",
+                    [732163] = ""Fort Knocks Trading""
+                }
+            }
+        }
+    }
+}";
+        var forwardPath = tempDir.WriteFile("forward.lua", forwardLua);
+        var (kiosks1, guilds1) = KioskReconScanner.ReadKiosksAndKnownGuilds(forwardPath);
+
+        Assert.Single(kiosks1);
+        Assert.Equal("Shuzug", kiosks1[0].Trader);
+        Assert.Equal("Redfur Trading Post", kiosks1[0].GuildName);
+        Assert.Equal(2, guilds1.Count);
+        Assert.Equal("Redfur Trading Post", guilds1[2]);
+        Assert.Equal("Fort Knocks Trading", guilds1[732163]);
+
+        var reverseLua = @"
+FissalRelay_SavedVariables = {
+    [""knownTradingGuilds""] = {
+        [21505] = ""Skooma Dealers""
+    },
+    [""audit""] = { [""nested""] = { [""ok""] = true } },
+    [""kiosks""] = {
+        [""Lhotahir""] = {
+            [""trader""] = ""Lhotahir"",
+            [""guildId""] = 723087,
+            [""guildName""] = ""Redfur Caravan"",
+            [""city""] = ""Rimmen"",
+            [""zone""] = ""Northern Elsweyr"",
+            [""timestamp""] = 1792010345
+        }
+    }
+}";
+        var reversePath = tempDir.WriteFile("reverse.lua", reverseLua);
+        var (kiosks2, guilds2) = KioskReconScanner.ReadKiosksAndKnownGuilds(reversePath);
+
+        Assert.Single(kiosks2);
+        Assert.Equal("Lhotahir", kiosks2[0].Trader);
+        Assert.Equal("Redfur Caravan", kiosks2[0].GuildName);
+        Assert.Single(guilds2);
+        Assert.Equal("Skooma Dealers", guilds2[21505]);
+    }
 }

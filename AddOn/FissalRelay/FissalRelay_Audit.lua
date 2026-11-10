@@ -23,9 +23,8 @@ local function ColorText(text, hexColor)
     return string.format("|c%s%s|r", hexColor, tostring(text or ""))
 end
 
-local ROWS_PER_PAGE = 9
-
 FR.auditFilterDays = 14
+FR.auditStatusFilter = "all"
 FR.auditExcludeOfficers = true
 FR.auditExcludeLOA = true
 FR.auditShieldActiveSellers = true
@@ -132,7 +131,21 @@ function FR:GetMemberDeposits(guildId, scanWindowDays)
 
     local cutoffTs = (windowDays > 0) and (GetTimeStamp() - (windowDays * 86400)) or 0
     local lookup = {}
-    if self.savedVars and self.savedVars.staff and self.savedVars.staff.bankDeposits then
+    local bucket = self.GetGuildDepositsBucket and self:GetGuildDepositsBucket(guildId) or nil
+    if bucket then
+        for i = 1, #bucket do
+            local dep = bucket[i]
+            if dep.depositor then
+                local depTs = tonumber(dep.timestamp) or 0
+                if depTs >= cutoffTs then
+                    local lowerDep = string.gsub(string.lower(dep.depositor), "^@", "")
+                    local newTotal = (lookup[lowerDep] or 0) + (dep.amount or 0)
+                    lookup[lowerDep] = newTotal
+                    lookup["@" .. lowerDep] = newTotal
+                end
+            end
+        end
+    elseif self.savedVars and self.savedVars.staff and self.savedVars.staff.bankDeposits then
         for _, dep in pairs(self.savedVars.staff.bankDeposits) do
             if dep.guildId == guildId and dep.depositor then
                 local depTs = tonumber(dep.timestamp) or 0
@@ -164,10 +177,13 @@ function FR:RunRosterAudit()
     end
     local guildName = GetGuildName(guildId) or ("Guild " .. tostring(guildId))
     local memberCount = GetNumGuildMembers(guildId)
-    local cutoffSecs = (self.auditFilterDays or 14) * 86400
+    local filterDays = tonumber(self.auditFilterDays)
+    if filterDays == nil then filterDays = 14 end
+    local cutoffSecs = filterDays * 86400
+    local statusFilter = self.auditStatusFilter or "all"
 
     local duesRule = self.GetRedfurDuesRule and self:GetRedfurDuesRule(guildId) or { windowDays = 10 }
-    local scanWindowDays = math.max(self.auditFilterDays or 14, duesRule.windowDays or 10)
+    local scanWindowDays = math.max(filterDays > 0 and filterDays or 14, duesRule.windowDays or 10)
 
     -- Retrieve memoized deposit lookup for this guild and window (case-insensitive)
     local depositsByMember = self:GetMemberDeposits(guildId, scanWindowDays)
@@ -188,14 +204,19 @@ function FR:RunRosterAudit()
     local excusedCount = 0
     local officerCount = 0
     local shieldedSellerCount = 0
+    local rankCache = {}
 
     for m = 1, memberCount do
         local name, note, rankIndex, playerStatus, secsSinceLogoff = GetGuildMemberInfo(guildId, m)
         local isOffline = (playerStatus == PLAYER_STATUS_OFFLINE) or (secsSinceLogoff and secsSinceLogoff > 0)
 
-        if isOffline and secsSinceLogoff and secsSinceLogoff >= cutoffSecs then
-            local days = math.floor(secsSinceLogoff / 86400)
-            local rankName = GetGuildRankCustomName(guildId, rankIndex)
+        if (filterDays == 0) or (isOffline and secsSinceLogoff and secsSinceLogoff >= cutoffSecs) then
+            local days = isOffline and math.floor((secsSinceLogoff or 0) / 86400) or 0
+            local rankName = rankCache[rankIndex]
+            if rankName == nil then
+                rankName = GetGuildRankCustomName(guildId, rankIndex) or ""
+                rankCache[rankIndex] = rankName
+            end
             local isLeaderOrOfficer = (rankIndex and rankIndex <= 2)
 
             local rawName = name or ""
@@ -242,9 +263,16 @@ function FR:RunRosterAudit()
                 passFilter = false
             end
 
-            -- Invisible Player Protection: Shield active sellers from purge
-            if self.auditShieldActiveSellers and (sRec.count > 0 or duesMet) then
+            -- Invisible Player Protection: Shield active sellers from purge (unless explicitly inspecting Dues Met)
+            if statusFilter ~= "met" and self.auditShieldActiveSellers and (sRec.count > 0 or duesMet) then
                 shieldedSellerCount = shieldedSellerCount + 1
+                passFilter = false
+            end
+
+            -- Dues Status Pill Filter
+            if statusFilter == "unmet" and duesMet then
+                passFilter = false
+            elseif statusFilter == "met" and not duesMet then
                 passFilter = false
             end
 
@@ -277,6 +305,7 @@ function FR:RunRosterAudit()
                     rank = cleanRank,
                     rankIndex = rankIndex or 0,
                     days = days,
+                    isOnline = not isOffline,
                     isLOA = isLOA,
                     isOfficer = isLeaderOrOfficer,
                     deposits = mDeposits,
@@ -297,7 +326,7 @@ function FR:RunRosterAudit()
     self.auditShieldedCount = shieldedSellerCount
 
     -- Save structured audit snapshot only when unfiltered so search/rank UI filters never clobber full exports
-    local isUnfiltered = ((self.auditSearchQuery or "") == "") and ((self.auditRankFilter or "all") == "all")
+    local isUnfiltered = (filterDays > 0) and (statusFilter == "all") and ((self.auditSearchQuery or "") == "") and ((self.auditRankFilter or "all") == "all")
     if isUnfiltered and self.savedVars and self.savedVars.staff then
         if not self.savedVars.staff.inactivityAudits then
             self.savedVars.staff.inactivityAudits = {}
@@ -306,7 +335,7 @@ function FR:RunRosterAudit()
             guildId = guildId,
             guildName = guildName,
             auditedAt = GetTimeStamp(),
-            minDays = self.auditFilterDays,
+            minDays = filterDays,
             totalMembers = memberCount,
             inactiveCount = #rawInactives,
             shieldedSellers = shieldedSellerCount,
@@ -323,11 +352,6 @@ function FR:RunRosterAudit()
     self.auditVoidedCount = voidedCount
     if self.auditExclusionsBtn then
         self.auditExclusionsBtn:SetText(string.format("Void (%d)", voidedCount))
-    end
-
-    local maxPages = math.max(1, math.ceil(#rawInactives / ROWS_PER_PAGE))
-    if self.auditCurrentPage > maxPages then
-        self.auditCurrentPage = maxPages
     end
 end
 
@@ -349,7 +373,9 @@ function FR:BuildAuditorUI(parent)
     card:SetEdgeColor(0.30, 0.25, 0.18, 0.70)
     card:SetEdgeTexture("", 8, 1, 0)
 
-    -- 2. Filter Bar (Top Row)
+    -- =====================================================================
+    -- 2A. Toolbar Row 1: Offline Thresholds + Dues Status Pills + Search
+    -- =====================================================================
     local daysLbl = wm:CreateControl("$(parent)_DaysLbl", card, CT_LABEL)
     daysLbl:SetAnchor(TOPLEFT, card, TOPLEFT, 10, 10)
     daysLbl:SetFont("ZoFontGameSmall")
@@ -358,18 +384,19 @@ function FR:BuildAuditorUI(parent)
 
     self.auditDayBtns = {}
     local dayOptions = {
-        { days = 7, tip = "Show members offline for 7 or more days." },
-        { days = 14, tip = "Show members offline for 14 or more days (standard check-in threshold)." },
-        { days = 21, tip = "Show members offline for 21 or more days." },
-        { days = 30, tip = "Show members offline for 30 or more days (standard purge threshold)." },
+        { days = 0, label = "All", tip = "Inspect all eligible roster members (online & offline) for weekly dues and sales." },
+        { days = 7, label = "7d", tip = "Show members offline for 7 or more days." },
+        { days = 14, label = "14d", tip = "Show members offline for 14 or more days (standard check-in threshold)." },
+        { days = 21, label = "21d", tip = "Show members offline for 21 or more days." },
+        { days = 30, label = "30d", tip = "Show members offline for 30 or more days (standard purge threshold)." },
     }
     for idx, opt in ipairs(dayOptions) do
         local d = opt.days
         local btn = wm:CreateControl("$(parent)_DayBtn_" .. d, card, CT_BUTTON)
-        btn:SetAnchor(TOPLEFT, card, TOPLEFT, 86 + (idx - 1) * 40, 7)
+        btn:SetAnchor(TOPLEFT, card, TOPLEFT, 86 + (idx - 1) * 38, 7)
         btn:SetDimensions(34, 22)
         btn:SetFont("ZoFontGameSmall")
-        btn:SetText(string.format("%dd", d))
+        btn:SetText(opt.label)
         self:StyleTactileButton(btn, {
             normalBg = { 0.06, 0.06, 0.08, 0.80 },
             hoverBg = { 0.14, 0.12, 0.06, 0.95 },
@@ -377,7 +404,7 @@ function FR:BuildAuditorUI(parent)
             hoverEdge = { 0.90, 0.70, 0.20, 1.0 },
             normalTextColor = { 0.7, 0.7, 0.7, 1 },
             hoverTextColor = { 1, 0.9, 0.4, 1 },
-            tooltipTitle = string.format("Filter: %d+ Days Offline", d),
+            tooltipTitle = d == 0 and "Filter: Full Roster" or string.format("Filter: %d+ Days Offline", d),
             tooltipText = opt.tip,
         })
         btn:SetHandler("OnClicked", function()
@@ -388,10 +415,79 @@ function FR:BuildAuditorUI(parent)
         self.auditDayBtns[d] = btn
     end
 
-    -- Toggle: Exclude Officers (anchored cleanly after 30d button at X=248, 8px gap)
+    -- Dues Status Filter Pills: [All | Unmet Dues | Met]
+    local duesFilterLbl = wm:CreateControl("$(parent)_DuesFilterLbl", card, CT_LABEL)
+    duesFilterLbl:SetAnchor(TOPLEFT, card, TOPLEFT, 290, 10)
+    duesFilterLbl:SetFont("ZoFontGameSmall")
+    duesFilterLbl:SetText("|c888888Dues:|r")
+    self.auditDuesFilterLbl = duesFilterLbl
+
+    self.auditStatusBtns = {}
+    local statusOptions = {
+        { key = "all", label = "All", width = 46, tip = "Show members regardless of weekly dues status." },
+        { key = "unmet", label = "Unmet Dues", width = 92, tip = "Show only members who have NOT met weekly sales/bank dues." },
+        { key = "met", label = "Met", width = 52, tip = "Show members who have met weekly guild dues via sales or bank deposits." },
+    }
+    local pillX = 332
+    for _, sOpt in ipairs(statusOptions) do
+        local sKey = sOpt.key
+        local sBtn = wm:CreateControl("$(parent)_StatusPill_" .. sKey, card, CT_BUTTON)
+        sBtn:SetAnchor(TOPLEFT, card, TOPLEFT, pillX, 7)
+        sBtn:SetDimensions(sOpt.width, 22)
+        sBtn:SetFont("ZoFontGameSmall")
+        sBtn:SetText(sOpt.label)
+        self:StyleTactileButton(sBtn, {
+            normalBg = { 0.06, 0.06, 0.08, 0.82 },
+            hoverBg = { 0.14, 0.12, 0.06, 0.95 },
+            normalEdge = { 0.35, 0.28, 0.18, 0.65 },
+            hoverEdge = { 0.90, 0.70, 0.20, 1.0 },
+            normalTextColor = { 0.72, 0.72, 0.72, 1 },
+            hoverTextColor = { 1, 0.92, 0.45, 1 },
+            tooltipTitle = "Dues Filter: " .. sOpt.label,
+            tooltipText = sOpt.tip,
+        })
+        sBtn:SetHandler("OnClicked", function()
+            self.auditStatusFilter = sKey
+            self.auditCurrentPage = 1
+            self:UpdateAuditorUI()
+        end)
+        self.auditStatusBtns[sKey] = sBtn
+        pillX = pillX + sOpt.width + 6
+    end
+
+    -- Search Box Container (Row 1 Right, generous 196px width)
+    local searchBg = wm:CreateControlFromVirtual("$(parent)_SearchBg", card, "ZO_EditBackdrop")
+    searchBg:SetAnchor(TOPRIGHT, card, TOPRIGHT, -12, 6)
+    searchBg:SetDimensions(196, 24)
+
+    local searchBox = wm:CreateControlFromVirtual("$(parent)_Search", searchBg, "ZO_DefaultEditForBackdrop")
+    searchBox:SetAnchorFill()
+    searchBox:SetFont("ZoFontGameSmall")
+    searchBox:SetTextType(TEXT_TYPE_ALL)
+    searchBox:SetDefaultText("Search @member or note...")
+    searchBox:SetHandler("OnTextChanged", function(ctrl)
+        self.auditSearchQuery = ctrl:GetText()
+        self.auditCurrentPage = 1
+        EVENT_MANAGER:UnregisterForUpdate("FissalRelay_AuditSearchDebounce")
+        EVENT_MANAGER:RegisterForUpdate("FissalRelay_AuditSearchDebounce", 150, function()
+            EVENT_MANAGER:UnregisterForUpdate("FissalRelay_AuditSearchDebounce")
+            self:UpdateAuditorUI()
+        end)
+    end)
+    self.auditSearchBox = searchBox
+
+    -- =====================================================================
+    -- 2B. Toolbar Row 2: Protection Toggles + Rank Filter + Batch Actions
+    -- =====================================================================
+    local filterRowLbl = wm:CreateControl("$(parent)_FilterRowLbl", card, CT_LABEL)
+    filterRowLbl:SetAnchor(TOPLEFT, card, TOPLEFT, 10, 38)
+    filterRowLbl:SetFont("ZoFontGameSmall")
+    filterRowLbl:SetText("|c888888Shields:|r")
+    self.auditFilterRowLbl = filterRowLbl
+
     local offToggle = wm:CreateControl("$(parent)_OffToggle", card, CT_BUTTON)
-    offToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 248, 7)
-    offToggle:SetDimensions(82, 22)
+    offToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 68, 35)
+    offToggle:SetDimensions(88, 22)
     offToggle:SetFont("ZoFontGameSmall")
     offToggle:SetText("No Officers")
     self:StyleTactileButton(offToggle, {
@@ -411,10 +507,9 @@ function FR:BuildAuditorUI(parent)
     end)
     self.auditOffToggle = offToggle
 
-    -- Toggle: Exclude LOA (anchored cleanly after No Officers at X=336, 6px gap)
     local loaToggle = wm:CreateControl("$(parent)_LoaToggle", card, CT_BUTTON)
-    loaToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 336, 7)
-    loaToggle:SetDimensions(74, 22)
+    loaToggle:SetAnchor(LEFT, offToggle, RIGHT, 6, 0)
+    loaToggle:SetDimensions(80, 22)
     loaToggle:SetFont("ZoFontGameSmall")
     loaToggle:SetText("No [LOA]")
     self:StyleTactileButton(loaToggle, {
@@ -434,10 +529,9 @@ function FR:BuildAuditorUI(parent)
     end)
     self.auditLoaToggle = loaToggle
 
-    -- Toggle: Shield Active Sellers (Invisible Players) (anchored cleanly at X=416, 6px gap, width 96)
     local shieldToggle = wm:CreateControl("$(parent)_ShieldToggle", card, CT_BUTTON)
-    shieldToggle:SetAnchor(TOPLEFT, card, TOPLEFT, 416, 7)
-    shieldToggle:SetDimensions(96, 22)
+    shieldToggle:SetAnchor(LEFT, loaToggle, RIGHT, 6, 0)
+    shieldToggle:SetDimensions(102, 22)
     shieldToggle:SetFont("ZoFontGameSmall")
     shieldToggle:SetText("Shield Sellers")
     self:StyleTactileButton(shieldToggle, {
@@ -457,73 +551,9 @@ function FR:BuildAuditorUI(parent)
     end)
     self.auditShieldToggle = shieldToggle
 
-    -- Search Box Container (anchored top right)
-    local searchBg = wm:CreateControlFromVirtual("$(parent)_SearchBg", card, "ZO_EditBackdrop")
-    searchBg:SetAnchor(TOPRIGHT, card, TOPRIGHT, -12, 6)
-    searchBg:SetDimensions(120, 24)
-
-    local searchBox = wm:CreateControlFromVirtual("$(parent)_Search", searchBg, "ZO_DefaultEditForBackdrop")
-    searchBox:SetAnchorFill()
-    searchBox:SetFont("ZoFontGameSmall")
-    searchBox:SetTextType(TEXT_TYPE_ALL)
-    searchBox:SetDefaultText("Search...")
-    searchBox:SetHandler("OnTextChanged", function(ctrl)
-        self.auditSearchQuery = ctrl:GetText()
-        self.auditCurrentPage = 1
-        EVENT_MANAGER:UnregisterForUpdate("FissalRelay_AuditSearchDebounce")
-        EVENT_MANAGER:RegisterForUpdate("FissalRelay_AuditSearchDebounce", 250, function()
-            EVENT_MANAGER:UnregisterForUpdate("FissalRelay_AuditSearchDebounce")
-            self:UpdateAuditorUI()
-        end)
-    end)
-    self.auditSearchBox = searchBox
-
-    -- Batch Auto-Processor Button (anchored left of search box, 6px gap)
-    local batchBtn = wm:CreateControl("$(parent)_BatchBtn", card, CT_BUTTON)
-    batchBtn:SetAnchor(RIGHT, searchBg, LEFT, -6, 0)
-    batchBtn:SetDimensions(86, 22)
-    batchBtn:SetFont("ZoFontGameBold")
-    batchBtn:SetText("Batch Run")
-    self:StyleTactileButton(batchBtn, {
-        normalBg = { 0.18, 0.10, 0.04, 0.90 },
-        hoverBg = { 0.26, 0.15, 0.06, 0.98 },
-        normalEdge = { 0.90, 0.55, 0.15, 0.90 },
-        hoverEdge = { 1.00, 0.75, 0.20, 1.00 },
-        normalTextColor = { 1, 0.85, 0.20, 1 },
-        hoverTextColor = { 1, 0.95, 0.50, 1 },
-        tooltipTitle = "Batch Auto-Process",
-        tooltipText = "Sequentially execute all selected/staged actions with safe 1.85s pacing and live progress.",
-    })
-    batchBtn:SetHandler("OnClicked", function()
-        self:StartAuditBatch()
-    end)
-    self.auditBatchBtn = batchBtn
-
-    -- Permanent Void / Exclusions Manager Button (anchored left of batch button, 6px gap)
-    local exclusionsBtn = wm:CreateControl("$(parent)_ExclusionsBtn", card, CT_BUTTON)
-    exclusionsBtn:SetAnchor(RIGHT, batchBtn, LEFT, -6, 0)
-    exclusionsBtn:SetDimensions(82, 22)
-    exclusionsBtn:SetFont("ZoFontGameSmall")
-    exclusionsBtn:SetText("Void (0)")
-    self:StyleTactileButton(exclusionsBtn, {
-        normalBg = { 0.10, 0.06, 0.16, 0.85 },
-        hoverBg = { 0.16, 0.10, 0.24, 0.95 },
-        normalEdge = { 0.60, 0.35, 0.85, 0.80 },
-        hoverEdge = { 0.80, 0.50, 1.00, 1.00 },
-        normalTextColor = { 0.75, 0.55, 1, 1 },
-        hoverTextColor = { 0.90, 0.75, 1, 1 },
-        tooltipTitle = "Permanent Void Registry",
-        tooltipText = "View and unhide members permanently excluded from inactivity auditing.",
-    })
-    exclusionsBtn:SetHandler("OnClicked", function()
-        self:ToggleAuditExclusionsDrawer()
-    end)
-    self.auditExclusionsBtn = exclusionsBtn
-
-    -- Rank Filter Cycle Button (anchored left of void button, 6px gap)
     local rankBtn = wm:CreateControl("$(parent)_RankFilterBtn", card, CT_BUTTON)
-    rankBtn:SetAnchor(RIGHT, exclusionsBtn, LEFT, -6, 0)
-    rankBtn:SetDimensions(96, 22)
+    rankBtn:SetAnchor(LEFT, shieldToggle, RIGHT, 6, 0)
+    rankBtn:SetDimensions(114, 22)
     rankBtn:SetFont("ZoFontGameSmall")
     rankBtn:SetText("Rank: All")
     self:StyleTactileButton(rankBtn, {
@@ -541,11 +571,74 @@ function FR:BuildAuditorUI(parent)
     end)
     self.auditRankFilterBtn = rankBtn
 
-    -- 3. Table Column Headers
-    local headerY = 36
+    -- Row 2 Right Action Buttons: [Void (0)] [Refresh] [Batch Run]
+    local batchBtn = wm:CreateControl("$(parent)_BatchBtn", card, CT_BUTTON)
+    batchBtn:SetAnchor(TOPRIGHT, card, TOPRIGHT, -12, 35)
+    batchBtn:SetDimensions(94, 22)
+    batchBtn:SetFont("ZoFontGameBold")
+    batchBtn:SetText("Batch Run")
+    self:StyleTactileButton(batchBtn, {
+        normalBg = { 0.18, 0.10, 0.04, 0.90 },
+        hoverBg = { 0.26, 0.15, 0.06, 0.98 },
+        normalEdge = { 0.90, 0.55, 0.15, 0.90 },
+        hoverEdge = { 1.00, 0.75, 0.20, 1.00 },
+        normalTextColor = { 1, 0.85, 0.20, 1 },
+        hoverTextColor = { 1, 0.95, 0.50, 1 },
+        tooltipTitle = "Batch Auto-Process",
+        tooltipText = "Sequentially execute all selected/staged actions with safe 1.85s pacing and live progress.",
+    })
+    batchBtn:SetHandler("OnClicked", function()
+        self:StartAuditBatch()
+    end)
+    self.auditBatchBtn = batchBtn
+
+    local refreshBtn = wm:CreateControl("$(parent)_RefreshBtn", card, CT_BUTTON)
+    refreshBtn:SetAnchor(RIGHT, batchBtn, LEFT, -6, 0)
+    refreshBtn:SetDimensions(78, 22)
+    refreshBtn:SetFont("ZoFontGameSmall")
+    refreshBtn:SetText("Run Audit")
+    self:StyleTactileButton(refreshBtn, {
+        normalBg = { 0.05, 0.14, 0.10, 0.88 },
+        hoverBg = { 0.08, 0.22, 0.15, 0.98 },
+        normalEdge = { 0.20, 0.80, 0.45, 0.85 },
+        hoverEdge = { 0.35, 1.00, 0.60, 1.00 },
+        normalTextColor = { 0.4, 0.95, 0.65, 1 },
+        hoverTextColor = { 1, 1, 1, 1 },
+        tooltipTitle = "Re-Scan Guild Roster",
+        tooltipText = "Re-evaluate offline durations, sales velocity, and bank deposits for the selected guild.",
+    })
+    refreshBtn:SetHandler("OnClicked", function()
+        self:UpdateAuditorUI()
+    end)
+    self.auditRefreshBtn = refreshBtn
+
+    local exclusionsBtn = wm:CreateControl("$(parent)_ExclusionsBtn", card, CT_BUTTON)
+    exclusionsBtn:SetAnchor(RIGHT, refreshBtn, LEFT, -6, 0)
+    exclusionsBtn:SetDimensions(84, 22)
+    exclusionsBtn:SetFont("ZoFontGameSmall")
+    exclusionsBtn:SetText("Void (0)")
+    self:StyleTactileButton(exclusionsBtn, {
+        normalBg = { 0.10, 0.06, 0.16, 0.85 },
+        hoverBg = { 0.16, 0.10, 0.24, 0.95 },
+        normalEdge = { 0.60, 0.35, 0.85, 0.80 },
+        hoverEdge = { 0.80, 0.50, 1.00, 1.00 },
+        normalTextColor = { 0.75, 0.55, 1, 1 },
+        hoverTextColor = { 0.90, 0.75, 1, 1 },
+        tooltipTitle = "Permanent Void Registry",
+        tooltipText = "View and unhide members permanently excluded from inactivity auditing.",
+    })
+    exclusionsBtn:SetHandler("OnClicked", function()
+        self:ToggleAuditExclusionsDrawer()
+    end)
+    self.auditExclusionsBtn = exclusionsBtn
+
+    -- =====================================================================
+    -- 3. Table Column Headers (Aligned to ZO_ScrollList Contents Area)
+    -- =====================================================================
+    local headerY = 64
     local colHeader = wm:CreateControl("$(parent)_Header", card, CT_BACKDROP)
     colHeader:SetAnchor(TOPLEFT, card, TOPLEFT, 10, headerY)
-    colHeader:SetAnchor(TOPRIGHT, card, TOPRIGHT, -10, headerY)
+    colHeader:SetAnchor(TOPRIGHT, card, TOPRIGHT, -26, headerY)
     colHeader:SetHeight(22)
     colHeader:SetCenterColor(0.10, 0.10, 0.14, 0.90)
     colHeader:SetEdgeColor(0.25, 0.20, 0.15, 0.60)
@@ -564,7 +657,7 @@ function FR:BuildAuditorUI(parent)
     self.auditHdrMember = h1
 
     local h2 = wm:CreateControl("$(parent)_H2", colHeader, CT_LABEL)
-    h2:SetAnchor(LEFT, colHeader, LEFT, 202, 0)
+    h2:SetAnchor(LEFT, colHeader, LEFT, 198, 0)
     h2:SetFont("ZoFontGameBold")
     h2:SetText(ColorText("RANK", "00FFCC"))
     h2:SetMouseEnabled(true)
@@ -575,7 +668,7 @@ function FR:BuildAuditorUI(parent)
     self.auditHdrRank = h2
 
     local h3 = wm:CreateControl("$(parent)_H3", colHeader, CT_LABEL)
-    h3:SetAnchor(LEFT, colHeader, LEFT, 324, 0)
+    h3:SetAnchor(LEFT, colHeader, LEFT, 316, 0)
     h3:SetFont("ZoFontGameBold")
     h3:SetText(ColorText("OFFLINE", "FFD700"))
     h3:SetMouseEnabled(true)
@@ -586,7 +679,7 @@ function FR:BuildAuditorUI(parent)
     self.auditHdrOffline = h3
 
     local h4 = wm:CreateControl("$(parent)_H4", colHeader, CT_LABEL)
-    h4:SetAnchor(LEFT, colHeader, LEFT, 400, 0)
+    h4:SetAnchor(LEFT, colHeader, LEFT, 390, 0)
     h4:SetFont("ZoFontGameBold")
     h4:SetText(ColorText("SALES", "59E08A"))
     h4:SetMouseEnabled(true)
@@ -597,7 +690,7 @@ function FR:BuildAuditorUI(parent)
     self.auditHdrSales = h4
 
     local h5 = wm:CreateControl("$(parent)_H5", colHeader, CT_LABEL)
-    h5:SetAnchor(LEFT, colHeader, LEFT, 492, 0)
+    h5:SetAnchor(LEFT, colHeader, LEFT, 480, 0)
     h5:SetFont("ZoFontGameBold")
     h5:SetText(ColorText("DUES", "59E08A"))
     h5:SetMouseEnabled(true)
@@ -608,141 +701,118 @@ function FR:BuildAuditorUI(parent)
     self.auditHdrDues = h5
 
     local h6 = wm:CreateControl("$(parent)_H6", colHeader, CT_LABEL)
-    h6:SetAnchor(LEFT, colHeader, LEFT, 578, 0)
+    h6:SetAnchor(LEFT, colHeader, LEFT, 566, 0)
     h6:SetFont("ZoFontGameBold")
     h6:SetText(ColorText("NOTE / MAIL", "00FFCC"))
 
     local h8 = wm:CreateControl("$(parent)_H8", colHeader, CT_LABEL)
-    h8:SetAnchor(LEFT, colHeader, LEFT, 704, 0)
+    h8:SetAnchor(LEFT, colHeader, LEFT, 688, 0)
     h8:SetFont("ZoFontGameBold")
     h8:SetText(ColorText("ACTION / DISPATCH", "FF9900"))
 
-    -- 4. Table Rows (9 Rows)
-    self.auditRows = {}
-    local rowY = headerY + 24
+    -- =====================================================================
+    -- 4. Pooled Virtual ZO_ScrollList with Burnished-Brass Scrollbar
+    -- =====================================================================
+    local scrollList = self:CreateBrassScrollList(
+        "FissalRelay_AuditScrollList",
+        card,
+        32,
+        function(row)
+            local nameLbl = wm:CreateControl("$(parent)_Name", row, CT_LABEL)
+            nameLbl:SetAnchor(LEFT, row, LEFT, 10, 0)
+            nameLbl:SetDimensions(182, 22)
+            nameLbl:SetFont("ZoFontGameMedium")
+            nameLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            nameLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+            row.nameLbl = nameLbl
 
-    for r = 1, ROWS_PER_PAGE do
-        local row = wm:CreateControl("$(parent)_Row_" .. r, card, CT_BACKDROP)
-        row:SetAnchor(TOPLEFT, card, TOPLEFT, 10, rowY + (r - 1) * 35)
-        row:SetAnchor(TOPRIGHT, card, TOPRIGHT, -10, rowY + (r - 1) * 35)
-        row:SetHeight(33)
-        row:SetCenterColor(0.05, 0.05, 0.07, 0.70)
-        row:SetEdgeColor(0.20, 0.18, 0.14, 0.40)
-        row:SetEdgeTexture("", 8, 1, 0)
+            local rankLbl = wm:CreateControl("$(parent)_Rank", row, CT_LABEL)
+            rankLbl:SetAnchor(LEFT, row, LEFT, 198, 0)
+            rankLbl:SetDimensions(112, 22)
+            rankLbl:SetFont("ZoFontGameSmall")
+            rankLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            rankLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+            row.rankLbl = rankLbl
 
-        local nameLbl = wm:CreateControl("$(parent)_Name", row, CT_LABEL)
-        nameLbl:SetAnchor(LEFT, row, LEFT, 10, 0)
-        nameLbl:SetDimensions(185, 22)
-        nameLbl:SetFont("ZoFontGameMedium")
-        nameLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
-        nameLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-        nameLbl:SetText("@Member")
-        row.nameLbl = nameLbl
+            local daysLbl = wm:CreateControl("$(parent)_Days", row, CT_LABEL)
+            daysLbl:SetAnchor(LEFT, row, LEFT, 316, 0)
+            daysLbl:SetDimensions(68, 22)
+            daysLbl:SetFont("ZoFontGameBold")
+            daysLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+            daysLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            row.daysLbl = daysLbl
 
-        local rankLbl = wm:CreateControl("$(parent)_Rank", row, CT_LABEL)
-        rankLbl:SetAnchor(LEFT, row, LEFT, 202, 0)
-        rankLbl:SetDimensions(115, 22)
-        rankLbl:SetFont("ZoFontGameSmall")
-        rankLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
-        rankLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-        rankLbl:SetText("Member")
-        row.rankLbl = rankLbl
+            local salesLbl = wm:CreateControl("$(parent)_Sales", row, CT_LABEL)
+            salesLbl:SetAnchor(LEFT, row, LEFT, 390, 0)
+            salesLbl:SetDimensions(84, 22)
+            salesLbl:SetFont("ZoFontGameSmall")
+            salesLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+            salesLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            row.salesLbl = salesLbl
 
-        local daysLbl = wm:CreateControl("$(parent)_Days", row, CT_LABEL)
-        daysLbl:SetAnchor(LEFT, row, LEFT, 324, 0)
-        daysLbl:SetDimensions(70, 22)
-        daysLbl:SetFont("ZoFontGameBold")
-        daysLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-        daysLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
-        daysLbl:SetText("14d")
-        row.daysLbl = daysLbl
+            local duesLbl = wm:CreateControl("$(parent)_Dues", row, CT_LABEL)
+            duesLbl:SetAnchor(LEFT, row, LEFT, 480, 0)
+            duesLbl:SetDimensions(80, 22)
+            duesLbl:SetFont("ZoFontGameSmall")
+            duesLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+            duesLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            row.duesLbl = duesLbl
 
-        local salesLbl = wm:CreateControl("$(parent)_Sales", row, CT_LABEL)
-        salesLbl:SetAnchor(LEFT, row, LEFT, 400, 0)
-        salesLbl:SetDimensions(85, 22)
-        salesLbl:SetFont("ZoFontGameSmall")
-        salesLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-        salesLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
-        salesLbl:SetText("0g")
-        row.salesLbl = salesLbl
+            local noteLbl = wm:CreateControl("$(parent)_Note", row, CT_LABEL)
+            noteLbl:SetAnchor(LEFT, row, LEFT, 566, 0)
+            noteLbl:SetDimensions(116, 22)
+            noteLbl:SetFont("ZoFontGameSmall")
+            noteLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+            noteLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            row.noteLbl = noteLbl
 
-        local duesLbl = wm:CreateControl("$(parent)_Dues", row, CT_LABEL)
-        duesLbl:SetAnchor(LEFT, row, LEFT, 492, 0)
-        duesLbl:SetDimensions(80, 22)
-        duesLbl:SetFont("ZoFontGameSmall")
-        duesLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-        duesLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
-        duesLbl:SetText("0g")
-        row.duesLbl = duesLbl
+            local actionBtn = wm:CreateControl("$(parent)_ActionBtn", row, CT_BUTTON)
+            actionBtn:SetAnchor(LEFT, row, LEFT, 688, 0)
+            actionBtn:SetDimensions(126, 22)
+            actionBtn:SetFont("ZoFontGameSmall")
+            row.actionIndex = 1
+            row.selectedAction = "Warn Mail"
+            self:StyleTactileButton(actionBtn, AUDIT_ACTION_THEMES["Warn Mail"])
+            ApplyAuditActionStyle(actionBtn, "Warn Mail")
+            actionBtn:SetHandler("OnClicked", function()
+                row.actionIndex = (row.actionIndex % #AUDIT_ACTIONS) + 1
+                row.selectedAction = AUDIT_ACTIONS[row.actionIndex]
+                ApplyAuditActionStyle(actionBtn, row.selectedAction)
+                if row.memberData then
+                    row.memberData.stagedAction = row.selectedAction
+                end
+            end)
+            row.actionBtn = actionBtn
 
-        local noteLbl = wm:CreateControl("$(parent)_Note", row, CT_LABEL)
-        noteLbl:SetAnchor(LEFT, row, LEFT, 578, 0)
-        noteLbl:SetDimensions(118, 22)
-        noteLbl:SetFont("ZoFontGameSmall")
-        noteLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-        noteLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
-        noteLbl:SetText("--")
-        row.noteLbl = noteLbl
-
-        -- Action Selector Button (Cycles actions across 5 color themes)
-        local actionBtn = wm:CreateControl("$(parent)_ActionBtn", row, CT_BUTTON)
-        actionBtn:SetAnchor(LEFT, row, LEFT, 704, 0)
-        actionBtn:SetDimensions(132, 22)
-        actionBtn:SetFont("ZoFontGameSmall")
-        row.actionIndex = 1
-        row.selectedAction = "Warn Mail"
-
-        self:StyleTactileButton(actionBtn, AUDIT_ACTION_THEMES["Warn Mail"])
-        ApplyAuditActionStyle(actionBtn, "Warn Mail")
-
-        actionBtn:SetHandler("OnClicked", function()
-            row.actionIndex = (row.actionIndex % #AUDIT_ACTIONS) + 1
-            row.selectedAction = AUDIT_ACTIONS[row.actionIndex]
-            ApplyAuditActionStyle(actionBtn, row.selectedAction)
-            if row.memberData then
-                row.memberData.stagedAction = row.selectedAction
-            end
-        end)
-        row.actionBtn = actionBtn
-
-        local applyBtn = wm:CreateControl("$(parent)_ApplyBtn", row, CT_BUTTON)
-        applyBtn:SetAnchor(LEFT, actionBtn, RIGHT, 6, 0)
-        applyBtn:SetDimensions(66, 22)
-        applyBtn:SetFont("ZoFontGameBold")
-        applyBtn:SetText("Apply")
-        self:StyleTactileButton(applyBtn, {
-            normalBg = { 0.04, 0.14, 0.10, 0.90 },
-            hoverBg = { 0.06, 0.20, 0.14, 0.98 },
-            normalEdge = { 0.20, 0.80, 0.40, 0.85 },
-            hoverEdge = { 0.30, 1.00, 0.50, 1.00 },
-            normalTextColor = { 0.3, 1, 0.5, 1 },
-            hoverTextColor = { 0.6, 1, 0.7, 1 },
-            tooltipTitle = "Apply Action",
-            tooltipText = "Execute the selected action on this member with safe confirmation.",
-        })
-        row.applyBtn = applyBtn
-
-        self.auditRows[r] = row
-    end
-
-    -- Mouse Wheel support on card for smooth list scrolling
-    card:SetMouseEnabled(true)
-    card:SetHandler("OnMouseWheel", function(control, delta)
-        local maxPages = math.max(1, math.ceil(#(self.auditFilteredMembers or {}) / ROWS_PER_PAGE))
-        if delta > 0 then
-            if self.auditCurrentPage > 1 then
-                self.auditCurrentPage = self.auditCurrentPage - 1
-                self:RenderAuditorRows()
-            end
-        elseif delta < 0 then
-            if self.auditCurrentPage < maxPages then
-                self.auditCurrentPage = self.auditCurrentPage + 1
-                self:RenderAuditorRows()
-            end
+            local applyBtn = wm:CreateControl("$(parent)_ApplyBtn", row, CT_BUTTON)
+            applyBtn:SetAnchor(LEFT, actionBtn, RIGHT, 6, 0)
+            applyBtn:SetDimensions(64, 22)
+            applyBtn:SetFont("ZoFontGameBold")
+            applyBtn:SetText("Apply")
+            self:StyleTactileButton(applyBtn, {
+                normalBg = { 0.04, 0.14, 0.10, 0.90 },
+                hoverBg = { 0.06, 0.20, 0.14, 0.98 },
+                normalEdge = { 0.20, 0.80, 0.40, 0.85 },
+                hoverEdge = { 0.30, 1.00, 0.50, 1.00 },
+                normalTextColor = { 0.3, 1, 0.5, 1 },
+                hoverTextColor = { 0.6, 1, 0.7, 1 },
+                tooltipTitle = "Apply Action",
+                tooltipText = "Execute the selected action on this member with safe confirmation.",
+            })
+            row.applyBtn = applyBtn
+        end,
+        function(row, m)
+            if not m then return end
+            self:BindAuditorRow(row, m)
         end
-    end)
+    )
+    scrollList:SetAnchor(TOPLEFT, card, TOPLEFT, 10, headerY + 24)
+    scrollList:SetAnchor(BOTTOMRIGHT, card, BOTTOMRIGHT, -10, -36)
+    self.auditScrollList = scrollList
 
-    -- 5. Bottom Navigation & Status Bar
+    -- =====================================================================
+    -- 5. Bottom Status & Export Bar
+    -- =====================================================================
     local footerY = -8
     local statLbl = wm:CreateControl("$(parent)_StatLbl", card, CT_LABEL)
     statLbl:SetAnchor(BOTTOMLEFT, card, BOTTOMLEFT, 14, footerY)
@@ -750,63 +820,9 @@ function FR:BuildAuditorUI(parent)
     statLbl:SetText("Roster: -- | Inactive: -- | Shielded: 0")
     self.auditStatLbl = statLbl
 
-    -- Page controls
-    local nextBtn = wm:CreateControl("$(parent)_NextBtn", card, CT_BUTTON)
-    nextBtn:SetAnchor(BOTTOMRIGHT, card, BOTTOMRIGHT, -12, footerY + 2)
-    nextBtn:SetDimensions(65, 22)
-    nextBtn:SetFont("ZoFontGameSmall")
-    nextBtn:SetText("Next >")
-    self:StyleTactileButton(nextBtn, {
-        normalBg = { 0.06, 0.06, 0.09, 0.85 },
-        hoverBg = { 0.08, 0.16, 0.18, 0.95 },
-        normalEdge = { 0.25, 0.25, 0.30, 0.60 },
-        hoverEdge = { 0, 0.90, 0.80, 1.0 },
-        normalTextColor = { 0.7, 0.7, 0.7, 1 },
-        hoverTextColor = { 0, 1, 0.9, 1 },
-        tooltipTitle = "Next Page",
-        tooltipText = "View next page of flagged inactive members.",
-    })
-    nextBtn:SetHandler("OnClicked", function()
-        local maxPages = math.max(1, math.ceil(#(self.auditFilteredMembers or {}) / ROWS_PER_PAGE))
-        if self.auditCurrentPage < maxPages then
-            self.auditCurrentPage = self.auditCurrentPage + 1
-            self:RenderAuditorRows()
-        end
-    end)
-    self.auditNextBtn = nextBtn
-
-    local pageLbl = wm:CreateControl("$(parent)_PageLbl", card, CT_LABEL)
-    pageLbl:SetAnchor(RIGHT, nextBtn, LEFT, -8, 0)
-    pageLbl:SetFont("ZoFontGameSmall")
-    pageLbl:SetText("Page 1/1")
-    self.auditPageLbl = pageLbl
-
-    local prevBtn = wm:CreateControl("$(parent)_PrevBtn", card, CT_BUTTON)
-    prevBtn:SetAnchor(RIGHT, pageLbl, LEFT, -8, 0)
-    prevBtn:SetDimensions(65, 22)
-    prevBtn:SetFont("ZoFontGameSmall")
-    prevBtn:SetText("< Prev")
-    self:StyleTactileButton(prevBtn, {
-        normalBg = { 0.06, 0.06, 0.09, 0.85 },
-        hoverBg = { 0.08, 0.16, 0.18, 0.95 },
-        normalEdge = { 0.25, 0.25, 0.30, 0.60 },
-        hoverEdge = { 0, 0.90, 0.80, 1.0 },
-        normalTextColor = { 0.7, 0.7, 0.7, 1 },
-        hoverTextColor = { 0, 1, 0.9, 1 },
-        tooltipTitle = "Previous Page",
-        tooltipText = "View previous page of flagged inactive members.",
-    })
-    prevBtn:SetHandler("OnClicked", function()
-        if self.auditCurrentPage > 1 then
-            self.auditCurrentPage = self.auditCurrentPage - 1
-            self:RenderAuditorRows()
-        end
-    end)
-    self.auditPrevBtn = prevBtn
-
     local exportBtn = wm:CreateControl("$(parent)_ExportBtn", card, CT_BUTTON)
-    exportBtn:SetAnchor(RIGHT, prevBtn, LEFT, -20, 0)
-    exportBtn:SetDimensions(110, 22)
+    exportBtn:SetAnchor(BOTTOMRIGHT, card, BOTTOMRIGHT, -12, footerY + 2)
+    exportBtn:SetDimensions(116, 22)
     exportBtn:SetFont("ZoFontGameSmall")
     exportBtn:SetText("Export to Chat")
     self:StyleTactileButton(exportBtn, {
@@ -823,6 +839,12 @@ function FR:BuildAuditorUI(parent)
         self:ExportAuditToChat()
     end)
     self.auditExportBtn = exportBtn
+
+    local pageLbl = wm:CreateControl("$(parent)_PageLbl", card, CT_LABEL)
+    pageLbl:SetAnchor(RIGHT, exportBtn, LEFT, -14, 0)
+    pageLbl:SetFont("ZoFontGameSmall")
+    pageLbl:SetText("0 shown")
+    self.auditPageLbl = pageLbl
 
     self:BuildAuditBatchProgressPanel(card)
     self:BuildAuditExclusionsDrawer(card)
@@ -945,6 +967,34 @@ function FR:UpdateAuditorUI(sortOnly)
         end
     end
 
+    -- Update Dues Status Pill visual states ([All | Unmet Dues | Met])
+    local curStatus = self.auditStatusFilter or "all"
+    for sKey, sBtn in pairs(self.auditStatusBtns or {}) do
+        if sBtn.bg then
+            if sKey == curStatus then
+                sBtn.isCustomActive = true
+                if sKey == "unmet" then
+                    sBtn.bg:SetCenterColor(0.20, 0.06, 0.06, 0.95)
+                    sBtn.bg:SetEdgeColor(0.95, 0.35, 0.30, 1.0)
+                    sBtn:SetNormalFontColor(1, 0.55, 0.50, 1)
+                elseif sKey == "met" then
+                    sBtn.bg:SetCenterColor(0.04, 0.16, 0.10, 0.95)
+                    sBtn.bg:SetEdgeColor(0.25, 0.90, 0.50, 1.0)
+                    sBtn:SetNormalFontColor(0.35, 1, 0.60, 1)
+                else
+                    sBtn.bg:SetCenterColor(0.18, 0.12, 0.04, 0.95)
+                    sBtn.bg:SetEdgeColor(0.95, 0.70, 0.15, 1.0)
+                    sBtn:SetNormalFontColor(1, 0.85, 0.2, 1)
+                end
+            else
+                sBtn.isCustomActive = false
+                sBtn.bg:SetCenterColor(0.06, 0.06, 0.08, 0.82)
+                sBtn.bg:SetEdgeColor(0.35, 0.28, 0.18, 0.65)
+                sBtn:SetNormalFontColor(0.62, 0.62, 0.62, 1)
+            end
+        end
+    end
+
     if self.auditOffToggle and self.auditOffToggle.bg then
         if self.auditExcludeOfficers then
             self.auditOffToggle.isCustomActive = true
@@ -1006,7 +1056,7 @@ function FR:UpdateAuditorUI(sortOnly)
         end
     end
 
-    self:RenderAuditorRows()
+    self:RenderAuditorRows(false)
 end
 
 function FR:RecordMemberMailSent(memberName, mailType)
@@ -1497,6 +1547,7 @@ end
 
 function FR:SetAuditTableHidden(hidden)
     if self.auditColHeader then self.auditColHeader:SetHidden(hidden) end
+    if self.auditScrollList then self.auditScrollList:SetHidden(hidden) end
     if self.auditRows then
         for _, r in ipairs(self.auditRows) do
             if r.SetHidden then r:SetHidden(hidden) elseif r.row then r.row:SetHidden(hidden) end
@@ -1508,15 +1559,21 @@ function FR:SetAuditTableHidden(hidden)
     if self.auditNextBtn then self.auditNextBtn:SetHidden(hidden) end
     if self.auditStatLbl then self.auditStatLbl:SetHidden(hidden) end
 
-    -- Hide top filter controls so nothing bleeds through
+    -- Hide 2-row toolbar controls so nothing bleeds through
     if self.auditDaysLbl then self.auditDaysLbl:SetHidden(hidden) end
     if self.auditDayBtns then
         for _, b in pairs(self.auditDayBtns) do b:SetHidden(hidden) end
     end
+    if self.auditDuesFilterLbl then self.auditDuesFilterLbl:SetHidden(hidden) end
+    if self.auditStatusBtns then
+        for _, b in pairs(self.auditStatusBtns) do b:SetHidden(hidden) end
+    end
+    if self.auditFilterRowLbl then self.auditFilterRowLbl:SetHidden(hidden) end
     if self.auditOffToggle then self.auditOffToggle:SetHidden(hidden) end
     if self.auditLoaToggle then self.auditLoaToggle:SetHidden(hidden) end
     if self.auditShieldToggle then self.auditShieldToggle:SetHidden(hidden) end
     if self.auditRankFilterBtn then self.auditRankFilterBtn:SetHidden(hidden) end
+    if self.auditRefreshBtn then self.auditRefreshBtn:SetHidden(hidden) end
     if self.auditExclusionsBtn then self.auditExclusionsBtn:SetHidden(hidden) end
     if self.auditBatchBtn then self.auditBatchBtn:SetHidden(hidden) end
     if self.auditSearchBox and self.auditSearchBox:GetParent() then
@@ -1814,178 +1871,181 @@ function FR:ExecuteAuditBatchQueue(guildId, queue, firstMailItem)
     EVENT_MANAGER:RegisterForUpdate("FissalRelay_AuditBatchPacer", 1850, ProcessNext)
 end
 
-function FR:RenderAuditorRows()
-    local members = self.auditFilteredMembers or {}
-    local total = #members
-    local maxPages = math.max(1, math.ceil(total / ROWS_PER_PAGE))
-    if self.auditCurrentPage > maxPages then self.auditCurrentPage = maxPages end
-    if self.auditCurrentPage < 1 then self.auditCurrentPage = 1 end
-
-    local startIndex = (self.auditCurrentPage - 1) * ROWS_PER_PAGE
+function FR:BindAuditorRow(row, m)
+    if not row or not m then return end
     local guildId = self:ResolveGuildId(self.selectedGuildIndex)
+    local mailCount, lastMailTime = self:GetMemberMailInfo(m.name)
+    local noteLower = string.lower(m.note or "")
+    local isPerm = string.find(noteLower, "perm") or string.find(noteLower, "founder") or string.find(noteLower, "core") or string.find(noteLower, "vip") or string.find(noteLower, "staff")
 
-    for r = 1, ROWS_PER_PAGE do
-        local row = self.auditRows and self.auditRows[r]
-        local memberIndex = startIndex + r
-
-        if row then
-            if memberIndex <= total then
-                local m = members[memberIndex]
-                row:SetHidden(false)
-
-                local mailCount, lastMailTime = self:GetMemberMailInfo(m.name)
-                local noteLower = string.lower(m.note or "")
-                local isPerm = string.find(noteLower, "perm") or string.find(noteLower, "founder") or string.find(noteLower, "core") or string.find(noteLower, "vip") or string.find(noteLower, "staff")
-
-                -- Name
-                row.nameLbl:SetText(m.name)
-                row.nameLbl:SetMouseEnabled(true)
-                row.nameLbl:SetHandler("OnMouseEnter", function(ctrl)
-                    InitializeTooltip(InformationTooltip, ctrl, TOP, 0, -4)
-                    if m.detailedSales == nil and FR.GetMemberDetailedSales then
-                        m.detailedSales = FR:GetMemberDetailedSales(guildId, m.name) or false
-                    end
-                    local sDetails = m.detailedSales or nil
-                    local lines = {
-                        string.format("|c00FFCC%s|r  |c888888(Rank: %s • %d days offline)|r", m.name, m.rank, m.days),
-                    }
-                    if m.note and m.note ~= "" then
-                        local cleanNote = self:SanitizeNote(m.note)
-                        if cleanNote ~= "" then
-                            table.insert(lines, string.format("|cFFD700Member Note:|r |cFFFFFF%s|r", cleanNote))
-                        end
-                    end
-
-                    if mailCount > 0 then
-                        local agoStr = "just now"
-                        local ago = GetTimeStamp() - lastMailTime
-                        if ago < 3600 then agoStr = string.format("%dm ago", math.floor(ago / 60))
-                        elseif ago < 86400 then agoStr = string.format("%dh ago", math.floor(ago / 3600))
-                        else agoStr = string.format("%dd ago", math.floor(ago / 86400)) end
-                        table.insert(lines, string.format("|c888888Mail History:|r |cFFCC00Mail: %d time(s) (last: %s)|r", mailCount, agoStr))
-                    else
-                        table.insert(lines, "|c888888Mail History:|r |c888888Never mailed check-in|r")
-                    end
-
-                    table.insert(lines, "")
-                    table.insert(lines, "|cE6C387Trade Velocity Breakdown:|r")
-                    if sDetails then
-                        table.insert(lines, string.format("• Current Trade Week: |c59E08A%d sales|r (|cFFD700%sg|r)",
-                            sDetails.thisWeekCount, ZO_LocalizeDecimalNumber(sDetails.thisWeekGold)))
-                        table.insert(lines, string.format("• Prior Trade Week:   |c59E08A%d sales|r (|cFFD700%sg|r)",
-                            sDetails.priorWeekCount, ZO_LocalizeDecimalNumber(sDetails.priorWeekGold)))
-                        table.insert(lines, string.format("• Total Recorded:     |c00FFCC%d sales|r (|cFFD700%sg|r)",
-                            sDetails.totalCount, ZO_LocalizeDecimalNumber(sDetails.totalGold)))
-                        if sDetails.lastSaleTs > 0 then
-                            local ago = GetTimeStamp() - sDetails.lastSaleTs
-                            local agoStr = (ago < 86400) and string.format("%dh ago", math.floor(ago / 3600)) or string.format("%dd ago", math.floor(ago / 86400))
-                            table.insert(lines, string.format("• Last Recorded Sale: |c00FFCC%s|r", agoStr))
-                        else
-                            table.insert(lines, "• Last Recorded Sale: |c888888None recorded|r")
-                        end
-                    else
-                        table.insert(lines, string.format("• Recorded Sales: |c59E08A%d|r (|cFFD700%sg|r)", m.salesCount or 0, ZO_LocalizeDecimalNumber(m.salesGold or 0)))
-                    end
-
-                    table.insert(lines, "")
-                    table.insert(lines, "|cE6C387Treasury & Dues Status:|r")
-                    table.insert(lines, string.format("• Bank Deposits: |cFFAA00%sg|r", ZO_LocalizeDecimalNumber(m.deposits or 0)))
-                    local duesColor = m.duesMet and "59E08A" or "FF5555"
-                    table.insert(lines, string.format("• Dues Status: |c%s%s (%s)|r", duesColor, m.duesMet and "DUES MET" or "MISSING DUES", m.duesReason or "Unmet"))
-
-                    if isPerm then
-                        table.insert(lines, "")
-                        table.insert(lines, "|c00FFCC[PROTECTED]|r Permanent member note keyword detected!")
-                    end
-
-                    SetTooltipText(InformationTooltip, table.concat(lines, "\n"))
-                end)
-                row.nameLbl:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
-
-                -- Rank
-                row.rankLbl:SetText(m.rank)
-
-                -- Offline duration
-                local dayColor = m.days >= 30 and "FF5555" or (m.days >= 14 and "FFAA00" or "FFD700")
-                row.daysLbl:SetText(string.format("|c%s%d days|r", dayColor, m.days))
-
-                -- Sales
-                if m.salesCount and m.salesCount > 0 then
-                    local gVal = tonumber(m.salesGold) or 0
-                    local goldStr = gVal >= 1000000 and string.format("%.1fM", gVal / 1000000)
-                        or (gVal >= 1000 and string.format("%dk", math.floor(gVal / 1000))
-                        or string.format("%dg", gVal))
-                    row.salesLbl:SetText(string.format("|c59E08A%d|r |c888888(%s)|r", m.salesCount, goldStr))
-                else
-                    row.salesLbl:SetText("|c6666660|r")
-                end
-
-                -- Bank Dues
-                local depText = m.deposits > 0 and string.format("|c59E08A%sg|r", ZO_LocalizeDecimalNumber(m.deposits)) or "|c6666660g|r"
-                row.duesLbl:SetText(depText)
-
-                -- Note / Shield / Mail column
-                if isPerm then
-                    row.noteLbl:SetText("|c00FFCC[PERM]|r")
-                elseif mailCount > 0 then
-                    row.noteLbl:SetText(string.format("|cFFCC00Mail: %dx|r", mailCount))
-                elseif m.note and m.note ~= "" then
-                    local cleanNote = self:SanitizeNote(m.note)
-                    if #cleanNote > 14 then
-                        cleanNote = string.sub(cleanNote, 1, 12) .. ".."
-                    end
-                    if cleanNote ~= "" then
-                        row.noteLbl:SetText(string.format("|cFFD700%s|r", cleanNote))
-                    else
-                        row.noteLbl:SetText("|c444444--|r")
-                    end
-                else
-                    row.noteLbl:SetText("|c444444--|r")
-                end
-
-                row.noteLbl:SetMouseEnabled(true)
-                row.noteLbl:SetHandler("OnMouseEnter", function(ctrl)
-                    InitializeTooltip(InformationTooltip, ctrl, TOP, 0, -4)
-                    local cleanTipNote = self:SanitizeNote(m.note)
-                    local tip = string.format("|c00FFCC%s|r\n|cFFD700Note:|r %s\n|c888888Mail Count:|r %d time(s) mailed",
-                        m.name, (cleanTipNote ~= "") and cleanTipNote or "None", mailCount)
-                    if isPerm then tip = tip .. "\n|c00FFCC[PROTECTED]|r Permanent member note keyword detected!" end
-                    SetTooltipText(InformationTooltip, tip)
-                end)
-                row.noteLbl:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
-
-                -- Dynamic Action button sync
-                row.memberData = m
-                local stagedAction = m.stagedAction or "Warn Mail"
-                row.selectedAction = stagedAction
-                for idx, act in ipairs(AUDIT_ACTIONS) do
-                    if act == stagedAction then
-                        row.actionIndex = idx
-                        break
-                    end
-                end
-                ApplyAuditActionStyle(row.actionBtn, stagedAction)
-
-                -- Apply button handler
-                row.applyBtn:SetHandler("OnClicked", function()
-                    self:ApplyAuditAction(m, row.selectedAction or "Warn Mail")
-                end)
-            else
-                row:SetHidden(true)
+    -- Name & Rich Tooltip
+    row.nameLbl:SetText(m.name)
+    row.nameLbl:SetMouseEnabled(true)
+    row.nameLbl:SetHandler("OnMouseEnter", function(ctrl)
+        InitializeTooltip(InformationTooltip, ctrl, TOP, 0, -4)
+        if m.detailedSales == nil and FR.GetMemberDetailedSales then
+            m.detailedSales = FR:GetMemberDetailedSales(guildId, m.name) or false
+        end
+        local sDetails = m.detailedSales or nil
+        local statusTag = m.isOnline and "Online" or string.format("%d days offline", m.days or 0)
+        local lines = {
+            string.format("|c00FFCC%s|r  |c888888(Rank: %s • %s)|r", m.name, m.rank, statusTag),
+        }
+        if m.note and m.note ~= "" then
+            local cleanNote = self:SanitizeNote(m.note)
+            if cleanNote ~= "" then
+                table.insert(lines, string.format("|cFFD700Member Note:|r |cFFFFFF%s|r", cleanNote))
             end
         end
+
+        if mailCount > 0 then
+            local agoStr = "just now"
+            local ago = GetTimeStamp() - lastMailTime
+            if ago < 3600 then agoStr = string.format("%dm ago", math.floor(ago / 60))
+            elseif ago < 86400 then agoStr = string.format("%dh ago", math.floor(ago / 3600))
+            else agoStr = string.format("%dd ago", math.floor(ago / 86400)) end
+            table.insert(lines, string.format("|c888888Mail History:|r |cFFCC00Mail: %d time(s) (last: %s)|r", mailCount, agoStr))
+        else
+            table.insert(lines, "|c888888Mail History:|r |c888888Never mailed check-in|r")
+        end
+
+        table.insert(lines, "")
+        table.insert(lines, "|cE6C387Trade Velocity Breakdown:|r")
+        if sDetails then
+            table.insert(lines, string.format("• Current Trade Week: |c59E08A%d sales|r (|cFFD700%sg|r)",
+                sDetails.thisWeekCount, ZO_LocalizeDecimalNumber(sDetails.thisWeekGold)))
+            table.insert(lines, string.format("• Prior Trade Week:   |c59E08A%d sales|r (|cFFD700%sg|r)",
+                sDetails.priorWeekCount, ZO_LocalizeDecimalNumber(sDetails.priorWeekGold)))
+            table.insert(lines, string.format("• Total Recorded:     |c00FFCC%d sales|r (|cFFD700%sg|r)",
+                sDetails.totalCount, ZO_LocalizeDecimalNumber(sDetails.totalGold)))
+            if sDetails.lastSaleTs > 0 then
+                local ago = GetTimeStamp() - sDetails.lastSaleTs
+                local agoStr = (ago < 86400) and string.format("%dh ago", math.floor(ago / 3600)) or string.format("%dd ago", math.floor(ago / 86400))
+                table.insert(lines, string.format("• Last Recorded Sale: |c00FFCC%s|r", agoStr))
+            else
+                table.insert(lines, "• Last Recorded Sale: |c888888None recorded|r")
+            end
+        else
+            table.insert(lines, string.format("• Recorded Sales: |c59E08A%d|r (|cFFD700%sg|r)", m.salesCount or 0, ZO_LocalizeDecimalNumber(m.salesGold or 0)))
+        end
+
+        table.insert(lines, "")
+        table.insert(lines, "|cE6C387Treasury & Dues Status:|r")
+        table.insert(lines, string.format("• Bank Deposits: |cFFAA00%sg|r", ZO_LocalizeDecimalNumber(m.deposits or 0)))
+        local duesColor = m.duesMet and "59E08A" or "FF5555"
+        table.insert(lines, string.format("• Dues Status: |c%s%s (%s)|r", duesColor, m.duesMet and "DUES MET" or "MISSING DUES", m.duesReason or "Unmet"))
+
+        if isPerm then
+            table.insert(lines, "")
+            table.insert(lines, "|c00FFCC[PROTECTED]|r Permanent member note keyword detected!")
+        end
+
+        SetTooltipText(InformationTooltip, table.concat(lines, "\n"))
+    end)
+    row.nameLbl:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
+
+    -- Rank
+    row.rankLbl:SetText(m.rank)
+
+    -- Offline duration
+    if m.isOnline then
+        row.daysLbl:SetText("|c59E08AOnline|r")
+    elseif (m.days or 0) == 0 then
+        row.daysLbl:SetText("|c00FFCC< 1d|r")
+    else
+        local dayColor = m.days >= 30 and "FF5555" or (m.days >= 14 and "FFAA00" or "FFD700")
+        row.daysLbl:SetText(string.format("|c%s%d days|r", dayColor, m.days))
+    end
+
+    -- Sales
+    if m.salesCount and m.salesCount > 0 then
+        local gVal = tonumber(m.salesGold) or 0
+        local goldStr = gVal >= 1000000 and string.format("%.1fM", gVal / 1000000)
+            or (gVal >= 1000 and string.format("%dk", math.floor(gVal / 1000))
+            or string.format("%dg", gVal))
+        row.salesLbl:SetText(string.format("|c59E08A%d|r |c888888(%s)|r", m.salesCount, goldStr))
+    else
+        row.salesLbl:SetText("|c6666660|r")
+    end
+
+    -- Bank Dues & Dues Status
+    local depText
+    if (m.deposits or 0) > 0 then
+        local depColor = m.duesMet and "59E08A" or "FFAA00"
+        depText = string.format("|c%s%sg|r", depColor, ZO_LocalizeDecimalNumber(m.deposits))
+    elseif m.duesMet then
+        depText = "|c59E08AMet|r"
+    else
+        depText = "|cFF5555Unmet|r"
+    end
+    row.duesLbl:SetText(depText)
+
+    -- Note / Shield / Mail column
+    if isPerm then
+        row.noteLbl:SetText("|c00FFCC[PERM]|r")
+    elseif mailCount > 0 then
+        row.noteLbl:SetText(string.format("|cFFCC00Mail: %dx|r", mailCount))
+    elseif m.note and m.note ~= "" then
+        local cleanNote = self:SanitizeNote(m.note)
+        if #cleanNote > 14 then
+            cleanNote = string.sub(cleanNote, 1, 12) .. ".."
+        end
+        if cleanNote ~= "" then
+            row.noteLbl:SetText(string.format("|cFFD700%s|r", cleanNote))
+        else
+            row.noteLbl:SetText("|c444444--|r")
+        end
+    else
+        row.noteLbl:SetText("|c444444--|r")
+    end
+
+    row.noteLbl:SetMouseEnabled(true)
+    row.noteLbl:SetHandler("OnMouseEnter", function(ctrl)
+        InitializeTooltip(InformationTooltip, ctrl, TOP, 0, -4)
+        local cleanTipNote = self:SanitizeNote(m.note)
+        local tip = string.format("|c00FFCC%s|r\n|cFFD700Note:|r %s\n|c888888Mail Count:|r %d time(s) mailed",
+            m.name, (cleanTipNote ~= "") and cleanTipNote or "None", mailCount)
+        if isPerm then tip = tip .. "\n|c00FFCC[PROTECTED]|r Permanent member note keyword detected!" end
+        SetTooltipText(InformationTooltip, tip)
+    end)
+    row.noteLbl:SetHandler("OnMouseExit", function() ClearTooltip(InformationTooltip) end)
+
+    -- Dynamic Action button sync
+    row.memberData = m
+    local stagedAction = m.stagedAction or "Warn Mail"
+    row.selectedAction = stagedAction
+    for idx, act in ipairs(AUDIT_ACTIONS) do
+        if act == stagedAction then
+            row.actionIndex = idx
+            break
+        end
+    end
+    ApplyAuditActionStyle(row.actionBtn, stagedAction)
+
+    -- Apply button handler
+    row.applyBtn:SetHandler("OnClicked", function()
+        self:ApplyAuditAction(m, row.selectedAction or "Warn Mail")
+    end)
+end
+
+function FR:RenderAuditorRows(keepScrollPos)
+    local members = self.auditFilteredMembers or {}
+    local total = #members
+
+    if self.auditScrollList and self.CommitBrassScrollList then
+        self:CommitBrassScrollList(self.auditScrollList, members, keepScrollPos ~= false)
     end
 
     if self.auditPageLbl then
-        self.auditPageLbl:SetText(string.format("Page %d/%d (%d shown)", self.auditCurrentPage, maxPages, total))
+        self.auditPageLbl:SetText(string.format("|cE6C387%d|r |c888888shown|r", total))
     end
 
     if self.auditStatLbl then
-        if not self.auditShieldActiveSellers then
-            self.auditStatLbl:SetText(string.format("|cFF5555⚠ WARNING: Seller Shield OFF (Appear-Offline sellers listed)!|r Inactive: |cFF5555%d|r | Excused: %d",
+        if not self.auditShieldActiveSellers and (self.auditStatusFilter or "all") ~= "met" then
+            self.auditStatLbl:SetText(string.format("|cFF5555⚠ Seller Shield OFF (Appear-Offline sellers listed)!|r Shown: |cFF5555%d|r | Excused: %d",
                 total, self.auditExcusedCount or 0))
         else
-            self.auditStatLbl:SetText(string.format("Roster: %d | Inactive: |cFF5555%d|r | Shielded Active: |c59E08A%d|r | Excused: %d",
+            self.auditStatLbl:SetText(string.format("Roster: %d | Flagged: |cFF5555%d|r | Shielded Active: |c59E08A%d|r | Excused: %d",
                 self.auditTotalMembers or 0, total, self.auditShieldedCount or 0, self.auditExcusedCount or 0))
         end
     end

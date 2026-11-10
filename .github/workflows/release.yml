@@ -105,7 +105,7 @@ jobs:
           Compress-Archive -Path publish/RedfurSync.exe -DestinationPath RedfurSync-win-x64.zip
 
           $addonStage = New-Item -ItemType Directory -Path "addon-stage/FissalRelay" -Force
-          Get-ChildItem -Path "AddOn/FissalRelay" -File | Where-Object { $_.Extension -in '.lua', '.txt' } | ForEach-Object {
+          Get-ChildItem -Path "AddOn/FissalRelay" -File | Where-Object { $_.Extension -in '.lua', '.txt', '.addon', '.xml' } | ForEach-Object {
             Copy-Item $_.FullName -Destination $addonStage.FullName
           }
           Compress-Archive -Path "addon-stage/FissalRelay" -DestinationPath "FissalRelay-v$($env:RELEASE_VERSION).zip"
@@ -169,6 +169,9 @@ jobs:
           }
           if (-not (Test-Path "verify-addon/FissalRelay/FissalRelay.txt")) {
             throw 'Addon archive is missing FissalRelay/FissalRelay.txt.'
+          }
+          if (-not (Test-Path "verify-addon/FissalRelay/FissalRelay_Templates.xml") -or -not (Test-Path "verify-addon/FissalRelay/Bindings.xml")) {
+            throw 'Addon archive is missing required XML files.'
           }
 
           $fileVersion = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($exe.FullName).FileVersion

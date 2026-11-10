@@ -469,12 +469,21 @@ function FR:EvaluateSingleGuildAutoRanks(guildId)
         arSettings.restrictDemotions = true
     end
 
-    -- Query sales & bank deposits
+    -- Query sales & bank deposits (using O(G) per-guild bucket)
     local salesByMember = self.GetMemberSales and self:GetMemberSales(guildId, lookbackDays) or {}
     local bankDeposits = {}
     local cutoffTs = GetTimeStamp() - (lookbackDays * 86400)
+    local depBucket = self.GetGuildDepositsBucket and self:GetGuildDepositsBucket(guildId) or nil
 
-    if self.savedVars and self.savedVars.staff and self.savedVars.staff.bankDeposits then
+    if depBucket then
+        for i = 1, #depBucket do
+            local dep = depBucket[i]
+            if (dep.timestamp or 0) >= cutoffTs and dep.depositor then
+                local rawName = string.gsub(dep.depositor, "^@", ""):lower()
+                bankDeposits[rawName] = (bankDeposits[rawName] or 0) + (dep.amount or 0)
+            end
+        end
+    elseif self.savedVars and self.savedVars.staff and self.savedVars.staff.bankDeposits then
         for _, dep in pairs(self.savedVars.staff.bankDeposits) do
             if dep.guildId == guildId and (dep.timestamp or 0) >= cutoffTs and dep.depositor then
                 local rawName = string.gsub(dep.depositor, "^@", ""):lower()
@@ -1097,17 +1106,6 @@ function FR:BuildAutoRanksUI(parent)
     card:SetEdgeColor(0.30, 0.25, 0.18, 0.70)
     card:SetEdgeTexture("", 8, 1, 0)
     card:SetMouseEnabled(true)
-    card:SetHandler("OnMouseWheel", function(control, delta)
-        local total = #self.autoRankFilteredResults
-        local maxPages = math.max(1, math.ceil(total / ROWS_PER_PAGE))
-        if delta < 0 and self.autoRankCurrentPage < maxPages then
-            self.autoRankCurrentPage = self.autoRankCurrentPage + 1
-            self:RenderAutoRanksRows()
-        elseif delta > 0 and self.autoRankCurrentPage > 1 then
-            self.autoRankCurrentPage = self.autoRankCurrentPage - 1
-            self:RenderAutoRanksRows()
-        end
-    end)
 
     -- 2. Title & Status
     local title = wm:CreateControl("$(parent)_Title", card, CT_LABEL)
@@ -1312,10 +1310,10 @@ function FR:BuildAutoRanksUI(parent)
     progLbl:SetText("")
     self.autoRanksProgressLbl = progLbl
 
-    -- 4. Table Header Row
+    -- 4. Table Header Row (Aligned with ZO_ScrollList Contents Area)
     local headerRow = wm:CreateControl("$(parent)_Header", card, CT_BACKDROP)
     headerRow:SetAnchor(TOPLEFT, card, TOPLEFT, 10, 64)
-    headerRow:SetAnchor(TOPRIGHT, card, TOPRIGHT, -10, 64)
+    headerRow:SetAnchor(TOPRIGHT, card, TOPRIGHT, -26, 64)
     headerRow:SetHeight(24)
     headerRow:SetCenterColor(0.08, 0.08, 0.12, 0.95)
     headerRow:SetEdgeColor(0.25, 0.25, 0.30, 0.65)
@@ -1338,7 +1336,7 @@ function FR:BuildAutoRanksUI(parent)
                 item.selected = masterCheck.allSelected
             end
         end
-        self:RenderAutoRanksRows()
+        self:RefreshAutoRanksGrid(true)
     end)
 
     local function MakeHdrLbl(name, anchorCtrl, anchorPoint, toPoint, x, width, text)
@@ -1355,183 +1353,143 @@ function FR:BuildAutoRanksUI(parent)
 
     local hMember = MakeHdrLbl("HMember", masterCheck, LEFT, RIGHT, 8, 175, "MEMBER (@NAME)")
     local hCurRank = MakeHdrLbl("HCurRank", hMember, LEFT, RIGHT, 6, 120, "CURRENT RANK")
-    local hTgtRank = MakeHdrLbl("HTgtRank", hCurRank, LEFT, RIGHT, 6, 130, "TARGET RANK")
-    local hAction = MakeHdrLbl("HAction", hTgtRank, LEFT, RIGHT, 6, 95, "ACTION")
-    local hSales = MakeHdrLbl("HSales", hAction, LEFT, RIGHT, 6, 95, "SALES GOLD")
+    local hTgtRank = MakeHdrLbl("HTgtRank", hCurRank, LEFT, RIGHT, 6, 128, "TARGET RANK")
+    local hAction = MakeHdrLbl("HAction", hTgtRank, LEFT, RIGHT, 6, 94, "ACTION")
+    local hSales = MakeHdrLbl("HSales", hAction, LEFT, RIGHT, 6, 94, "SALES GOLD")
     local hDep = MakeHdrLbl("HDep", hSales, LEFT, RIGHT, 6, 90, "BANK DUES")
-    local hNote = MakeHdrLbl("HNote", hDep, LEFT, RIGHT, 6, 135, "ASSESSMENT & NOTES")
+    local hNote = MakeHdrLbl("HNote", hDep, LEFT, RIGHT, 6, 120, "ASSESSMENT & NOTES")
 
-    -- 5. Data Rows (12 Spacious Rows with Mouse Wheel Navigation)
-    self.autoRanksGridRows = {}
-    local rowStartY = 92
-    local rowHeight = 25
+    -- 5. Pooled Virtual ZO_ScrollList with Burnished-Brass Scrollbar
+    local scrollList = self:CreateBrassScrollList(
+        "FissalRelay_AutoRanksScrollList",
+        card,
+        27,
+        function(row)
+            row:SetMouseEnabled(true)
 
-    for r = 1, ROWS_PER_PAGE do
-        local row = wm:CreateControl("$(parent)_Row" .. r, card, CT_BACKDROP)
-        row:SetAnchor(TOPLEFT, card, TOPLEFT, 10, rowStartY + (r - 1) * (rowHeight + 2))
-        row:SetAnchor(TOPRIGHT, card, TOPRIGHT, -10, rowStartY + (r - 1) * (rowHeight + 2))
-        row:SetHeight(rowHeight)
-        row:SetCenterColor(0.04, 0.04, 0.06, 0.60)
-        row:SetEdgeColor(0.18, 0.16, 0.12, 0.40)
-        row:SetEdgeTexture("", 8, 1, 0)
-        row:SetMouseEnabled(true)
+            local checkBtn = wm:CreateControl("$(parent)_Check", row, CT_BUTTON)
+            checkBtn:SetAnchor(LEFT, row, LEFT, 8, 0)
+            checkBtn:SetDimensions(20, 20)
+            checkBtn:SetFont("ZoFontGameSmall")
+            checkBtn:SetText("[X]")
+            row.check = checkBtn
 
-        local checkBtn = wm:CreateControl("$(parent)_Check", row, CT_BUTTON)
-        checkBtn:SetAnchor(LEFT, row, LEFT, 8, 0)
-        checkBtn:SetDimensions(20, 20)
-        checkBtn:SetFont("ZoFontGameSmall")
-        checkBtn:SetText("[X]")
+            local memberLbl = wm:CreateControl("$(parent)_Member", row, CT_LABEL)
+            memberLbl:SetAnchor(LEFT, checkBtn, RIGHT, 8, 0)
+            memberLbl:SetDimensions(175, 20)
+            memberLbl:SetFont("ZoFontGameSmall")
+            memberLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+            memberLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            row.member = memberLbl
 
-        local memberLbl = wm:CreateControl("$(parent)_Member", row, CT_LABEL)
-        memberLbl:SetAnchor(LEFT, checkBtn, RIGHT, 8, 0)
-        memberLbl:SetDimensions(175, 20)
-        memberLbl:SetFont("ZoFontGameSmall")
-        memberLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-        memberLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            local curRankLbl = wm:CreateControl("$(parent)_CurRank", row, CT_LABEL)
+            curRankLbl:SetAnchor(LEFT, memberLbl, RIGHT, 6, 0)
+            curRankLbl:SetDimensions(120, 20)
+            curRankLbl:SetFont("ZoFontGameSmall")
+            curRankLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+            curRankLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            row.curRank = curRankLbl
 
-        local curRankLbl = wm:CreateControl("$(parent)_CurRank", row, CT_LABEL)
-        curRankLbl:SetAnchor(LEFT, memberLbl, RIGHT, 6, 0)
-        curRankLbl:SetDimensions(120, 20)
-        curRankLbl:SetFont("ZoFontGameSmall")
-        curRankLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-        curRankLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            local tgtRankLbl = wm:CreateControl("$(parent)_TgtRank", row, CT_LABEL)
+            tgtRankLbl:SetAnchor(LEFT, curRankLbl, RIGHT, 6, 0)
+            tgtRankLbl:SetDimensions(128, 20)
+            tgtRankLbl:SetFont("ZoFontGameSmall")
+            tgtRankLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+            tgtRankLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            row.tgtRank = tgtRankLbl
 
-        local tgtRankLbl = wm:CreateControl("$(parent)_TgtRank", row, CT_LABEL)
-        tgtRankLbl:SetAnchor(LEFT, curRankLbl, RIGHT, 6, 0)
-        tgtRankLbl:SetDimensions(130, 20)
-        tgtRankLbl:SetFont("ZoFontGameSmall")
-        tgtRankLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-        tgtRankLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            local actLbl = wm:CreateControl("$(parent)_Act", row, CT_LABEL)
+            actLbl:SetAnchor(LEFT, tgtRankLbl, RIGHT, 6, 0)
+            actLbl:SetDimensions(94, 20)
+            actLbl:SetFont("ZoFontGameSmall")
+            actLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+            actLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            row.action = actLbl
 
-        local actLbl = wm:CreateControl("$(parent)_Act", row, CT_LABEL)
-        actLbl:SetAnchor(LEFT, tgtRankLbl, RIGHT, 6, 0)
-        actLbl:SetDimensions(95, 20)
-        actLbl:SetFont("ZoFontGameSmall")
-        actLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-        actLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            local salesLbl = wm:CreateControl("$(parent)_Sales", row, CT_LABEL)
+            salesLbl:SetAnchor(LEFT, actLbl, RIGHT, 6, 0)
+            salesLbl:SetDimensions(94, 20)
+            salesLbl:SetFont("ZoFontGameSmall")
+            salesLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+            salesLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            row.sales = salesLbl
 
-        local salesLbl = wm:CreateControl("$(parent)_Sales", row, CT_LABEL)
-        salesLbl:SetAnchor(LEFT, actLbl, RIGHT, 6, 0)
-        salesLbl:SetDimensions(95, 20)
-        salesLbl:SetFont("ZoFontGameSmall")
-        salesLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-        salesLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            local depLbl = wm:CreateControl("$(parent)_Dep", row, CT_LABEL)
+            depLbl:SetAnchor(LEFT, salesLbl, RIGHT, 6, 0)
+            depLbl:SetDimensions(90, 20)
+            depLbl:SetFont("ZoFontGameSmall")
+            depLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+            depLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            row.dep = depLbl
 
-        local depLbl = wm:CreateControl("$(parent)_Dep", row, CT_LABEL)
-        depLbl:SetAnchor(LEFT, salesLbl, RIGHT, 6, 0)
-        depLbl:SetDimensions(90, 20)
-        depLbl:SetFont("ZoFontGameSmall")
-        depLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-        depLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            local noteLbl = wm:CreateControl("$(parent)_Note", row, CT_LABEL)
+            noteLbl:SetAnchor(LEFT, depLbl, RIGHT, 6, 0)
+            noteLbl:SetAnchor(RIGHT, row, RIGHT, -8, 0)
+            noteLbl:SetHeight(20)
+            noteLbl:SetMaxLineCount(1)
+            noteLbl:SetFont("ZoFontGameSmall")
+            noteLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
+            noteLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
+            row.note = noteLbl
 
-        local noteLbl = wm:CreateControl("$(parent)_Note", row, CT_LABEL)
-        noteLbl:SetAnchor(LEFT, depLbl, RIGHT, 6, 0)
-        noteLbl:SetAnchor(RIGHT, row, RIGHT, -8, 0)
-        noteLbl:SetHeight(20)
-        noteLbl:SetMaxLineCount(1)
-        noteLbl:SetFont("ZoFontGameSmall")
-        noteLbl:SetVerticalAlignment(TEXT_ALIGN_CENTER)
-        noteLbl:SetWrapMode(TEXT_WRAP_MODE_ELLIPSIS)
-
-        row:SetHandler("OnMouseEnter", function(control)
-            control:SetCenterColor(0.10, 0.10, 0.16, 0.90)
-            control:SetEdgeColor(0.90, 0.70, 0.20, 0.85)
-            if control.memberData then
-                local m = control.memberData
-                InitializeTooltip(InformationTooltip, control, RIGHT, 5, 0)
-                InformationTooltip:AddLine(string.format("|c00FFCC%s|r", m.displayName), "ZoFontGameBold")
-                if m.guildName then
-                    InformationTooltip:AddLine(string.format("• Guild: |cFFD700%s|r", m.guildName), "ZoFontGameSmall")
+            row:SetHandler("OnMouseEnter", function(control)
+                if control.rowBg then
+                    control.rowBg:SetCenterColor(0.10, 0.10, 0.16, 0.90)
+                    control.rowBg:SetEdgeColor(0.90, 0.70, 0.20, 0.85)
                 end
-                InformationTooltip:AddLine(string.format("• Current Rank: |cFFFFFF%s|r (#%d)", m.currentRankName, m.currentRankIndex), "ZoFontGameSmall")
-                InformationTooltip:AddLine(string.format("• Target Rank: |c59E08A%s|r (#%d)", m.targetRankName, m.targetRankIndex), "ZoFontGameSmall")
-                InformationTooltip:AddLine(string.format("• Action: |c%s%s|r",
-                    m.action == "PROMOTE" and "59E08A" or (m.action == "DEMOTE" and "FF6666" or "888888"), m.action), "ZoFontGameSmall")
-                InformationTooltip:AddLine(string.format("• Sales: |cFFD700%s gold|r (%d sales in lookback)", ZO_LocalizeDecimalNumber(m.salesGold), m.salesCount), "ZoFontGameSmall")
-                InformationTooltip:AddLine(string.format("• Bank Dues / Deposits: |c59E08A%s gold|r", ZO_LocalizeDecimalNumber(m.donations)), "ZoFontGameSmall")
-                InformationTooltip:AddLine(string.format("• Assessment: |cE6C387%s|r", m.status or "--"), "ZoFontGameSmall")
-                if m.note and m.note ~= "" then
-                    InformationTooltip:AddLine(string.format("• Guild Note: |c888888%s|r", m.note), "ZoFontGameSmall")
+                if control.memberData then
+                    local m = control.memberData
+                    InitializeTooltip(InformationTooltip, control, RIGHT, 5, 0)
+                    InformationTooltip:AddLine(string.format("|c00FFCC%s|r", m.displayName), "ZoFontGameBold")
+                    if m.guildName then
+                        InformationTooltip:AddLine(string.format("• Guild: |cFFD700%s|r", m.guildName), "ZoFontGameSmall")
+                    end
+                    InformationTooltip:AddLine(string.format("• Current Rank: |cFFFFFF%s|r (#%d)", m.currentRankName, m.currentRankIndex), "ZoFontGameSmall")
+                    InformationTooltip:AddLine(string.format("• Target Rank: |c59E08A%s|r (#%d)", m.targetRankName, m.targetRankIndex), "ZoFontGameSmall")
+                    InformationTooltip:AddLine(string.format("• Action: |c%s%s|r",
+                        m.action == "PROMOTE" and "59E08A" or (m.action == "DEMOTE" and "FF6666" or "888888"), m.action), "ZoFontGameSmall")
+                    InformationTooltip:AddLine(string.format("• Sales: |cFFD700%s gold|r (%d sales in lookback)", ZO_LocalizeDecimalNumber(m.salesGold), m.salesCount), "ZoFontGameSmall")
+                    InformationTooltip:AddLine(string.format("• Bank Dues / Deposits: |c59E08A%s gold|r", ZO_LocalizeDecimalNumber(m.donations)), "ZoFontGameSmall")
+                    InformationTooltip:AddLine(string.format("• Assessment: |cE6C387%s|r", m.status or "--"), "ZoFontGameSmall")
+                    if m.note and m.note ~= "" then
+                        InformationTooltip:AddLine(string.format("• Guild Note: |c888888%s|r", m.note), "ZoFontGameSmall")
+                    end
                 end
-            end
-        end)
-        row:SetHandler("OnMouseExit", function(control)
-            local idx = control.rowIndex or 1
-            if idx % 2 == 0 then
-                control:SetCenterColor(0.04, 0.04, 0.06, 0.60)
-            else
-                control:SetCenterColor(0.03, 0.03, 0.04, 0.40)
-            end
-            control:SetEdgeColor(0.18, 0.16, 0.12, 0.40)
-            ClearTooltip(InformationTooltip)
-        end)
+            end)
+            row:SetHandler("OnMouseExit", function(control)
+                if control.rowBg then
+                    if (control.rowIndex or 1) % 2 == 0 then
+                        control.rowBg:SetCenterColor(0.065, 0.062, 0.085, 0.78)
+                    else
+                        control.rowBg:SetCenterColor(0.045, 0.045, 0.065, 0.70)
+                    end
+                    control.rowBg:SetEdgeColor(0.22, 0.18, 0.12, 0.42)
+                end
+                ClearTooltip(InformationTooltip)
+            end)
+        end,
+        function(row, item, idx)
+            if not item then return end
+            self:BindAutoRankRow(row, item, idx)
+        end
+    )
+    scrollList:SetAnchor(TOPLEFT, card, TOPLEFT, 10, 90)
+    scrollList:SetAnchor(BOTTOMRIGHT, card, BOTTOMRIGHT, -10, -34)
+    self.autoRanksScrollList = scrollList
 
-        self.autoRanksGridRows[r] = {
-            row = row,
-            check = checkBtn,
-            member = memberLbl,
-            curRank = curRankLbl,
-            tgtRank = tgtRankLbl,
-            action = actLbl,
-            sales = salesLbl,
-            dep = depLbl,
-            note = noteLbl,
-        }
-    end
-
-    -- 6. Footer & Pagination Controls
+    -- 6. Footer Status Bar
     local footerY = -8
     local footerStatLbl = wm:CreateControl("$(parent)_FooterStat", card, CT_LABEL)
     footerStatLbl:SetAnchor(BOTTOMLEFT, card, BOTTOMLEFT, 12, footerY)
     footerStatLbl:SetFont("ZoFontGameSmall")
-    footerStatLbl:SetText("Auto-Ranks: Ready  •  Scroll wheel to page")
+    footerStatLbl:SetText("Auto-Ranks: Ready  •  Mouse-wheel or drag brass scrollbar")
     self.autoRanksFooterLbl = footerStatLbl
 
-    local nextBtn = wm:CreateControl("$(parent)_NextBtn", card, CT_BUTTON)
-    nextBtn:SetAnchor(BOTTOMRIGHT, card, BOTTOMRIGHT, -12, footerY)
-    nextBtn:SetDimensions(65, 22)
-    nextBtn:SetFont("ZoFontGameSmall")
-    nextBtn:SetText("Next >")
-    self:StyleTactileButton(nextBtn, {
-        normalBg = { 0.06, 0.06, 0.09, 0.85 },
-        hoverBg = { 0.08, 0.16, 0.18, 0.95 },
-        normalEdge = { 0.25, 0.25, 0.30, 0.60 },
-        hoverEdge = { 0, 0.90, 0.80, 1.0 },
-    })
-    nextBtn:SetHandler("OnClicked", function()
-        local total = #self.autoRankFilteredResults
-        local maxPages = math.max(1, math.ceil(total / ROWS_PER_PAGE))
-        if self.autoRankCurrentPage < maxPages then
-            self.autoRankCurrentPage = self.autoRankCurrentPage + 1
-            self:RenderAutoRanksRows()
-        end
-    end)
-    self.autoRanksNextBtn = nextBtn
-
     local pageLbl = wm:CreateControl("$(parent)_PageLbl", card, CT_LABEL)
-    pageLbl:SetAnchor(RIGHT, nextBtn, LEFT, -8, 0)
+    pageLbl:SetAnchor(BOTTOMRIGHT, card, BOTTOMRIGHT, -14, footerY)
     pageLbl:SetFont("ZoFontGameSmall")
-    pageLbl:SetText("Page 1/1")
+    pageLbl:SetText("0 members")
     self.autoRanksPageLbl = pageLbl
-
-    local prevBtn = wm:CreateControl("$(parent)_PrevBtn", card, CT_BUTTON)
-    prevBtn:SetAnchor(RIGHT, pageLbl, LEFT, -8, 0)
-    prevBtn:SetDimensions(65, 22)
-    prevBtn:SetFont("ZoFontGameSmall")
-    prevBtn:SetText("< Prev")
-    self:StyleTactileButton(prevBtn, {
-        normalBg = { 0.06, 0.06, 0.09, 0.85 },
-        hoverBg = { 0.08, 0.16, 0.18, 0.95 },
-        normalEdge = { 0.25, 0.25, 0.30, 0.60 },
-        hoverEdge = { 0, 0.90, 0.80, 1.0 },
-    })
-    prevBtn:SetHandler("OnClicked", function()
-        if self.autoRankCurrentPage > 1 then
-            self.autoRankCurrentPage = self.autoRankCurrentPage - 1
-            self:RenderAutoRanksRows()
-        end
-    end)
-    self.autoRanksPrevBtn = prevBtn
 
     -- 7. Rank Dues Configuration Drawer Modal
     self:BuildRankConfigDrawer(card)
@@ -1864,6 +1822,7 @@ function FR:SetAutoRanksTableHidden(hidden)
     if self.autoRanksSummaryLbl then self.autoRanksSummaryLbl:SetHidden(hidden) end
     if self.autoRanksControlRow then self.autoRanksControlRow:SetHidden(hidden) end
     if self.autoRanksHeaderRow then self.autoRanksHeaderRow:SetHidden(hidden) end
+    if self.autoRanksScrollList then self.autoRanksScrollList:SetHidden(hidden) end
     if self.autoRanksGridRows then
         for _, r in ipairs(self.autoRanksGridRows) do
             if r.row then r.row:SetHidden(hidden) end
@@ -2234,7 +2193,7 @@ function FR:UpdateAutoRanksFilterButtons()
     end
 end
 
-function FR:RefreshAutoRanksGrid()
+function FR:RefreshAutoRanksGrid(keepScrollPos)
     local filter = self.autoRankFilter or "all"
     local filtered = {}
 
@@ -2290,106 +2249,87 @@ function FR:RefreshAutoRanksGrid()
         self.autoRanksApplyBtn:SetEnabled(pending > 0)
     end
 
-    self:RenderAutoRanksRows()
+    self:RenderAutoRanksRows(keepScrollPos)
 end
 
-function FR:RenderAutoRanksRows()
+function FR:BindAutoRankRow(row, item, idx)
+    row.rowIndex = idx
+    row.memberData = item
+
+    if item.action == "KEEP" or item.isExempt then
+        row.check:SetHidden(true)
+    else
+        row.check:SetHidden(false)
+        row.check:SetText(item.selected and "|c00FFCC[X]|r" or "|c555555[ ]|r")
+        row.check:SetHandler("OnClicked", function()
+            item.selected = not item.selected
+            self:RefreshAutoRanksGrid(true)
+        end)
+    end
+
+    if self.selectedGuildIndex == 0 and item.guildShortTag then
+        row.member:SetText(string.format("|c%s[%s]|r |cFFFFFF%s|r", item.guildBadgeColor or "FFD700", item.guildShortTag, item.displayName))
+    else
+        row.member:SetText(string.format("|cFFFFFF%s|r", item.displayName))
+    end
+    row.curRank:SetText(string.format("|cCCCCCC%s|r", item.currentRankName))
+
+    local tgtColor = (item.action == "PROMOTE" and "|t14:14:EsoUI/Art/Buttons/pointsplus_up.dds|t |c59E08A")
+        or (item.action == "DEMOTE" and "|t14:14:EsoUI/Art/Buttons/pointsplus_down.dds|t |cFF6666")
+        or "|c888888"
+    row.tgtRank:SetText(string.format("%s%s|r", tgtColor, item.targetRankName))
+
+    local actBadge = "|c888888KEPT|r"
+    if item.isExempt then
+        actBadge = "|t14:14:EsoUI/Art/Campaign/overview_guildOwner_icon.dds|t |c00FFCCEXEMPT|r"
+    elseif item.action == "PROMOTE" then
+        actBadge = "|t14:14:EsoUI/Art/Buttons/pointsplus_up.dds|t |c59E08APROMOTE|r"
+    elseif item.action == "DEMOTE" then
+        actBadge = "|t14:14:EsoUI/Art/Buttons/pointsplus_down.dds|t |cFF6666DEMOTE|r"
+    end
+    row.action:SetText(actBadge)
+
+    row.sales:SetText(item.salesGold > 0 and string.format("|cFFD700%sg|r", ZO_LocalizeDecimalNumber(item.salesGold)) or "|c555555--|r")
+    row.dep:SetText(item.donations > 0 and string.format("|c59E08A%sg|r", ZO_LocalizeDecimalNumber(item.donations)) or "|c555555--|r")
+
+    local rawStatus = item.status or ""
+    local compactStatus = "|c888888Base Rank|r"
+    if item.isExempt then
+        compactStatus = "|cE6C387Shielded|r"
+    elseif string.find(rawStatus, "Probation") then
+        compactStatus = "|c00FFCCProbation|r"
+    elseif string.find(rawStatus, "Qualified") then
+        if item.salesGold > 0 and item.donations > 0 then
+            compactStatus = "|c59E08AMet (Sales & Dues)|r"
+        elseif item.salesGold > 0 then
+            compactStatus = "|cFFD700Met (Sales)|r"
+        else
+            compactStatus = "|c59E08AMet (Dues)|r"
+        end
+    elseif string.find(rawStatus, "Missing") or string.find(rawStatus, "Demote") or item.action == "DEMOTE" then
+        compactStatus = "|cFF6666Missing Dues|r"
+    elseif item.action == "PROMOTE" then
+        compactStatus = "|c59E08APromotion Target|r"
+    elseif rawStatus ~= "" then
+        compactStatus = string.format("|c999999%s|r", rawStatus)
+    end
+    row.note:SetText(compactStatus)
+end
+
+function FR:RenderAutoRanksRows(keepScrollPos)
     local list = self.autoRankFilteredResults or {}
     local total = #list
-    local maxPages = math.max(1, math.ceil(total / ROWS_PER_PAGE))
-    if self.autoRankCurrentPage > maxPages then self.autoRankCurrentPage = maxPages end
-    if self.autoRankCurrentPage < 1 then self.autoRankCurrentPage = 1 end
 
-    local startIndex = (self.autoRankCurrentPage - 1) * ROWS_PER_PAGE
-
-    for r = 1, ROWS_PER_PAGE do
-        local rCtrl = self.autoRanksGridRows[r]
-        local itemIndex = startIndex + r
-        local item = list[itemIndex]
-
-        if rCtrl then
-            rCtrl.row.rowIndex = r
-            if item then
-                rCtrl.row:SetHidden(false)
-                rCtrl.row.memberData = item
-
-                if r % 2 == 0 then
-                    rCtrl.row:SetCenterColor(0.04, 0.04, 0.06, 0.60)
-                else
-                    rCtrl.row:SetCenterColor(0.03, 0.03, 0.04, 0.40)
-                end
-
-                if item.action == "KEEP" or item.isExempt then
-                    rCtrl.check:SetHidden(true)
-                else
-                    rCtrl.check:SetHidden(false)
-                    rCtrl.check:SetText(item.selected and "|c00FFCC[X]|r" or "|c555555[ ]|r")
-                    rCtrl.check:SetHandler("OnClicked", function()
-                        item.selected = not item.selected
-                        self:RefreshAutoRanksGrid()
-                    end)
-                end
-
-                if self.selectedGuildIndex == 0 and item.guildShortTag then
-                    rCtrl.member:SetText(string.format("|c%s[%s]|r |cFFFFFF%s|r", item.guildBadgeColor or "FFD700", item.guildShortTag, item.displayName))
-                else
-                    rCtrl.member:SetText(string.format("|cFFFFFF%s|r", item.displayName))
-                end
-                rCtrl.curRank:SetText(string.format("|cCCCCCC%s|r", item.currentRankName))
-
-                local tgtColor = (item.action == "PROMOTE" and "|t14:14:EsoUI/Art/Buttons/pointsplus_up.dds|t |c59E08A")
-                    or (item.action == "DEMOTE" and "|t14:14:EsoUI/Art/Buttons/pointsplus_down.dds|t |cFF6666")
-                    or "|c888888"
-                rCtrl.tgtRank:SetText(string.format("%s%s|r", tgtColor, item.targetRankName))
-
-                local actBadge = "|c888888KEPT|r"
-                if item.isExempt then
-                    actBadge = "|t14:14:EsoUI/Art/Campaign/overview_guildOwner_icon.dds|t |c00FFCCEXEMPT|r"
-                elseif item.action == "PROMOTE" then
-                    actBadge = "|t14:14:EsoUI/Art/Buttons/pointsplus_up.dds|t |c59E08APROMOTE|r"
-                elseif item.action == "DEMOTE" then
-                    actBadge = "|t14:14:EsoUI/Art/Buttons/pointsplus_down.dds|t |cFF6666DEMOTE|r"
-                end
-                rCtrl.action:SetText(actBadge)
-
-                rCtrl.sales:SetText(item.salesGold > 0 and string.format("|cFFD700%sg|r", ZO_LocalizeDecimalNumber(item.salesGold)) or "|c555555--|r")
-                rCtrl.dep:SetText(item.donations > 0 and string.format("|c59E08A%sg|r", ZO_LocalizeDecimalNumber(item.donations)) or "|c555555--|r")
-
-                local rawStatus = item.status or ""
-                local compactStatus = "|c888888Base Rank|r"
-                if item.isExempt then
-                    compactStatus = "|cE6C387Shielded|r"
-                elseif string.find(rawStatus, "Probation") then
-                    compactStatus = "|c00FFCCProbation|r"
-                elseif string.find(rawStatus, "Qualified") then
-                    if item.salesGold > 0 and item.donations > 0 then
-                        compactStatus = "|c59E08AMet (Sales & Dues)|r"
-                    elseif item.salesGold > 0 then
-                        compactStatus = "|cFFD700Met (Sales)|r"
-                    else
-                        compactStatus = "|c59E08AMet (Dues)|r"
-                    end
-                elseif string.find(rawStatus, "Missing") or string.find(rawStatus, "Demote") or item.action == "DEMOTE" then
-                    compactStatus = "|cFF6666Missing Dues|r"
-                elseif item.action == "PROMOTE" then
-                    compactStatus = "|c59E08APromotion Target|r"
-                elseif rawStatus ~= "" then
-                    compactStatus = string.format("|c999999%s|r", rawStatus)
-                end
-                rCtrl.note:SetText(compactStatus)
-            else
-                rCtrl.row:SetHidden(true)
-                rCtrl.row.memberData = nil
-            end
-        end
+    if self.autoRanksScrollList and self.CommitBrassScrollList then
+        self:CommitBrassScrollList(self.autoRanksScrollList, list, keepScrollPos == true)
     end
 
     if self.autoRanksPageLbl then
-        self.autoRanksPageLbl:SetText(string.format("Page %d/%d (%d members)", self.autoRankCurrentPage, maxPages, total))
+        self.autoRanksPageLbl:SetText(string.format("|cE6C387%d|r |c888888members|r", total))
     end
 
     if self.autoRanksFooterLbl then
-        self.autoRanksFooterLbl:SetText(string.format("Roster: %d members  •  Scroll wheel to page", total))
+        self.autoRanksFooterLbl:SetText(string.format("Roster: %d members  •  Mouse-wheel or drag brass scrollbar", total))
     end
 end
 

@@ -1,8 +1,6 @@
 using System;
 using System.Collections.Generic;
-using System.IO;
 using System.Text;
-using System.Text.RegularExpressions;
 
 namespace RedfurSync;
 
@@ -41,24 +39,6 @@ public sealed record InactivityAudit
 
 public static class KioskReconScanner
 {
-    private static readonly Regex KioskBlockRegex = new(
-        @"\[""([^""]+)""\]\s*=\s*\{([^}]+)\}",
-        RegexOptions.Compiled | RegexOptions.CultureInvariant);
-
-    // Per-key regex cache so inner patterns are JIT-compiled once per unique key name.
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Regex> _stringPatternCache = new();
-    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Regex> _integerPatternCache = new();
-
-    private static Regex GetStringPattern(string key) =>
-        _stringPatternCache.GetOrAdd(key, k => new Regex(
-            $@"\[""{k}""\]\s*=\s*""([^""]*)""",
-            RegexOptions.Compiled | RegexOptions.CultureInvariant));
-
-    private static Regex GetIntegerPattern(string key) =>
-        _integerPatternCache.GetOrAdd(key, k => new Regex(
-            $@"\[""{k}""\]\s*=\s*(\d+)",
-            RegexOptions.Compiled | RegexOptions.CultureInvariant));
-
     public static List<KioskObservation> ReadKiosks(string filePath)
     {
         return LuaStreamingReader.ReadKioskObservations(filePath);
@@ -67,6 +47,11 @@ public static class KioskReconScanner
     public static Dictionary<int, string> ReadKnownTradingGuilds(string filePath)
     {
         return LuaStreamingReader.ReadKnownTradingGuilds(filePath);
+    }
+
+    public static (List<KioskObservation> Kiosks, Dictionary<int, string> KnownGuilds) ReadKiosksAndKnownGuilds(string filePath)
+    {
+        return LuaStreamingReader.ReadKiosksAndKnownGuilds(filePath);
     }
 
     public static string ExportInactivesCsv(InactivityAudit audit)

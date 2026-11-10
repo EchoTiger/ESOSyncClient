@@ -240,12 +240,25 @@ public sealed class AddonInstallerServiceTests
         Assert.True(success);
         Assert.Contains("installed successfully", msg);
 
-        var manifestPath = Path.Combine(liveDir, "AddOns", "FissalRelay", "FissalRelay.txt");
+        var addonDir = Path.Combine(liveDir, "AddOns", "FissalRelay");
+        var manifestPath = Path.Combine(addonDir, "FissalRelay.txt");
+        var modernManifestPath = Path.Combine(addonDir, "FissalRelay.addon");
+        var templatesXmlPath = Path.Combine(addonDir, "FissalRelay_Templates.xml");
+        var bindingsXmlPath = Path.Combine(addonDir, "Bindings.xml");
+
         Assert.True(File.Exists(manifestPath));
+        Assert.True(File.Exists(modernManifestPath));
+        Assert.True(File.Exists(templatesXmlPath));
+        Assert.True(File.Exists(bindingsXmlPath));
+        Assert.Contains("FissalRelay_ScrollRowTemplate", File.ReadAllText(templatesXmlPath));
+        Assert.Contains("FISSAL_TOGGLE_CONSOLE", File.ReadAllText(bindingsXmlPath));
 
         var (ver, code) = AddonInstallerService.ParseManifestVersion(File.ReadAllText(manifestPath));
         Assert.Equal(AddonInstallerService.LatestAddonVersion, ver);
         Assert.Equal(AddonInstallerService.LatestAddonVersionCode, code);
+
+        var status = AddonInstallerService.CheckAddonInstallStatus(liveDir);
+        Assert.Equal(AddonInstallState.UpToDate, status.State);
     }
 
     [Fact]
@@ -267,7 +280,7 @@ public sealed class AddonInstallerServiceTests
     {
         try
         {
-            var jsonResponse = "{\"addonVersion\":\"1.9.6\",\"addonUrl\":\"https://redfur.ech-o.net/api/relay/v1/download-addon\"}";
+            var jsonResponse = "{\"addonVersion\":\"1.9.9\",\"addonUrl\":\"https://redfur.ech-o.net/api/relay/v1/download-addon\"}";
             var handler = new FakeHttpMessageHandler((req, _) =>
             {
                 Assert.Equal("https://redfur.ech-o.net/api/relay/v1/download", req.RequestUri?.ToString());
@@ -281,7 +294,7 @@ public sealed class AddonInstallerServiceTests
             var ok = await AddonInstallerService.CheckRemoteAddonVersionAsync("https://redfur.ech-o.net/upload", client);
 
             Assert.True(ok);
-            Assert.Equal("1.9.6", AddonInstallerService.ActiveLatestAddonVersion);
+            Assert.Equal("1.9.9", AddonInstallerService.ActiveLatestAddonVersion);
             Assert.Equal("https://redfur.ech-o.net/api/relay/v1/download-addon", AddonInstallerService.RemoteAddonDownloadUrl);
         }
         finally

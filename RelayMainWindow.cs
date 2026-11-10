@@ -94,14 +94,6 @@ namespace RedfurSync
 
     public sealed class RelayMainWindow : Form
     {
-        private static void TraceLog(string msg)
-        {
-            try {
-                var p = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "debug.log");
-                File.AppendAllText(p, $"[{DateTime.Now:HH:mm:ss.fff}] [MainWindow] {msg}\n");
-            } catch {}
-        }
-
         [DllImport("user32.dll")] private static extern bool ReleaseCapture();
         [DllImport("user32.dll")] private static extern IntPtr SendMessage(IntPtr hWnd, int msg, int wParam, int lParam);
         private const int WM_VSCROLL = 0x0115;
@@ -110,7 +102,11 @@ namespace RedfurSync
 
         private readonly FileWatcherService _watcher;
         private readonly Action<UploadJob> _applyUpdateAction;
+        private readonly Action? _requestCompactWindow;
+        private readonly Action<bool>? _notifyStartupChanged;
+        private readonly Action<bool>? _notifySilentSyncChanged;
         private float _scale = 1f;
+        private ToolTip? _winToolTip;
 
         // Top-level layout
         private DoubleBufferedTableLayoutPanel _rootLayout = null!;
@@ -141,6 +137,14 @@ namespace RedfurSync
         private DoubleBufferedPanel? _navBadgePanel;
         private Font? _navFontRegular;
         private Font? _navFontBold;
+        private Font? _headerTitleFont;
+        private Font? _headerSubFont;
+        private Font? _microDispFont;
+        private Font? _badgeTitleFont;
+        private Font? _badgeSubFont;
+        private Font? _badgeStatusFont;
+        private System.Collections.Immutable.ImmutableArray<UploadJob> _cachedPaintJobs = System.Collections.Immutable.ImmutableArray<UploadJob>.Empty;
+        private bool _cachedHasActiveUpload = false;
         private float _lastAppliedTextScale = 1f;
         private readonly Dictionary<Control, (FontFamily family, float basePxAt1x, FontStyle style)> _baseControlFonts = new();
 
@@ -161,6 +165,18 @@ namespace RedfurSync
         private Label _syncStateBadge = null!;
         private Button _btnRefreshJobs = null!;
         private Button _btnClearCompleted = null!;
+        private Button _btnToggleLog = null!;
+        private DoubleBufferedTableLayoutPanel _syncMainLayout = null!;
+        private DoubleBufferedPanel _telemetrySlate = null!;
+        private bool _isLogCollapsed = false;
+        private Panel _syncReadinessBanner = null!;
+        private Label _lblSyncReadinessText = null!;
+        private Button _btnSyncReadinessAction = null!;
+        private bool _readinessDismissed = false;
+        private string _readinessActionMode = "";
+        private DateTime _lastReadinessCheckUtc = DateTime.MinValue;
+        private string _cachedAddonMetricsPart = "Addon: Checking...";
+        private string _cachedIdleMetricsText = "● Last Sync: Never (awaiting /reloadui)  •  Watching: FissalRelay.lua";
         private RichTextBox _syncLogBox = null!;
         private DoubleBufferedPanel? _oscilloscopePanel;
         private readonly Dictionary<UploadJob, UploadStatus> _loggedJobStates = new();
@@ -296,8 +312,10 @@ namespace RedfurSync
         private TextBox _txtServerUrl = null!;
         private Label _lblPairingStatus = null!;
         private Label _lblDeviceInfo = null!;
-        private Button _btnSilentSync = null!;
-        private Button _btnSyncMm = null!;
+        private DwemerToggleControl _tglRunOnStartup = null!;
+        private DwemerToggleControl _tglSilentSync = null!;
+        private DwemerToggleControl _tglSyncMm = null!;
+        private bool _suppressPrefToggleEvents = false;
         private Button _btnPairDevice = null!;
         private Button _btnSaveSetup = null!;
         private Button _btnTestConnection = null!;
@@ -317,13 +335,22 @@ namespace RedfurSync
         private Button _btnOpenConfigFile = null!;
         private Button _btnRestartWatcher = null!;
 
-        public RelayMainWindow(FileWatcherService watcher, Action<UploadJob> applyUpdateAction)
+        public RelayMainWindow(
+            FileWatcherService watcher,
+            Action<UploadJob> applyUpdateAction,
+            Action? requestCompactWindow = null,
+            Action<bool>? notifyStartupChanged = null,
+            Action<bool>? notifySilentSyncChanged = null)
         {
             _watcher = watcher;
             _applyUpdateAction = applyUpdateAction;
+            _requestCompactWindow = requestCompactWindow;
+            _notifyStartupChanged = notifyStartupChanged;
+            _notifySilentSyncChanged = notifySilentSyncChanged;
             _syncContext = SynchronizationContext.Current;
             _syncCoalesceTimer = new System.Threading.Timer(OnSyncCoalesceTick, null, Timeout.Infinite, Timeout.Infinite);
             _lastAppliedTextScale = FissalTheme.GlobalTextScale;
+            _winToolTip = new ToolTip { InitialDelay = 250, ReshowDelay = 100, ShowAlways = true };
 
             SetStyle(ControlStyles.AllPaintingInWmPaint |
                      ControlStyles.UserPaint |
@@ -379,18 +406,14 @@ namespace RedfurSync
             SuspendLayout();
             try
             {
-                TraceLog("BuildShell starting");
                 BuildShell();
-                TraceLog("BuildViewPanels starting");
                 BuildViewPanels();
-                TraceLog("SwitchTab starting");
                 SwitchTab("sync");
             }
             finally
             {
                 ResumeLayout(true);
             }
-            TraceLog("ctor finished");
 
             _watcher.JobsChanged += OnWatcherJobsChanged;
             _watcher.ConnectionChecked += OnWatcherConnectionChecked;
@@ -398,17 +421,10 @@ namespace RedfurSync
 
             Shown += (_, _) =>
             {
-                TraceLog("Shown: RefreshAllViews");
                 RefreshAllViews();
-                TraceLog("Shown: SeedInitialTelemetry");
                 SeedInitialTelemetry();
-                TraceLog("Shown: ApplyDarkModeScrollbars");
                 ApplyDarkModeScrollbars();
-                TraceLog("Shown: all done");
-                if (AppConfig.Instance.CompactMode)
-                {
-                    ToggleCompactMode();
-                }
+                UpdateIdleTimerInterval();
             };
 
             FormClosing += (s, e) =>
@@ -421,6 +437,73 @@ namespace RedfurSync
             };
         }
 
+        private void RebuildCachedPaintFonts()
+        {
+            var oldHTitle = _headerTitleFont;
+            var oldHSub = _headerSubFont;
+            var oldMicro = _microDispFont;
+            var oldBTitle = _badgeTitleFont;
+            var oldBSub = _badgeSubFont;
+            var oldBStatus = _badgeStatusFont;
+
+            _headerTitleFont = Title(12f, _scale, FontStyle.Bold);
+            _headerSubFont = Mono(7.2f, _scale, FontStyle.Bold);
+            _microDispFont = Mono(8.2f, _scale, FontStyle.Bold);
+            _badgeTitleFont = Mono(8f, _scale, FontStyle.Bold);
+            _badgeSubFont = Mono(7f, _scale, FontStyle.Regular);
+            _badgeStatusFont = Mono(7f, _scale, FontStyle.Bold);
+
+            oldHTitle?.Dispose();
+            oldHSub?.Dispose();
+            oldMicro?.Dispose();
+            oldBTitle?.Dispose();
+            oldBSub?.Dispose();
+            oldBStatus?.Dispose();
+        }
+
+        public void UpdateIdleTimerInterval()
+        {
+            if (_animTimer == null || IsDisposed) return;
+
+            bool shouldRun = Visible && WindowState != FormWindowState.Minimized;
+            if (!shouldRun)
+            {
+                if (_animTimer.Enabled) _animTimer.Stop();
+                return;
+            }
+
+            int targetMs = _cachedHasActiveUpload
+                ? 100
+                : UploadProgressForm.AppConfig.CurrentMode switch
+                {
+                    FidelityMode.High => 500,
+                    FidelityMode.Low => 2000,
+                    _ => 1000,
+                };
+
+            if (_animTimer.Interval != targetMs)
+                _animTimer.Interval = targetMs;
+
+            if (!_animTimer.Enabled)
+                _animTimer.Start();
+        }
+
+        protected override void OnVisibleChanged(EventArgs e)
+        {
+            base.OnVisibleChanged(e);
+            UpdateIdleTimerInterval();
+            if (Visible && WindowState != FormWindowState.Minimized && _lastRenderedJobVersion != _watcher.CurrentJobVersion)
+            {
+                RefreshSyncView();
+            }
+        }
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            UpdateIdleTimerInterval();
+        }
+
         protected override void Dispose(bool disposing)
         {
             if (disposing)
@@ -428,8 +511,15 @@ namespace RedfurSync
                 _syncCoalesceTimer?.Dispose();
                 _animTimer?.Stop();
                 _animTimer?.Dispose();
+                _winToolTip?.Dispose();
                 _navFontRegular?.Dispose();
                 _navFontBold?.Dispose();
+                _headerTitleFont?.Dispose();
+                _headerSubFont?.Dispose();
+                _microDispFont?.Dispose();
+                _badgeTitleFont?.Dispose();
+                _badgeSubFont?.Dispose();
+                _badgeStatusFont?.Dispose();
                 _watcher.JobsChanged -= OnWatcherJobsChanged;
                 _watcher.ConnectionChecked -= OnWatcherConnectionChecked;
                 FissalTheme.ThemeChanged -= OnGlobalThemeChanged;
@@ -444,13 +534,10 @@ namespace RedfurSync
                 BeginInvoke(() => NavigateToTab(tabId));
                 return;
             }
-            TraceLog("NavigateToTab: SwitchTab before Show()");
             SwitchTab(tabId);
             if (!Visible)
             {
-                TraceLog("NavigateToTab: Show()");
                 Show();
-                TraceLog("NavigateToTab: Show() returned");
             }
             if (tabId == "sync" && _lastRenderedJobVersion != _watcher.CurrentJobVersion)
             {
@@ -508,6 +595,7 @@ namespace RedfurSync
 
         private void BuildShell()
         {
+            RebuildCachedPaintFonts();
             _rootLayout = new DoubleBufferedTableLayoutPanel
             {
                 Dock = DockStyle.Fill,
@@ -624,7 +712,7 @@ namespace RedfurSync
 
                 using (var outerGlow = new SolidBrush(Color.FromArgb((int)(Math.Sin(_shimmer * 0.4f) * 35 + 65), neonColor)))
                 {
-                    using var fTitle = Title(12f, _scale, FontStyle.Bold);
+                    var fTitle = _headerTitleFont ?? Title(12f, _scale, FontStyle.Bold);
                     g.DrawString("Fissal Relay", fTitle, outerGlow, titleX - 1, titleY - 1);
                     g.DrawString("Fissal Relay", fTitle, outerGlow, titleX + 1, titleY + 1);
                     g.DrawString("Fissal Relay", fTitle, outerGlow, titleX + 1, titleY - 1);
@@ -639,7 +727,7 @@ namespace RedfurSync
                 float subX = titleX;
                 float subY = titleY + (int)(22 * _scale);
                 string subText = $"Masser Matrix v{RelayVersion.Current} • [{Current.DisplayName.ToUpperInvariant()}]";
-                using var fSub = Mono(7.2f, _scale, FontStyle.Bold);
+                var fSub = _headerSubFont ?? Mono(7.2f, _scale, FontStyle.Bold);
 
                 // 3D Indent shadow
                 using (var subShadow = new SolidBrush(Color.FromArgb(255, 20, 10, 0)))
@@ -708,7 +796,7 @@ namespace RedfurSync
                 string errorFile = "";
                 bool hasError = false, hasReadyUpdate = false;
 
-                var safeJobs = _watcher.GetJobsSnapshot();
+                var safeJobs = _cachedPaintJobs;
 
                 foreach (var j in safeJobs)
                 {
@@ -831,7 +919,7 @@ namespace RedfurSync
                 var gState = g.Save();
                 g.SetClip(textClip);
 
-                using var textFont = Mono(8.2f, _scale, FontStyle.Bold);
+                var textFont = _microDispFont ?? Mono(8.2f, _scale, FontStyle.Bold);
                 var textSz = g.MeasureString(displayBadge, textFont);
                 float drawX = (int)(12 * _scale);
                 float drawY = (h - textSz.Height) / 2f;
@@ -876,7 +964,7 @@ namespace RedfurSync
             };
             rightDeck.MouseDown += OnTitleBarMouseDown;
 
-            Control MakeCircularWinBtn(Func<string> getSymbol, Color capColor, Action onClick)
+            Control MakeCircularWinBtn(Func<string> getSymbol, Color capColor, string tooltip, Action onClick)
             {
                 int btnSize = (int)(26 * _scale);
                 bool isHover = false;
@@ -889,6 +977,7 @@ namespace RedfurSync
                     Margin = new Padding((int)(5 * _scale), 0, 0, 0),
                     BackColor = Color.Transparent,
                 };
+                _winToolTip?.SetToolTip(btn, tooltip);
                 btn.MouseEnter += (_, _) => { isHover = true; btn.Invalidate(); };
                 btn.MouseLeave += (_, _) => { isHover = false; isPressed = false; btn.Invalidate(); };
                 btn.MouseDown += (s, e) => { if (e.Button == MouseButtons.Left) { isPressed = true; btn.Invalidate(); } };
@@ -901,10 +990,10 @@ namespace RedfurSync
                 return btn;
             }
 
-            rightDeck.Controls.Add(MakeCircularWinBtn(() => "✕", Color.FromArgb(195, 38, 38), () => Hide()));
-            rightDeck.Controls.Add(MakeCircularWinBtn(() => "□", Color.FromArgb(68, 56, 40), () => WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized));
-            rightDeck.Controls.Add(MakeCircularWinBtn(() => "—", Color.FromArgb(68, 56, 40), () => WindowState = FormWindowState.Minimized));
-            _compactToggleBtn = MakeCircularWinBtn(() => _isCompactMode ? "◰" : "◱", Color.FromArgb(68, 56, 40), ToggleCompactMode);
+            rightDeck.Controls.Add(MakeCircularWinBtn(() => "✕", Color.FromArgb(195, 38, 38), "Hide to System Tray", () => Hide()));
+            rightDeck.Controls.Add(MakeCircularWinBtn(() => "□", Color.FromArgb(68, 56, 40), "Maximize / Restore", () => WindowState = WindowState == FormWindowState.Maximized ? FormWindowState.Normal : FormWindowState.Maximized));
+            rightDeck.Controls.Add(MakeCircularWinBtn(() => "—", Color.FromArgb(68, 56, 40), "Minimize", () => WindowState = FormWindowState.Minimized));
+            _compactToggleBtn = MakeCircularWinBtn(() => _isCompactMode ? "◰" : "◱", Color.FromArgb(68, 56, 40), "Switch to Compact Upload HUD", ToggleCompactMode);
             rightDeck.Controls.Add(_compactToggleBtn);
 
             _headerConsole.Controls.Add(rightDeck, 2, 0);
@@ -1000,11 +1089,11 @@ namespace RedfurSync
 
                 DrawDivider(g, (int)(6 * _scale), w - (int)(6 * _scale), 2, CBorderSub, CGoldBrt);
 
-                using var f1 = Mono(8f, _scale, FontStyle.Bold);
+                var f1 = _badgeTitleFont ?? Mono(8f, _scale, FontStyle.Bold);
                 using var b1 = new SolidBrush(CGoldBrt);
                 g.DrawString("REDFUR SYNC", f1, b1, (int)(8 * _scale), (int)(8 * _scale));
 
-                using var f2 = Mono(7f, _scale, FontStyle.Regular);
+                var f2 = _badgeSubFont ?? Mono(7f, _scale, FontStyle.Regular);
                 using var b2 = new SolidBrush(CTextSub);
                 g.DrawString($"v{RelayVersion.Current} • WIN-X64", f2, b2, (int)(8 * _scale), (int)(24 * _scale));
 
@@ -1013,7 +1102,7 @@ namespace RedfurSync
                 string badgeStatus = isAnon ? "● ANON (BANK)" : (!isPaired ? "● UNPAIRED" : (_isConnected ? "● ONLINE" : "● OFFLINE"));
                 Color badgeCol = (isAnon || !isPaired) ? CWarn : (_isConnected ? CGreen : CBarFail);
 
-                using var f3 = Mono(7f, _scale, FontStyle.Bold);
+                var f3 = _badgeStatusFont ?? Mono(7f, _scale, FontStyle.Bold);
                 using var b3 = new SolidBrush(badgeCol);
                 g.DrawString(badgeStatus, f3, b3, (int)(8 * _scale), (int)(40 * _scale));
 
@@ -1211,18 +1300,89 @@ namespace RedfurSync
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 3,
+                RowCount = 4,
                 BackColor = Color.Transparent,
             };
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, (int)(44 * _scale))); // Top status ribbon (comfortably padded)
-            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 45));                  // Active transmissions deck
-            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 55));                  // Live Tonal Telemetry Slate
+            layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));                      // Row 0: Inline Quick Readiness Strip (when actionable)
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, (int)(44 * _scale))); // Row 1: Top status ribbon
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 62f));                 // Row 2: Active transmissions & session cards (62%)
+            layout.RowStyles.Add(new RowStyle(SizeType.Percent, 38f));                 // Row 3: Collapsible Live Tonal Telemetry Slate (38%)
+            _syncMainLayout = layout;
 
-            // Top Header Bar
+            // Row 0: Inline Quick Readiness Strip (dismissible, hidden when everything is healthy)
+            _syncReadinessBanner = new DoubleBufferedPanel
+            {
+                Dock = DockStyle.Top,
+                AutoSize = true,
+                Visible = false,
+                BackColor = CPanelBgAlt,
+                Margin = new Padding(0, 0, 0, (int)(4 * _scale)),
+                Padding = new Padding((int)(10 * _scale), (int)(5 * _scale), (int)(8 * _scale), (int)(5 * _scale)),
+                Tag = "semantic-readiness",
+            };
+            _syncReadinessBanner.Paint += (s, e) =>
+            {
+                using var p = new Pen(Color.FromArgb(140, CGoldMid), 1f);
+                e.Graphics.DrawRectangle(p, 0, 0, _syncReadinessBanner.Width - 1, _syncReadinessBanner.Height - 1);
+            };
+
+            var readinessRow = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 3,
+                RowCount = 1,
+                AutoSize = true,
+                BackColor = Color.Transparent,
+                Margin = new Padding(0),
+            };
+            readinessRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            readinessRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            readinessRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+            _lblSyncReadinessText = new Label
+            {
+                Text = "",
+                ForeColor = CGoldBrt,
+                Font = Mono(8f, _scale, FontStyle.Bold),
+                AutoSize = true,
+                Anchor = AnchorStyles.Left,
+                Margin = new Padding(0, 0, (int)(8 * _scale), 0),
+                Tag = "semantic-readiness-lbl",
+            };
+            readinessRow.Controls.Add(_lblSyncReadinessText, 0, 0);
+
+            _btnSyncReadinessAction = MakeStyledButton("Action", CGoldBrt);
+            _btnSyncReadinessAction.Height = (int)(26 * _scale);
+            _btnSyncReadinessAction.Margin = new Padding(0, 0, (int)(6 * _scale), 0);
+            _btnSyncReadinessAction.Click += async (_, _) => await ExecuteReadinessActionAsync();
+            readinessRow.Controls.Add(_btnSyncReadinessAction, 1, 0);
+
+            var btnDismissReadiness = new Label
+            {
+                Text = "✕",
+                ForeColor = CTextSub,
+                Font = Mono(8.5f, _scale, FontStyle.Bold),
+                Cursor = Cursors.Hand,
+                AutoSize = true,
+                Anchor = AnchorStyles.Right,
+                Padding = new Padding((int)(4 * _scale), (int)(2 * _scale), (int)(4 * _scale), (int)(2 * _scale)),
+                Tag = "semantic-readiness-close",
+            };
+            _winToolTip?.SetToolTip(btnDismissReadiness, "Dismiss notice for this session");
+            btnDismissReadiness.Click += (_, _) =>
+            {
+                _readinessDismissed = true;
+                _syncReadinessBanner.Visible = false;
+            };
+            readinessRow.Controls.Add(btnDismissReadiness, 2, 0);
+            _syncReadinessBanner.Controls.Add(readinessRow);
+            layout.Controls.Add(_syncReadinessBanner, 0, 0);
+
+            // Row 1: Top Header Bar
             var topBar = new DoubleBufferedTableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 4,
+                ColumnCount = 5,
                 RowCount = 1,
                 BackColor = CPanelBg,
                 Padding = new Padding((int)(10 * _scale), (int)(4 * _scale), (int)(10 * _scale), (int)(4 * _scale)),
@@ -1231,6 +1391,7 @@ namespace RedfurSync
             topBar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); // Summary
             topBar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // Refresh
             topBar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // Clear
+            topBar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); // Hide/Show Log
             topBar.Paint += (s, e) =>
             {
                 var g = e.Graphics;
@@ -1306,7 +1467,13 @@ namespace RedfurSync
             };
             topBar.Controls.Add(_btnClearCompleted, 3, 0);
 
-            layout.Controls.Add(topBar, 0, 0);
+            _btnToggleLog = MakeStyledButton("▾ Hide Log", CTextSub);
+            _btnToggleLog.Height = (int)(28 * _scale);
+            _btnToggleLog.Margin = new Padding((int)(4 * _scale), 0, 0, 0);
+            _btnToggleLog.Click += (_, _) => ToggleTelemetryLog();
+            topBar.Controls.Add(_btnToggleLog, 4, 0);
+
+            layout.Controls.Add(topBar, 0, 1);
 
             // Center Scrollable Jobs List (Upper Deck)
             _syncJobsList = new DoubleBufferedFlowLayoutPanel
@@ -1350,7 +1517,7 @@ namespace RedfurSync
                     }
                 }
             };
-            layout.Controls.Add(_syncJobsList, 0, 1);
+            layout.Controls.Add(_syncJobsList, 0, 2);
 
             // Lower Live Tonal Telemetry Slate
             var telemetrySlate = new DoubleBufferedPanel
@@ -1360,6 +1527,7 @@ namespace RedfurSync
                 Margin = new Padding(0, (int)(4 * _scale), 0, 0),
                 Padding = new Padding((int)(6 * _scale)),
             };
+            _telemetrySlate = telemetrySlate;
             telemetrySlate.Paint += (s, e) =>
             {
                 var g = e.Graphics;
@@ -1433,8 +1601,7 @@ namespace RedfurSync
             _oscilloscopePanel.Paint += (s, e) =>
             {
                 var g = e.Graphics;
-                var activeJob = _watcher.GetJobsSnapshot().FirstOrDefault(j => j.Status == UploadStatus.Uploading);
-                bool isTx = activeJob != null;
+                bool isTx = _cachedHasActiveUpload;
                 Color waveCol = isTx ? CGoldBrt : CGreen;
                 DrawTonalWaveform(g, new Rectangle(0, 0, _oscilloscopePanel.Width, _oscilloscopePanel.Height), _animFrame * 0.22f, waveCol, isTx, _scale);
             };
@@ -1455,7 +1622,7 @@ namespace RedfurSync
 
             _tickerLabel = new Label
             {
-                Text = "● TONAL TRANSCEIVER RESONANT • READY FOR ESO TELEMETRY",
+                Text = _cachedIdleMetricsText,
                 ForeColor = CGreen,
                 Font = Mono(7.5f, _scale, FontStyle.Bold),
                 Dock = DockStyle.Fill,
@@ -1467,9 +1634,8 @@ namespace RedfurSync
 
             telTable.Controls.Add(dualMonitorStrip, 0, 1);
 
-            _animTimer = new System.Windows.Forms.Timer { Interval = 100 };
+            _animTimer = new System.Windows.Forms.Timer { Interval = 1000 };
             _animTimer.Tick += (_, _) => OnAnimTimerTick();
-            _animTimer.Start();
 
             _syncLogBox = new RichTextBox
             {
@@ -1484,9 +1650,164 @@ namespace RedfurSync
             _syncLogBox.HandleCreated += (_, _) => FissalTheme.ApplyDarkScrollbars(_syncLogBox.Handle);
             telTable.Controls.Add(_syncLogBox, 0, 2);
             telemetrySlate.Controls.Add(telTable);
-            layout.Controls.Add(telemetrySlate, 0, 2);
+            layout.Controls.Add(telemetrySlate, 0, 3);
 
             _syncView.Controls.Add(layout);
+        }
+
+        private void ToggleTelemetryLog()
+        {
+            if (_syncMainLayout == null || _telemetrySlate == null) return;
+            _isLogCollapsed = !_isLogCollapsed;
+            _syncMainLayout.SuspendLayout();
+            try
+            {
+                if (_isLogCollapsed)
+                {
+                    _telemetrySlate.Visible = false;
+                    _syncMainLayout.RowStyles[2].Height = 100f;
+                    _syncMainLayout.RowStyles[3].Height = 0f;
+                    _btnToggleLog.Text = "▴ Show Log";
+                }
+                else
+                {
+                    _telemetrySlate.Visible = true;
+                    _syncMainLayout.RowStyles[2].Height = 62f;
+                    _syncMainLayout.RowStyles[3].Height = 38f;
+                    _btnToggleLog.Text = "▾ Hide Log";
+                }
+            }
+            finally
+            {
+                _syncMainLayout.ResumeLayout(true);
+            }
+            ResizeSyncJobCards();
+        }
+
+        private async Task ExecuteReadinessActionAsync()
+        {
+            if (_readinessActionMode == "pair")
+            {
+                SwitchTab("setup");
+                _txtPairingCode?.Focus();
+                return;
+            }
+
+            if (_readinessActionMode == "addon")
+            {
+                string? live = _txtAddonEsoPath?.Text.Trim();
+                if (string.IsNullOrWhiteSpace(live) || !Directory.Exists(live))
+                    live = AddonInstallerService.FindEsoLiveDirectory();
+
+                if (string.IsNullOrWhiteSpace(live) || !Directory.Exists(live))
+                {
+                    SwitchTab("addon");
+                    return;
+                }
+
+                _btnSyncReadinessAction.Enabled = false;
+                _btnSyncReadinessAction.Text = "Installing...";
+                try
+                {
+                    string resolvedLive = live;
+                    var statusBefore = AddonInstallerService.CheckAddonInstallStatus(resolvedLive);
+                    if (statusBefore.State != AddonInstallState.UpToDate)
+                    {
+                        await Task.Run(() => AddonInstallerService.InstallOrUpdateAddon(resolvedLive, out _));
+                    }
+                    if (!statusBefore.LibHistoireInstalled)
+                    {
+                        await AddonInstallerService.DownloadAndInstallDependencyAsync(resolvedLive, "LibHistoire", AddonInstallerService.LibHistoireDownloadUrl);
+                    }
+                    if (!statusBefore.LibAddonMenuInstalled)
+                    {
+                        await AddonInstallerService.DownloadAndInstallDependencyAsync(resolvedLive, "LibAddonMenu-2.0", AddonInstallerService.LibAddonMenuDownloadUrl);
+                    }
+                    _lastReadinessCheckUtc = DateTime.MinValue;
+                    RefreshAddonView();
+                    RefreshSetupView();
+                    RefreshSyncView();
+                    LogTelemetry("UPGRADE", "ESO Addon & required dependencies installed. Type /reloadui if ESO is running.", CGreen);
+                }
+                finally
+                {
+                    _btnSyncReadinessAction.Enabled = true;
+                }
+            }
+        }
+
+        private void UpdateSyncReadinessAndMetrics(bool forceDiskCheck = false)
+        {
+            var nowUtc = DateTime.UtcNow;
+            if (forceDiskCheck || (nowUtc - _lastReadinessCheckUtc).TotalSeconds >= 30)
+            {
+                _lastReadinessCheckUtc = nowUtc;
+                var status = AddonInstallerService.CheckAddonInstallStatus();
+                string addonVer = status.InstalledVersion != null ? $"v{status.InstalledVersion}" : "Missing";
+                string lhTag = status.LibHistoireInstalled ? "LibHistoire ✓" : "LibHistoire Missing";
+                _cachedAddonMetricsPart = status.EsoLiveFound
+                    ? $"Addon: {addonVer} ({lhTag})"
+                    : "Addon: ESO folder not set";
+
+                if (!_readinessDismissed && _syncReadinessBanner != null && !_syncReadinessBanner.IsDisposed)
+                {
+                    var cfg = AppConfig.Instance;
+                    bool isAnon = cfg.IsAnonymousToken;
+                    bool isPaired = (!string.IsNullOrWhiteSpace(cfg.DeviceToken) && !isAnon) || !string.IsNullOrWhiteSpace(cfg.ApiKey);
+
+                    if (!status.EsoLiveFound || status.State == AddonInstallState.NotInstalled || status.State == AddonInstallState.UpdateAvailable || !status.LibHistoireInstalled)
+                    {
+                        _readinessActionMode = "addon";
+                        string issue = !status.EsoLiveFound
+                            ? "⚠ ESO Live folder not located — configure your ESO AddOns path so Fissal can sync."
+                            : status.State == AddonInstallState.NotInstalled
+                                ? "⚠ FissalRelay ESO Addon is not installed yet."
+                                : !status.LibHistoireInstalled
+                                    ? "⚠ LibHistoire is missing — required for in-game guild sales history sync."
+                                    : $"▲ Addon update v{status.LatestVersion} is ready to install.";
+                        _lblSyncReadinessText.Text = issue;
+                        _lblSyncReadinessText.ForeColor = CWarn;
+                        _btnSyncReadinessAction.Text = !status.EsoLiveFound ? "Configure ESO Path →" : "⚡ Install Addon & Dependencies";
+                        _syncReadinessBanner.Visible = true;
+                    }
+                    else if (!isPaired)
+                    {
+                        _readinessActionMode = "pair";
+                        _lblSyncReadinessText.Text = isAnon
+                            ? "● Anonymous Mode (Bank-Only) — Pair a 6-digit Discord code for full sales & raffle credit."
+                            : "⚠ Device Unpaired — Enter your 6-digit Discord pairing code to start syncing.";
+                        _lblSyncReadinessText.ForeColor = CGoldBrt;
+                        _btnSyncReadinessAction.Text = "Pair 6-Digit Code →";
+                        _syncReadinessBanner.Visible = true;
+                    }
+                    else
+                    {
+                        _readinessActionMode = "";
+                        _syncReadinessBanner.Visible = false;
+                    }
+                }
+            }
+
+            string lastSyncText;
+            var lastSyncUtc = _watcher.LastCompletedSyncUtc;
+            if (lastSyncUtc.HasValue)
+            {
+                var elapsed = nowUtc - lastSyncUtc.Value;
+                if (elapsed.TotalSeconds < 60) lastSyncText = "Just now";
+                else if (elapsed.TotalMinutes < 60) lastSyncText = $"{(int)elapsed.TotalMinutes}m ago";
+                else if (elapsed.TotalHours < 24) lastSyncText = $"{(int)elapsed.TotalHours}h ago";
+                else lastSyncText = lastSyncUtc.Value.ToLocalTime().ToString("MMM d HH:mm");
+            }
+            else
+            {
+                lastSyncText = "Awaiting /reloadui";
+            }
+
+            string watchedSummary = AppConfig.Instance.SyncMasterMerchantFiles
+                ? "FissalRelay + MM (GS00–17)"
+                : "FissalRelay.lua";
+
+            _cachedIdleMetricsText = $"● Last Sync: {lastSyncText}  •  Watching: {watchedSummary}  •  {_cachedAddonMetricsPart}";
         }
 
         private void SeedInitialTelemetry()
@@ -1519,7 +1840,13 @@ namespace RedfurSync
 
             // Vacuum tube filament and gas glow pulse
             var jobsSnapshot = _watcher.GetJobsSnapshot();
+            _cachedPaintJobs = jobsSnapshot;
             bool isUploading = jobsSnapshot.Any(j => j.Status == UploadStatus.Uploading);
+            if (_cachedHasActiveUpload != isUploading)
+            {
+                _cachedHasActiveUpload = isUploading;
+                UpdateIdleTimerInterval();
+            }
             bool hasError = jobsSnapshot.Any(j => j.Status == UploadStatus.Failed || j.Status == UploadStatus.Cancelled);
             bool hasUpdate = jobsSnapshot.Any(j => j.Status == UploadStatus.UpdateReady);
 
@@ -1541,9 +1868,10 @@ namespace RedfurSync
                        : hasUpdate ? Color.FromArgb(200, 120, 240)
                        : Color.FromArgb(240, 150, 40);
 
-            // Cycle marquee status message every 35 frames (~3.5 seconds)
+            // Cycle marquee status message every ~3.5 seconds regardless of tick interval
             bool statusRotated = false;
-            _dispWait--;
+            int tickUnits = Math.Max(1, (_animTimer?.Interval ?? 100) / 100);
+            _dispWait -= tickUnits;
             if (_dispWait <= 0)
             {
                 _dispWait = 35;
@@ -1553,7 +1881,7 @@ namespace RedfurSync
 
             var activeJob = jobsSnapshot.FirstOrDefault(j => j.Status == UploadStatus.Uploading);
             bool isLowFidelity = UploadProgressForm.AppConfig.CurrentMode == FidelityMode.Low;
-            bool shouldRepaintIdle = !isLowFidelity && (_animFrame % 10 == 0);
+            bool shouldRepaintIdle = !isLowFidelity;
 
             if (activeJob != null || statusRotated || shouldRepaintIdle)
             {
@@ -1561,7 +1889,7 @@ namespace RedfurSync
                 _microDisplayPanel?.Invalidate();
             }
 
-            if (_activeTabId == "sync" && (activeJob != null || shouldRepaintIdle))
+            if (_activeTabId == "sync" && !_isLogCollapsed && (activeJob != null || shouldRepaintIdle))
             {
                 _oscilloscopePanel?.Invalidate();
             }
@@ -1580,10 +1908,10 @@ namespace RedfurSync
                 }
                 else
                 {
+                    UpdateSyncReadinessAndMetrics(forceDiskCheck: false);
                     if (_tickerLabel != null && !_tickerLabel.IsDisposed)
                     {
-                        const string idleText = "● TONAL TRANSCEIVER RESONANT • READY FOR ESO TELEMETRY";
-                        if (_tickerLabel.Text != idleText) _tickerLabel.Text = idleText;
+                        if (_tickerLabel.Text != _cachedIdleMetricsText) _tickerLabel.Text = _cachedIdleMetricsText;
                         if (_tickerLabel.ForeColor != CGreen) _tickerLabel.ForeColor = CGreen;
                     }
                 }
@@ -1740,10 +2068,14 @@ namespace RedfurSync
             {
                 _lastRenderedJobVersion = _watcher.CurrentJobVersion;
                 var jobs = _watcher.GetJobsSnapshot();
+                _cachedPaintJobs = jobs;
                 int queued = jobs.Count(j => j.Status == UploadStatus.Queued);
                 int uploading = jobs.Count(j => j.Status == UploadStatus.Uploading);
                 int done = jobs.Count(j => j.Status == UploadStatus.Done);
                 int failed = jobs.Count(j => j.Status is UploadStatus.Failed or UploadStatus.Cancelled);
+                _cachedHasActiveUpload = uploading > 0;
+                UpdateSyncReadinessAndMetrics(forceDiskCheck: false);
+                UpdateIdleTimerInterval();
 
                 if (uploading > 0)
                 {
@@ -1753,11 +2085,6 @@ namespace RedfurSync
                     _messageBoardColor = CGoldBrt;
                     _titleStatusLabel.Text = "⚡ TRANSMITTING TELEMETRY";
                     _titleStatusLabel.ForeColor = CGoldBrt;
-
-                    if (_animTimer != null && !_animTimer.Enabled)
-                    {
-                        _animTimer.Start();
-                    }
                 }
                 else if (queued > 0)
                 {
@@ -2919,6 +3246,12 @@ namespace RedfurSync
                 return;
             }
 
+            if (_requestCompactWindow != null)
+            {
+                _requestCompactWindow();
+                return;
+            }
+
             _isCompactMode = !_isCompactMode;
             AppConfig.Instance.CompactMode = _isCompactMode;
             AppConfig.Instance.Save();
@@ -3841,7 +4174,7 @@ namespace RedfurSync
             {
                 Dock = DockStyle.Top,
                 ColumnCount = 2,
-                RowCount = 5,
+                RowCount = 6,
                 BackColor = CPanelBg,
                 Padding = new Padding((int)(16 * _scale)),
                 AutoSize = true,
@@ -3866,43 +4199,63 @@ namespace RedfurSync
             // Server URL
             prefsPanel.Controls.Add(MakeFieldLabel("Sync Server URL:"), 0, 1);
             _txtServerUrl = MakeStyledTextBox(AppConfig.Instance.ServerUrl);
-            _txtServerUrl.Margin = new Padding(0, (int)(3 * _scale), 0, (int)(6 * _scale));
+            _txtServerUrl.Margin = new Padding(0, (int)(3 * _scale), 0, (int)(8 * _scale));
             prefsPanel.Controls.Add(_txtServerUrl, 1, 1);
 
-            // Silent Background Sync
-            prefsPanel.Controls.Add(MakeFieldLabel("Background Alerts:"), 0, 2);
-            _btnSilentSync = MakeStyledButton("", CGreen);
-            _btnSilentSync.AutoSize = true;
-            _btnSilentSync.Margin = new Padding(0, (int)(3 * _scale), 0, (int)(6 * _scale));
-            _btnSilentSync.Click += (_, _) =>
+            int toggleW = (int)(380 * _scale);
+
+            // Run on Windows Startup
+            prefsPanel.Controls.Add(MakeFieldLabel("Windows Startup:"), 0, 2);
+            _tglRunOnStartup = new DwemerToggleControl("Launch Fissal Relay automatically on login", CGreen, _scale, StartupHelper.IsStartupEnabled(), toggleW)
             {
-                var cfg = AppConfig.Instance;
-                cfg.SilentSync = !cfg.SilentSync;
-                cfg.Save();
-                UpdateSilentSyncButton();
+                Margin = new Padding(0, (int)(3 * _scale), 0, (int)(6 * _scale))
             };
-            _btnSilentSync.MinimumSize = new Size((int)(180 * _scale), (int)(28 * _scale));
-            UpdateSilentSyncButton();
-            prefsPanel.Controls.Add(_btnSilentSync, 1, 2);
+            _tglRunOnStartup.CheckedChanged += (_, _) =>
+            {
+                if (_suppressPrefToggleEvents) return;
+                bool nowOn = _tglRunOnStartup.Checked;
+                StartupHelper.SetStartup(nowOn);
+                var cfg = AppConfig.Instance;
+                cfg.RunOnStartup = nowOn;
+                cfg.Save();
+                _notifyStartupChanged?.Invoke(nowOn);
+            };
+            prefsPanel.Controls.Add(_tglRunOnStartup, 1, 2);
+
+            // Silent Background Sync
+            prefsPanel.Controls.Add(MakeFieldLabel("Background Alerts:"), 0, 3);
+            _tglSilentSync = new DwemerToggleControl("Mute routine sync popups & chimes", CGreen, _scale, AppConfig.Instance.SilentSync, toggleW)
+            {
+                Margin = new Padding(0, (int)(3 * _scale), 0, (int)(6 * _scale))
+            };
+            _tglSilentSync.CheckedChanged += (_, _) =>
+            {
+                if (_suppressPrefToggleEvents) return;
+                var cfg = AppConfig.Instance;
+                cfg.SilentSync = _tglSilentSync.Checked;
+                cfg.Save();
+                _notifySilentSyncChanged?.Invoke(cfg.SilentSync);
+            };
+            prefsPanel.Controls.Add(_tglSilentSync, 1, 3);
 
             // MasterMerchant Sync Toggle
-            prefsPanel.Controls.Add(MakeFieldLabel("MasterMerchant Sync:"), 0, 3);
-            _btnSyncMm = MakeStyledButton("", CGoldBrt);
-            _btnSyncMm.AutoSize = true;
-            _btnSyncMm.MinimumSize = new Size((int)(180 * _scale), (int)(28 * _scale));
-            _btnSyncMm.Margin = new Padding(0, (int)(3 * _scale), 0, (int)(6 * _scale));
-            _btnSyncMm.Click += (_, _) =>
+            prefsPanel.Controls.Add(MakeFieldLabel("MasterMerchant Sync:"), 0, 4);
+            _tglSyncMm = new DwemerToggleControl("Upload legacy GS00–GS17 files (off = auto-optimized)", CWarn, _scale, AppConfig.Instance.SyncMasterMerchantFiles, toggleW)
             {
-                var cfg = AppConfig.Instance;
-                cfg.SyncMasterMerchantFiles = !cfg.SyncMasterMerchantFiles;
-                cfg.Save();
-                UpdateSyncMmButton();
+                Margin = new Padding(0, (int)(3 * _scale), 0, (int)(8 * _scale))
             };
-            UpdateSyncMmButton();
-            prefsPanel.Controls.Add(_btnSyncMm, 1, 3);
+            _tglSyncMm.CheckedChanged += (_, _) =>
+            {
+                if (_suppressPrefToggleEvents) return;
+                var cfg = AppConfig.Instance;
+                cfg.SyncMasterMerchantFiles = _tglSyncMm.Checked;
+                cfg.Save();
+                UpdateSyncReadinessAndMetrics(forceDiskCheck: false);
+            };
+            prefsPanel.Controls.Add(_tglSyncMm, 1, 4);
 
             // Action Buttons
-            prefsPanel.Controls.Add(MakeFieldLabel("Preferences Actions:"), 0, 4);
+            prefsPanel.Controls.Add(MakeFieldLabel("Preferences Actions:"), 0, 5);
             var btnRow = new FlowLayoutPanel
             {
                 Dock = DockStyle.Fill,
@@ -3981,7 +4334,7 @@ namespace RedfurSync
             };
             btnRow.Controls.Add(_btnTestConnection);
 
-            prefsPanel.Controls.Add(btnRow, 1, 4);
+            prefsPanel.Controls.Add(btnRow, 1, 5);
 
             layout.Controls.Add(prefsPanel, 0, 2);
 
@@ -4116,8 +4469,8 @@ namespace RedfurSync
                         ? "Master API Key (Direct Owner Access)"
                         : "Unlinked";
             _lblDeviceInfo.Text = $"Auth Mode: {authMode}\nToken Storage: DPAPI Encrypted (CurrentUser)\nUpdate Endpoint: {cfg.UpdateUrl}";
-            UpdateSilentSyncButton();
-            UpdateSyncMmButton();
+            RefreshPreferencesControls();
+            UpdateSyncReadinessAndMetrics(forceDiskCheck: true);
 
             if (_lblSetupAddonStatus != null && !_lblSetupAddonStatus.IsDisposed)
             {
@@ -4145,22 +4498,29 @@ namespace RedfurSync
             }
         }
 
-        private void UpdateSilentSyncButton()
+        public void RefreshPreferencesControls()
         {
-            if (_btnSilentSync == null || _btnSilentSync.IsDisposed) return;
-            bool silent = AppConfig.Instance.SilentSync;
-            _btnSilentSync.Text = silent ? "◆  SILENT BACKGROUND SYNC (MUTED)" : "◇  SILENT BACKGROUND SYNC (ALERTS ACTIVE)";
-            _btnSilentSync.ForeColor = silent ? CGreen : CWarn;
-        }
-
-        private void UpdateSyncMmButton()
-        {
-            if (_btnSyncMm == null || _btnSyncMm.IsDisposed) return;
-            bool syncMm = AppConfig.Instance.SyncMasterMerchantFiles;
-            _btnSyncMm.Text = syncMm
-                ? "◆  LEGACY MM SYNC ACTIVE (Uploading all 18 GSxx files)"
-                : "◇  AUTO-OPTIMIZED (Fissal Relay handles sales; GS files skipped)";
-            _btnSyncMm.ForeColor = syncMm ? CWarn : CGreen;
+            if (IsDisposed) return;
+            if (InvokeRequired)
+            {
+                BeginInvoke(RefreshPreferencesControls);
+                return;
+            }
+            _suppressPrefToggleEvents = true;
+            try
+            {
+                var cfg = AppConfig.Instance;
+                if (_tglRunOnStartup != null && !_tglRunOnStartup.IsDisposed)
+                    _tglRunOnStartup.Checked = StartupHelper.IsStartupEnabled();
+                if (_tglSilentSync != null && !_tglSilentSync.IsDisposed)
+                    _tglSilentSync.Checked = cfg.SilentSync;
+                if (_tglSyncMm != null && !_tglSyncMm.IsDisposed)
+                    _tglSyncMm.Checked = cfg.SyncMasterMerchantFiles;
+            }
+            finally
+            {
+                _suppressPrefToggleEvents = false;
+            }
         }
 
         // ═════════════════════════════════════════════════════════════════════
@@ -4244,6 +4604,7 @@ namespace RedfurSync
                 AppConfig.Instance.VisualFidelity = mode;
                 AppConfig.Instance.Save();
                 UploadProgressForm.AppConfig.SetMode(mode);
+                UpdateIdleTimerInterval();
             };
             footer.Controls.Add(_fidelityCombo, 1, 0);
 
@@ -4298,6 +4659,7 @@ namespace RedfurSync
                 var oldBold = _navFontBold;
                 _navFontRegular = Body(8.5f, _scale, FontStyle.Regular);
                 _navFontBold = Body(8.5f, _scale, FontStyle.Bold);
+                RebuildCachedPaintFonts();
 
                 ApplyTextScaleRecursive(this, _lastAppliedTextScale, targetScale);
                 _lastAppliedTextScale = targetScale;
@@ -4849,7 +5211,7 @@ namespace RedfurSync
                 }
             }
 
-            public DwemerToggleControl(string label, Color activeColor, float scale, bool initialChecked)
+            public DwemerToggleControl(string label, Color activeColor, float scale, bool initialChecked, int widthPx = 0)
             {
                 _label = label;
                 _activeColor = activeColor;
@@ -4858,7 +5220,7 @@ namespace RedfurSync
                 SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
                 Cursor = Cursors.Hand;
                 Height = (int)(28 * _scale);
-                Width = (int)(155 * _scale);
+                Width = widthPx > 0 ? widthPx : (int)(340 * _scale);
             }
 
             protected override void OnClick(EventArgs e)

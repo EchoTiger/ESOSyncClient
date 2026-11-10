@@ -1,0 +1,7 @@
+<GuiXml>
+    <Controls>
+        <Control name="FissalRelay_ScrollRowTemplate" virtual="true" mouseEnabled="true">
+            <Dimensions y="28" />
+        </Control>
+    </Controls>
+</GuiXml>

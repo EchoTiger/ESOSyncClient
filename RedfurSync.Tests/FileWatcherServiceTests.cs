@@ -250,6 +250,41 @@ public sealed class FileWatcherServiceTests
         Assert.Empty(handler.Requests);
     }
 
+    [Fact]
+    public async Task RemoveJobAndRemoveJobs_ThreadSafelyPrunesCompletedAndFailedEntries()
+    {
+        using var temporaryDirectory = new TemporaryDirectory();
+        var fileA = temporaryDirectory.WriteFile("source/FissalRelay.lua", "payload-a");
+        var fileB = temporaryDirectory.WriteFile("source/PriceTableNA.lua", "payload-b");
+        var fileC = temporaryDirectory.WriteFile("source/RaffleGold.lua", "payload-c");
+        var spoolPath = temporaryDirectory.CreateDirectory("spool");
+        var config = new AppConfig
+        {
+            ServerUrl = "https://relay.invalid/upload",
+            ApiKey = "fixture-key",
+            DisplayName = "Fixture"
+        };
+        using var uploader = new UploadService(config, FakeHttpMessageHandler.Returning(HttpStatusCode.OK), FakeHttpMessageHandler.Returning(HttpStatusCode.OK));
+        using var watcher = new FileWatcherService(_ => { }, config, uploader, spoolPath, _ => { });
+
+        await watcher.EnqueueFileForTestAsync(fileA);
+        await watcher.EnqueueFileForTestAsync(fileB);
+        await watcher.EnqueueFileForTestAsync(fileC);
+
+        await WaitForJobsAsync(watcher, jobs => jobs.Count == 3 && jobs.All(j => j.Status == UploadStatus.Done));
+        Assert.NotNull(watcher.LastCompletedSyncUtc);
+
+        var jobA = watcher.Jobs.First(j => j.FileName == "FissalRelay.lua");
+        Assert.True(watcher.RemoveJob(jobA));
+        Assert.False(watcher.RemoveJob(jobA));
+        Assert.Equal(2, watcher.Jobs.Count);
+
+        int removedRest = watcher.RemoveJobs(watcher.Jobs.Where(j => j.Status == UploadStatus.Done && j.FileName == "PriceTableNA.lua").ToList());
+        Assert.Equal(1, removedRest);
+        Assert.Single(watcher.Jobs);
+        Assert.Equal("RaffleGold.lua", watcher.Jobs[0].FileName);
+    }
+
     private static async Task WaitForJobsAsync(FileWatcherService watcher, Func<IReadOnlyList<UploadJob>, bool> predicate)
     {
         if (predicate(watcher.Jobs.ToArray())) return;

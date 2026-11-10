@@ -1016,6 +1016,10 @@ namespace RedfurSync
             }
         }
 
+        [ThreadStatic] private static PointF[]? _waveformPointsBuf;
+        [ThreadStatic] private static Font? _cachedWaveFont;
+        [ThreadStatic] private static float _cachedWaveScale;
+
         /// <summary>
         /// Renders an animated cathode-ray oscilloscope displaying the live Tonal Lattice harmonics.
         /// </summary>
@@ -1036,9 +1040,13 @@ namespace RedfurSync
                 g.DrawLine(gridPen, x, bounds.Y, x, bounds.Bottom);
             }
 
-            // 3. Mathematical Tonal Waveform Path
+            // 3. Mathematical Tonal Waveform Path (reuse ThreadStatic buffer to eliminate per-frame PointF[] churn)
             int steps = Math.Max(20, bounds.Width / 2);
-            var points = new PointF[steps];
+            if (_waveformPointsBuf == null || _waveformPointsBuf.Length < steps)
+            {
+                _waveformPointsBuf = new PointF[Math.Max(steps, 256)];
+            }
+            var points = _waveformPointsBuf;
             float amplitude = isTransmitting ? (bounds.Height * 0.38f) : (bounds.Height * 0.20f);
             float freq1 = isTransmitting ? 0.08f : 0.045f;
             float freq2 = isTransmitting ? 0.16f : 0.09f;
@@ -1051,21 +1059,27 @@ namespace RedfurSync
                 points[i] = new PointF(x, midY + yVal * amplitude);
             }
 
-            if (points.Length > 1)
+            if (steps > 1)
             {
                 // Ambient glow pass
                 using var glowPen = new Pen(Color.FromArgb(60, waveColor), 3f * scale);
-                g.DrawCurve(glowPen, points, 0.5f);
+                g.DrawCurve(glowPen, points, 0, steps - 1, 0.5f);
 
                 // Sharp core beam
                 using var beamPen = new Pen(Color.FromArgb(230, waveColor), 1.25f * scale);
-                g.DrawCurve(beamPen, points, 0.5f);
+                g.DrawCurve(beamPen, points, 0, steps - 1, 0.5f);
             }
 
-            // 4. CRT Corner Telemetry Badge
-            using var freqFont = Mono(6.5f, scale, FontStyle.Bold);
+            // 4. CRT Corner Telemetry Badge (cached HFONT)
+            float effScale = scale * GlobalTextScale;
+            if (_cachedWaveFont == null || Math.Abs(_cachedWaveScale - effScale) > 0.005f)
+            {
+                _cachedWaveFont?.Dispose();
+                _cachedWaveFont = Mono(6.5f, scale, FontStyle.Bold);
+                _cachedWaveScale = effScale;
+            }
             using var freqBrush = new SolidBrush(Color.FromArgb(160, waveColor));
-            g.DrawString(isTransmitting ? "TX // 115.2k MODULATING" : "CH-09 // 115.2k BAUD", freqFont, freqBrush, bounds.X + 6, bounds.Y + 4);
+            g.DrawString(isTransmitting ? "TX // 115.2k MODULATING" : "CH-09 // 115.2k BAUD", _cachedWaveFont, freqBrush, bounds.X + 6, bounds.Y + 4);
 
             // 5. CRT Outer Border & Glint
             using var borderPen = new Pen(CBorderSub, 1f);

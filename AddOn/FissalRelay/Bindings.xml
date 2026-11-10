@@ -1,0 +1,18 @@
+<Bindings>
+    <Layer name="SI_KEYBINDINGS_LAYER_GENERAL">
+        <Category name="Fissal's Cogwork Relay">
+            <Action name="FISSAL_TOGGLE_CONSOLE">
+                <Down>if FissalRelay and FissalRelay.ToggleConsole then FissalRelay:ToggleConsole() end</Down>
+            </Action>
+            <Action name="FISSAL_SWEEP_KIOSKS">
+                <Down>if FissalRelay and FissalRelay.StartKioskSweep then FissalRelay:StartKioskSweep() end</Down>
+            </Action>
+            <Action name="FISSAL_TOGGLE_HUD">
+                <Down>if FissalRelay and FissalRelay.ToggleHUD then FissalRelay:ToggleHUD() end</Down>
+            </Action>
+            <Action name="FISSAL_START_BUMP">
+                <Down>if FissalRelay and FissalRelay.StartBump then FissalRelay:StartBump() end</Down>
+            </Action>
+        </Category>
+    </Layer>
+</Bindings>

@@ -67,11 +67,54 @@ namespace RedfurSync
             lock (_jobLock)
             {
                 var done = Jobs.Where(j => j.Status is UploadStatus.Done or UploadStatus.Cancelled).ToList();
-                foreach (var j in done) Jobs.Remove(j);
+                foreach (var j in done)
+                {
+                    CleanupSnapshot(j);
+                    Jobs.Remove(j);
+                }
                 NotifyChanged();
                 return done.Count;
             }
         }
+
+        public bool RemoveJob(UploadJob job)
+        {
+            bool removed;
+            lock (_jobLock)
+            {
+                if (job.Status is UploadStatus.Queued or UploadStatus.Uploading)
+                {
+                    try { job.Cts.Cancel(); } catch (ObjectDisposedException) { }
+                    job.Status = UploadStatus.Cancelled;
+                }
+                CleanupSnapshot(job);
+                removed = Jobs.Remove(job);
+            }
+            if (removed) NotifyChanged();
+            return removed;
+        }
+
+        public int RemoveJobs(IEnumerable<UploadJob> jobsToRemove)
+        {
+            int count = 0;
+            lock (_jobLock)
+            {
+                foreach (var job in jobsToRemove)
+                {
+                    if (job.Status is UploadStatus.Queued or UploadStatus.Uploading)
+                    {
+                        try { job.Cts.Cancel(); } catch (ObjectDisposedException) { }
+                        job.Status = UploadStatus.Cancelled;
+                    }
+                    CleanupSnapshot(job);
+                    if (Jobs.Remove(job)) count++;
+                }
+            }
+            if (count > 0) NotifyChanged();
+            return count;
+        }
+
+        public DateTime? LastCompletedSyncUtc { get; private set; }
 
         public event Action?               JobsChanged;
         public event Action<bool, string>? ConnectionChecked;
@@ -541,10 +584,10 @@ namespace RedfurSync
                 {
                     try
                     {
-                        var recreatedSnapshot = CreateSnapshot(original.SourcePath);
+                        var (recreatedSnapshot, hash, sizeBytes) = CreateSnapshotAndHash(original.SourcePath);
                         original.FilePath = recreatedSnapshot;
-                        original.ContentHash = GetFileHash(recreatedSnapshot);
-                        try { original.FileSizeBytes = new FileInfo(recreatedSnapshot).Length; } catch { }
+                        original.ContentHash = hash;
+                        original.FileSizeBytes = sizeBytes;
                     }
                     catch (Exception ex)
                     {
@@ -590,15 +633,33 @@ namespace RedfurSync
             catch { return string.Empty; }
         }
 
-        private string CreateSnapshot(string sourcePath)
+        private (string SnapshotPath, string ContentHash, long SizeBytes) CreateSnapshotAndHash(string sourcePath)
         {
             Directory.CreateDirectory(_spoolDirectory);
             var snapshotPath = Path.Combine(_spoolDirectory, $"{Guid.NewGuid():N}-{Path.GetFileName(sourcePath)}");
-            using var source = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-            using var destination = new FileStream(snapshotPath, FileMode.CreateNew, FileAccess.Write, FileShare.None);
-            source.CopyTo(destination);
-            destination.Flush();
-            return snapshotPath;
+            byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(65536);
+            try
+            {
+                using var hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                using var source = new FileStream(sourcePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 65536, FileOptions.SequentialScan);
+                using var destination = new FileStream(snapshotPath, FileMode.CreateNew, FileAccess.Write, FileShare.None, 65536);
+                long totalBytes = 0;
+                int bytesRead;
+                while ((bytesRead = source.Read(buffer, 0, buffer.Length)) > 0)
+                {
+                    destination.Write(buffer, 0, bytesRead);
+                    hasher.AppendData(buffer, 0, bytesRead);
+                    totalBytes += bytesRead;
+                }
+                destination.Flush();
+                var hashBytes = hasher.GetHashAndReset();
+                var hashHex = Convert.ToHexString(hashBytes).ToLowerInvariant();
+                return (snapshotPath, hashHex, totalBytes);
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+            }
         }
 
         private static void CleanupSnapshot(UploadJob job)
@@ -609,6 +670,7 @@ namespace RedfurSync
 
         private void RecordSuccessfulSync(UploadJob job)
         {
+            LastCompletedSyncUtc = DateTime.UtcNow;
             if (string.IsNullOrWhiteSpace(job.SourcePath)) return;
 
             var syncedHash = !string.IsNullOrEmpty(job.ContentHash) ? job.ContentHash : GetFileHash(job.FilePath);
@@ -655,13 +717,13 @@ namespace RedfurSync
 
             string snapshotPath;
             string currentHash;
+            long snapshotSize;
             try
             {
                 await _diskScanThrottle.WaitAsync(lockWaitCts.Token).ConfigureAwait(false);
                 try
                 {
-                    snapshotPath = CreateSnapshot(filePath);
-                    currentHash = GetFileHash(snapshotPath);
+                    (snapshotPath, currentHash, snapshotSize) = CreateSnapshotAndHash(filePath);
                 }
                 finally
                 {
@@ -699,9 +761,6 @@ namespace RedfurSync
                     }
                 }
 
-                long size = 0;
-                try { size = new FileInfo(snapshotPath).Length; } catch { }
-
                 job = new UploadJob
                 {
                     FilePath       = snapshotPath,
@@ -709,7 +768,7 @@ namespace RedfurSync
                     ContentHash    = currentHash,
                     IsSnapshot     = true,
                     FileName       = Path.GetFileName(filePath),
-                    FileSizeBytes  = size,
+                    FileSizeBytes  = snapshotSize,
                     QueuedAt       = DateTime.Now,
                     RetryCount     = 0
                 };
@@ -796,8 +855,7 @@ namespace RedfurSync
                     IReadOnlyDictionary<int, string> knownGuilds;
                     try
                     {
-                        kiosks = KioskReconScanner.ReadKiosks(job.FilePath);
-                        knownGuilds = KioskReconScanner.ReadKnownTradingGuilds(job.FilePath);
+                        (kiosks, knownGuilds) = KioskReconScanner.ReadKiosksAndKnownGuilds(job.FilePath);
                     }
                     finally
                     {

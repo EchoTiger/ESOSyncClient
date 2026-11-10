@@ -295,11 +295,221 @@ public static class LuaStreamingReader
     }
 
     /// <summary>
-    /// Single-pass stream reader that extracts both kiosk observations and knownTradingGuilds in one file scan.
+    /// Single-pass stream reader that extracts both kiosk observations and knownTradingGuilds in one sequential file scan.
     /// </summary>
     public static (List<KioskObservation> Kiosks, Dictionary<int, string> KnownGuilds) ReadKiosksAndKnownGuilds(string filePath)
     {
-        return (ReadKioskObservations(filePath), ReadKnownTradingGuilds(filePath));
+        var observations = new List<KioskObservation>();
+        var guilds = new Dictionary<int, string>();
+        if (!File.Exists(filePath)) return (observations, guilds);
+
+        try
+        {
+            using var fileStream = new FileStream(
+                filePath,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete,
+                BufferSize,
+                FileOptions.SequentialScan);
+
+            using var reader = new StreamReader(fileStream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, BufferSize);
+
+            string? line;
+            bool inKiosks = false;
+            bool awaitingKiosksBrace = false;
+            bool inKnownGuilds = false;
+            bool awaitingKnownBrace = false;
+            int depth = 0;
+            string pendingTraderKey = "";
+            string currentTraderKey = "";
+            Dictionary<string, string> currentFields = new(StringComparer.OrdinalIgnoreCase);
+
+            while ((line = reader.ReadLine()) != null)
+            {
+                var span = line.AsSpan().Trim();
+                if (span.IsEmpty || span.StartsWith("--")) continue;
+
+                if (!inKiosks && !inKnownGuilds)
+                {
+                    if (awaitingKiosksBrace)
+                    {
+                        int openIdx = span.IndexOf('{');
+                        if (openIdx >= 0)
+                        {
+                            awaitingKiosksBrace = false;
+                            inKiosks = true;
+                            depth = 0;
+                            pendingTraderKey = "";
+                            currentTraderKey = "";
+                            CountBracesOnLine(span.Slice(openIdx), ref depth);
+                            if (depth <= 0) { inKiosks = false; depth = 0; }
+                        }
+                        else
+                        {
+                            awaitingKiosksBrace = false;
+                        }
+                        continue;
+                    }
+
+                    if (awaitingKnownBrace)
+                    {
+                        int openIdx = span.IndexOf('{');
+                        if (openIdx >= 0)
+                        {
+                            awaitingKnownBrace = false;
+                            inKnownGuilds = true;
+                            depth = 0;
+                            CountBracesOnLine(span.Slice(openIdx), ref depth);
+                            if (depth <= 0) { inKnownGuilds = false; depth = 0; }
+                        }
+                        else
+                        {
+                            awaitingKnownBrace = false;
+                        }
+                        continue;
+                    }
+
+                    if (span.Contains("[\"kiosks\"]", StringComparison.OrdinalIgnoreCase))
+                    {
+                        int openIdx = span.IndexOf('{');
+                        if (openIdx >= 0)
+                        {
+                            inKiosks = true;
+                            depth = 0;
+                            pendingTraderKey = "";
+                            currentTraderKey = "";
+                            CountBracesOnLine(span.Slice(openIdx), ref depth);
+                            if (depth <= 0) { inKiosks = false; depth = 0; }
+                        }
+                        else
+                        {
+                            awaitingKiosksBrace = true;
+                        }
+                    }
+                    else if (span.Contains("[\"knownTradingGuilds\"]", StringComparison.OrdinalIgnoreCase))
+                    {
+                        int openIdx = span.IndexOf('{');
+                        if (openIdx >= 0)
+                        {
+                            inKnownGuilds = true;
+                            depth = 0;
+                            CountBracesOnLine(span.Slice(openIdx), ref depth);
+                            if (depth <= 0) { inKnownGuilds = false; depth = 0; }
+                        }
+                        else
+                        {
+                            awaitingKnownBrace = true;
+                        }
+                    }
+                    continue;
+                }
+
+                if (inKiosks)
+                {
+                    if (depth == 1)
+                    {
+                        var keyOnLine = ExtractKey(span);
+                        if (!string.IsNullOrEmpty(keyOnLine))
+                        {
+                            pendingTraderKey = keyOnLine;
+                        }
+                    }
+
+                    for (int i = 0; i < span.Length; i++)
+                    {
+                        char c = span[i];
+                        if (c == '"')
+                        {
+                            i++;
+                            while (i < span.Length)
+                            {
+                                if (span[i] == '\\') { i += 2; continue; }
+                                if (span[i] == '"') break;
+                                i++;
+                            }
+                            continue;
+                        }
+
+                        if (c == '{')
+                        {
+                            depth++;
+                            if (depth == 2)
+                            {
+                                var inlineKey = ExtractKey(span);
+                                currentTraderKey = !string.IsNullOrEmpty(inlineKey) ? inlineKey : pendingTraderKey;
+                                pendingTraderKey = "";
+                                currentFields.Clear();
+                            }
+                        }
+                        else if (c == '}')
+                        {
+                            if (depth == 2 && !string.IsNullOrWhiteSpace(currentTraderKey))
+                            {
+                                var obs = MaterializeKiosk(currentTraderKey, currentFields);
+                                if (obs != null) observations.Add(obs);
+                                currentTraderKey = "";
+                                pendingTraderKey = "";
+                                currentFields.Clear();
+                            }
+
+                            depth--;
+                            if (depth <= 0)
+                            {
+                                inKiosks = false;
+                                depth = 0;
+                                pendingTraderKey = "";
+                                currentTraderKey = "";
+                                break;
+                            }
+                        }
+                    }
+
+                    if (inKiosks && depth >= 2)
+                    {
+                        ExtractKeyValuePair(span, currentFields);
+                    }
+                }
+                else if (inKnownGuilds)
+                {
+                    if (depth == 1 && span.StartsWith("[") && !span.StartsWith("[\""))
+                    {
+                        int closeBracket = span.IndexOf(']');
+                        if (closeBracket > 1 && int.TryParse(span.Slice(1, closeBracket - 1), out int guildId) && guildId > 0)
+                        {
+                            var afterBracket = span.Slice(closeBracket + 1);
+                            int eqIdx = afterBracket.IndexOf('=');
+                            if (eqIdx >= 0)
+                            {
+                                var valSpan = afterBracket.Slice(eqIdx + 1).Trim();
+                                if (valSpan.EndsWith(",")) valSpan = valSpan.Slice(0, valSpan.Length - 1).Trim();
+                                if (valSpan.StartsWith("\"") && valSpan.EndsWith("\"") && valSpan.Length >= 2)
+                                {
+                                    var gName = valSpan.Slice(1, valSpan.Length - 2).ToString();
+                                    if (!string.IsNullOrWhiteSpace(gName))
+                                    {
+                                        guilds[guildId] = gName;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    CountBracesOnLine(span, ref depth);
+                    if (depth <= 0)
+                    {
+                        inKnownGuilds = false;
+                        depth = 0;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[LuaStreamingReader] Error reading {filePath}: {ex.Message}");
+        }
+
+        return (observations, guilds);
     }
 
     private static void CountBracesOnLine(ReadOnlySpan<char> span, ref int depth)
