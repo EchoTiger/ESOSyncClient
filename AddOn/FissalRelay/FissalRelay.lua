@@ -10,7 +10,7 @@ FissalRelay = FissalRelay or {}
 local FR = FissalRelay
 
 FR.name = "FissalRelay"
-FR.version = "1.9.7"
+FR.version = "1.9.8"
 FR.author = "Echo & Fissal"
 
 -- Native ESO Keybind Labels (referenced by Bindings.xml)
@@ -78,7 +78,8 @@ local DEFAULT_SAVED_VARS = {
         showBumper = true,
         bumperAutoReload = false,
         bumperWaitForLibHistoire = true,
-        bumperBorderlessMode = false,
+        bumperBorderlessMode = true,
+        bumperBorderlessConfigured = false,
         autoTrickleKioskProbes = true,
         bankGuilds = {},
         raffleMail = {
@@ -2221,36 +2222,24 @@ end
 
 function FR:EnsureBorderlessForBump()
     if not self.savedVars or not self.savedVars.settings then return false end
-    if not self.savedVars.settings.bumperBorderlessMode then return false end
+    if self.savedVars.settings.bumperBorderlessMode == false then return false end
     if not GetSetting or not SetSetting or not SETTING_TYPE_GRAPHICS or not GRAPHICS_SETTING_FULLSCREEN then
         return false
     end
 
-    local exclusiveVal = tostring(FULLSCREEN_MODE_FULLSCREEN_EXCLUSIVE or 1)
-    local borderlessVal = tostring(FULLSCREEN_MODE_FULLSCREEN_WINDOWED or 2)
+    -- ESO enum: FULLSCREEN_MODE_WINDOWED = 0, FULLSCREEN_MODE_FULLSCREEN_WINDOWED = 1, FULLSCREEN_MODE_FULLSCREEN_EXCLUSIVE = 2
+    local exclusiveVal = tostring(FULLSCREEN_MODE_FULLSCREEN_EXCLUSIVE ~= nil and FULLSCREEN_MODE_FULLSCREEN_EXCLUSIVE or 2)
+    local borderlessVal = tostring(FULLSCREEN_MODE_FULLSCREEN_WINDOWED ~= nil and FULLSCREEN_MODE_FULLSCREEN_WINDOWED or 1)
     local okGet, curMode = pcall(GetSetting, SETTING_TYPE_GRAPHICS, GRAPHICS_SETTING_FULLSCREEN)
     if okGet and tostring(curMode) == exclusiveVal then
         local okSet = pcall(SetSetting, SETTING_TYPE_GRAPHICS, GRAPHICS_SETTING_FULLSCREEN, borderlessVal)
         if okSet then
-            self._prevFullscreenMode = tostring(curMode)
             if ApplySettings then pcall(ApplySettings) end
-            PrintChat("|c59E08AAlt-Tab Safe Mode:|r Switched display from Exclusive Fullscreen to |c00FFCCBorderless Windowed Fullscreen|r while bumping.")
+            PrintChat("|c59E08AAlt-Tab Safe Mode:|r Switched display from Exclusive Fullscreen to |c00FFCCBorderless Windowed Fullscreen|r so you can freely Alt-Tab while bumping!")
             return true
         end
     end
     return false
-end
-
-function FR:RestoreFullscreenAfterBump()
-    if not self._prevFullscreenMode then return end
-    local prevMode = self._prevFullscreenMode
-    self._prevFullscreenMode = nil
-    if SetSetting and SETTING_TYPE_GRAPHICS and GRAPHICS_SETTING_FULLSCREEN then
-        local okSet = pcall(SetSetting, SETTING_TYPE_GRAPHICS, GRAPHICS_SETTING_FULLSCREEN, prevMode)
-        if okSet and ApplySettings then
-            pcall(ApplySettings)
-        end
-    end
 end
 
 function FR:StopBumperTicker()
@@ -2395,7 +2384,6 @@ function FR:CancelBump(reason)
         self.isBumping = false
         self.isWaitingForLibHistoireReload = false
         self.bumpQueue = {}
-        self:RestoreFullscreenAfterBump()
         local msg = reason and string.format("TTC Bumping halted (%s).", reason) or "TTC Bumping / Auto-reload halted by user."
         PrintChat(msg)
         if self.UpdateBumperUI then self:UpdateBumperUI("Bumping halted.") end
@@ -2545,7 +2533,6 @@ function FR:StepNextBumpGuild()
         if isAutoReload then
             self:TriggerBumperAutoReload()
         else
-            self:RestoreFullscreenAfterBump()
             PrintChat("Hit [ReloadUI] to upload fresh listings to TamrielTradeCentre.")
         end
         return
@@ -3559,7 +3546,32 @@ local function OnTradingHouseResponse(eventCode, responseType, result)
         end
     end
     if responseType == TRADING_HOUSE_RESULT_SEARCH_PENDING and FR.isBumping then
-        FR:OnTradingHouseSearchResultsForBump()
+        local isSuccess = (TRADING_HOUSE_RESULT_SUCCESS == nil) or (result == TRADING_HOUSE_RESULT_SUCCESS)
+        if isSuccess then
+            FR:OnTradingHouseSearchResultsForBump()
+        else
+            -- Search failed (e.g. rate-limit / cooldown jitter while Alt-Tabbed); retry same page instead of skipping guild!
+            FR.bumpPageRetries = (FR.bumpPageRetries or 0) + 1
+            local nowMs = GetGameTimeMilliseconds and GetGameTimeMilliseconds() or (GetTimeStamp() * 1000)
+            if FR.bumpPageRetries <= 3 then
+                local entry = FR.bumpQueue and FR.bumpQueue[FR.currentBumpIndex]
+                local gName = entry and entry.name or "Guild"
+                local cdMs = GetTradingHouseCooldownRemaining and GetTradingHouseCooldownRemaining() or 0
+                if FR.UpdateBumperUI then
+                    FR:UpdateBumperUI(string.format("Cooldown retry %s: Page %d (%d/3)...",
+                        gName, (FR.bumpCurrentPage or 0) + 1, FR.bumpPageRetries))
+                end
+                FR.bumpStepState = "waiting_cooldown"
+                FR.bumpNextActionMs = nowMs + math.max(cdMs + 800, 2000)
+            else
+                local entry = FR.bumpQueue and FR.bumpQueue[FR.currentBumpIndex]
+                local gName = entry and entry.name or "Guild"
+                PrintChat(string.format("✓ %s bumped (%d items).", ColorText(gName, "00FFCC"), FR.bumpItemsScannedInGuild or 0))
+                FR.currentBumpIndex = FR.currentBumpIndex + 1
+                FR.bumpStepState = "next_guild_delay"
+                FR.bumpNextActionMs = nowMs + 1000
+            end
+        end
     end
 end
 
@@ -3698,6 +3710,10 @@ local function OnAddOnLoaded(eventCode, addOnName)
     if not FR.savedVars.settings then FR.savedVars.settings = {} end
     if FR.savedVars.settings.bumperAutoReload == nil then FR.savedVars.settings.bumperAutoReload = false end
     if FR.savedVars.settings.bumperWaitForLibHistoire == nil then FR.savedVars.settings.bumperWaitForLibHistoire = true end
+    if not FR.savedVars.settings.bumperBorderlessConfigured then
+        FR.savedVars.settings.bumperBorderlessMode = true
+        FR.savedVars.settings.bumperBorderlessConfigured = true
+    end
     if FR.savedVars.settings.autoSweepKiosksOnReset == nil then FR.savedVars.settings.autoSweepKiosksOnReset = true end
     if not FR.savedVars.auditExclusions then FR.savedVars.auditExclusions = {} end
     if not FR.savedVars.autoWelcome then

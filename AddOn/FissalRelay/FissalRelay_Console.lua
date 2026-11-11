@@ -1138,6 +1138,11 @@ function FR:BuildTTCBumperTab(parent)
     waitLHBtn:SetDimensions(320, 26)
     waitLHBtn:SetFont("ZoFontGame")
 
+    local borderlessBtn = wm:CreateControl("$(parent)_BorderlessBtn", card, CT_BUTTON)
+    borderlessBtn:SetAnchor(TOPLEFT, card, TOPLEFT, 14, 234)
+    borderlessBtn:SetDimensions(320, 26)
+    borderlessBtn:SetFont("ZoFontGame")
+
     local function UpdateAutoReloadBtn()
         local isAR = self.savedVars and self.savedVars.settings and self.savedVars.settings.bumperAutoReload
         autoReloadBtn:SetText(string.format("Auto-Reload UI After Bump: %s",
@@ -1153,6 +1158,12 @@ function FR:BuildTTCBumperTab(parent)
             waitLHBtn:SetText(string.format("Wait for LibHistoire: %s",
                 isWait and ColorText("Enabled", "00FFCC") or ColorText("Disabled", "888888")))
         end
+    end
+
+    local function UpdateBorderlessBtn()
+        local isBL = not self.savedVars or not self.savedVars.settings or self.savedVars.settings.bumperBorderlessMode ~= false
+        borderlessBtn:SetText(string.format("Alt-Tab Safe Mode (Borderless): %s",
+            isBL and ColorText("Enabled", "00FFCC") or ColorText("Disabled", "888888")))
     end
 
     UpdateAutoReloadBtn()
@@ -1191,14 +1202,37 @@ function FR:BuildTTCBumperTab(parent)
         if self.UpdateBumperUI then self:UpdateBumperUI() end
     end)
 
+    UpdateBorderlessBtn()
+    self:StyleTactileButton(borderlessBtn, {
+        normalBg = { 0.05, 0.08, 0.08, 0.85 },
+        hoverBg = { 0.08, 0.12, 0.12, 0.95 },
+        normalEdge = { 0.35, 0.30, 0.20, 0.65 },
+        hoverEdge = { 0, 0.85, 0.75, 0.90 },
+        normalTextColor = { 0.9, 0.9, 0.9, 1 },
+        hoverTextColor = { 1, 1, 1, 1 },
+        tooltipTitle = "Alt-Tab Safe Mode (Borderless Fullscreen)",
+        tooltipText = "Automatically switches ESO from Exclusive Fullscreen to Borderless Windowed Fullscreen when starting a TTC Bump so you can freely Alt-Tab without display lockups or stalled page scans.",
+    })
+    borderlessBtn:SetHandler("OnClicked", function()
+        local cur = (self.savedVars.settings.bumperBorderlessMode ~= false)
+        self.savedVars.settings.bumperBorderlessMode = not cur
+        self.savedVars.settings.bumperBorderlessConfigured = true
+        if self.isBumping and self.savedVars.settings.bumperBorderlessMode and self.EnsureBorderlessForBump then
+            self:EnsureBorderlessForBump()
+        end
+        UpdateBorderlessBtn()
+        if self.UpdateBumperUI then self:UpdateBumperUI() end
+    end)
+
     self.UpdateTTCBumperTab = function()
         UpdateAutoBumpBtn()
         UpdateAutoReloadBtn()
         UpdateWaitLHBtn()
+        UpdateBorderlessBtn()
     end
 
     local bumpStatus = wm:CreateControl("$(parent)_Status", card, CT_LABEL)
-    bumpStatus:SetAnchor(TOPLEFT, card, TOPLEFT, 14, 236)
+    bumpStatus:SetAnchor(TOPLEFT, card, TOPLEFT, 14, 272)
     bumpStatus:SetFont("ZoFontGameSmall")
     bumpStatus:SetText("TTC Addon Status: " .. (TamrielTradeCentre and ColorText("Detected & Active", "59E08A") or ColorText("Not Installed (Optional)", "FFCC00")))
 

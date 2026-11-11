@@ -1137,10 +1137,12 @@ function FR:CreateBumperUI()
     local function ToggleBorderlessMode()
         local cur = (self.savedVars.settings.bumperBorderlessMode ~= false)
         self.savedVars.settings.bumperBorderlessMode = not cur
-        if self.savedVars.settings.bumperBorderlessMode and self.EnsureBorderlessForBump then
+        self.savedVars.settings.bumperBorderlessConfigured = true
+        if self.isBumping and self.savedVars.settings.bumperBorderlessMode and self.EnsureBorderlessForBump then
             self:EnsureBorderlessForBump()
         end
         self:UpdateBumperUI()
+        if self.UpdateTTCBumperTab then self.UpdateTTCBumperTab() end
     end
 
     blCheck:SetHandler("OnClicked", ToggleBorderlessMode)
@@ -1638,8 +1640,10 @@ function FR:CreateSettingsMenu()
             getFunc = function() return FR.savedVars.settings.bumperBorderlessMode ~= false end,
             setFunc = function(value)
                 FR.savedVars.settings.bumperBorderlessMode = value
-                if value and FR.EnsureBorderlessForBump then FR:EnsureBorderlessForBump() end
+                FR.savedVars.settings.bumperBorderlessConfigured = true
+                if FR.isBumping and value and FR.EnsureBorderlessForBump then FR:EnsureBorderlessForBump() end
                 if FR.UpdateBumperUI then FR:UpdateBumperUI() end
+                if FR.UpdateTTCBumperTab then FR.UpdateTTCBumperTab() end
             end,
             default = true,
         },

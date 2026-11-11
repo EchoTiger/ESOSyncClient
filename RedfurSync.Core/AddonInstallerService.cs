@@ -44,8 +44,8 @@ namespace RedfurSync
         public const string ClientDirectoryName = "Client";
         public const string InstallFolderName = "FissalRelay";
         public const string TargetExeName = "RedfurSync.exe";
-        public const string LatestAddonVersion = "1.9.7";
-        public const int LatestAddonVersionCode = 10907;
+        public const string LatestAddonVersion = "1.9.8";
+        public const int LatestAddonVersionCode = 10908;
         public static readonly string[] AddonFiles = new[]
         {
             "FissalRelay.txt",
@@ -1006,10 +1006,10 @@ namespace RedfurSync
             }
         }
 
-        private const string AddonManifestTemplate = @"## Title: |cFF9900Fissal's|r Cogwork Relay |c888888v1.9.7|r
+        private const string AddonManifestTemplate = @"## Title: |cFF9900Fissal's|r Cogwork Relay |c888888v1.9.8|r
 ## Author: Echo & Fissal
-## Version: 1.9.7
-## AddOnVersion: 10907
+## Version: 1.9.8
+## AddOnVersion: 10908
 ## APIVersion: 101051 101052
 ## SavedVariables: FissalRelay_SavedVariables
 ## OptionalDependsOn: LibHistoire>=1062 LibAddonMenu-2.0>=41 LibCustomMenu TamrielTradeCentre MasterMerchant LibGuildStore AwesomeGuildStore RaffleGold
